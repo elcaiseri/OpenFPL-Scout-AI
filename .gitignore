@@ -1,0 +1,9 @@
+# Git ignore file to exclude unnecessary files
+__pycache__
+.conda
+.env
+*.csv
+
+trainer.py
+
+*.ipynb
