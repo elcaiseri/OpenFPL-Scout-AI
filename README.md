@@ -1,6 +1,6 @@
 # FantasyLTX
 
-Introducing **Fantasy-LTX** (Linear Tree Expert) – a predictive tool for Fantasy Premier League (FPL) that leverages linear and tree-based models to optimize your FPL team! This project combines historical data, match information, and advanced models to predict player performances and help you build the best team possible.
+Introducing **Fantasy-Premier-League-LTX** (Linear Tree Expert) – a predictive tool for Fantasy Premier League (FPL) that leverages linear and tree-based models to optimize your FPL team! This project combines historical data, match information, and advanced models to predict player performances and help you build the best team possible.
 
 ## Table of Contents
 - [Project Overview](#project-overview)
