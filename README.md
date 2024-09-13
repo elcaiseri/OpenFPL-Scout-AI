@@ -176,6 +176,13 @@ Before running the project, ensure that the configuration file `config/config.ya
 - **`src/utils.py`**: Utility functions for loading data, models, and configurations, as well as fetching match data from the API.
 - **`src/data_preparation.py`**: Functions for cleaning and transforming data.
 
+## What is next?
+
+  - Enhance the Team Selection Algorithm: Refine algorithms for improved accuracy and efficiency.
+  - Develop a Simple UI: Create a user-friendly interface for non-developers.
+  - Improve Documentation: Help us by enhancing the project documentation.
+  - Fix Bugs: Report or resolve any bugs or issues you encounter.
+
 ## Contributing
 
 Contributions are welcome! If you have suggestions or improvements, please fork the repository, create a new branch, and submit a pull request.
