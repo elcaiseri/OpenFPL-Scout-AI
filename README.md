@@ -160,6 +160,8 @@ Before running the project, ensure that the configuration file `config/config.ya
 | Linear Regression      | v1.0    | September 5, 2024  | Initial training with historical data.      | ✅       |
 | XGBoost                | v1.0    | September 5, 2024  | Initial training with historical data.      | ✅       |
 | Preprocessing Pipeline | v1.0    | September 5, 2024  | Initial setup and data processing pipeline. | ✅       |
+| XGBoost                | v2.0    | September 17, 2024  | Add more weights for categorical features. | ✅       |
+| Preprocessing Pipeline | v2.0    | September 17, 2024  | Fix new/unseen players. | ✅       |
 
 - **Model**: The name of the model or pipeline.
 - **Version**: Indicates the current version of the model in use.

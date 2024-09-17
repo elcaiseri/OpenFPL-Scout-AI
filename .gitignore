@@ -7,3 +7,5 @@ __pycache__
 trainer.py
 
 *.ipynb
+
+*.png

@@ -40,7 +40,7 @@ def predictor(data, lr, xgboost_model, target_column):
         np.ndarray: Array of predictions.
     """
     data = data.drop(target_column, axis=1, errors='ignore')
-    preds = (1 * lr.predict(data)[:, 0] + 7 * xgboost_model.predict(data)) / 8
+    preds = (5 * lr.predict(data)[:, 0] + 25 * xgboost_model.predict(data)) / 30
     return preds.reshape(-1, 1)
 
 def prepare_next_gameweek_data(data_path, api_url, api_key, pipeline, categorical_columns, numerical_columns, target_column, team_name_mapping):
@@ -66,7 +66,7 @@ def prepare_next_gameweek_data(data_path, api_url, api_key, pipeline, categorica
     
     # Determine the next gameweek based on the latest data
     next_gameweek = cleaned_data['gameweek'].max() + 1
-    look_back_gameweek = 4 # usually month
+    look_back_gameweek = 3 # usually month
     cleaned_data = cleaned_data[cleaned_data['gameweek'] < next_gameweek].copy() if next_gameweek > 1 else cleaned_data
     
     # Prepare left and right DataFrames for merging
@@ -122,5 +122,7 @@ def fplpredictor(data_path, api_url, api_key, pipeline, categorical_columns, num
     
     # Select and display final predictions
     gameweek_predictions = X[inference_columns].sort_values(target_column, ascending=False)
+    gameweek = gameweek_predictions.gameweek.iloc[0]
+    gameweek_predictions.to_csv(f"data/processed/FPL_GW{gameweek}_Predictions.csv", index=False)
     
     return gameweek_predictions, next_gameweek_data
