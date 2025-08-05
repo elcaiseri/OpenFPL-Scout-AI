@@ -1,5 +1,5 @@
 # Columns to drop during data cleaning
-drop_cols: 
+drop_cols:
   - "pos_touches"
   - "Att Pen"
   - "id"
@@ -13,34 +13,8 @@ categorical_columns:
   - "was_home"
   - "gameweek"
 
-# Numerical columns used in the analysis
-numerical_columns:
-  - "now_cost"
-  - "selected_by_percent"
-  - "shots"
-  - "SoT"
-  - "SiB"
-  - "xG"
-  - "npxG"
-  - "G"
-  - "npG"
-  - "key_passes"
-  - "xA"
-  - "A"
-  - "xGC"
-  - "GC"
-  - "xCS"
-  - "CS"
-  - "xGI"
-  - "npxGI"
-  - "xP"
-  - "PvsxP"
-  - "carries_final_third"
-  - "carries_penalty_area"
-  - "minutes"
-
 # Target column for model training
-target_column: 
+target_column:
   - "total_points"
 
 # API Configuration (Ensure the API key is handled securely)
@@ -49,7 +23,7 @@ api_config:
   api_key: "your_api_key_here"  # Replace with a secure method to handle the API key
 
 # Mapping of team names from the API to standardized names
-team_name_mapping: 
+team_name_mapping:
   Arsenal FC: "Arsenal"
   Fulham FC: "Fulham"
   Aston Villa FC: "Aston Villa"
@@ -71,30 +45,24 @@ team_name_mapping:
   Nottingham Forest FC: "Nottingham Forest"
   Wolverhampton Wanderers FC: "Wolverhampton Wanderers"
 
-# Columns for inference
-inference_columns: 
-  - "element_type"
-  - "web_name"
-  - "team_name"
-  - "opponent_team_name"
-  - "was_home"
-  - "gameweek"  
-  - "now_cost"
-  - "total_points"
-
 # Model Information
 models:
   linear_regression:
-    version: "v1.0"
-    last_trained: "September 5, 2024"
-    path: "models/linear_regression.pkl"
-  
+    version: "v2.0"
+    last_trained: "August 5, 2025"
+    path: "models/reg_0.pkl"
+    year: 2024-2025
+
   xgboost:
+    version: "v2.0"
+    last_trained: "August 5, 2025"
+    path: "models/reg_1.pkl"
+    year: 2024-2025
+
+  catboost:
     version: "v1.0"
-    last_trained: "September 5, 2024"
-    path: "models/xgboost_model.pkl"
-  
-  preprocessing_pipeline:
-    version: "v1.0"
-    last_trained: "September 5, 2024"
-    path: "models/processor.pkl"
+    last_trained: "August 5, 2025"
+    path: "models/reg_2.pkl"
+    year: 2024-2025
+
+max_recent_games: 5

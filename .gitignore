@@ -1,11 +1,22 @@
-# Git ignore file to exclude unnecessary files
-__pycache__
-.conda
+# Byte-compiled / cache files
+__pycache__/
+.ipynb_checkpoints/
+
+# Environment files
 .env
-*.csv
+.conda
 
-trainer.py
+# OS files
+.DS_Store
 
+# Data and output files
+*.json
+*.png
+*.zip
+*info
+
+# Notebooks
 *.ipynb
 
-*.png
+# Project-specific files
+trainer.py
