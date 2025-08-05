@@ -1,24 +1,3 @@
-# Data manipulation and analysis
-openpyxl
-pandas==2.0.3
-numpy==1.25.2
-
-# Machine learning and model training
-scikit-learn==1.3.0
-xgboost==1.7.6
-
-# Data visualization
-matplotlib
-seaborn==0.12.2
-
-# API requests
-requests==2.31.0
-
-# Model saving and loading
-joblib==1.3.1
-
-# YAML configuration
-pyyaml==6.0
-
-# Jupyter Notebook
-jupyter==1.0.0
+pandas>=2.0.3
+numpy>=1.25.2
+joblib>=1.3.1
