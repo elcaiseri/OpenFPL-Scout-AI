@@ -1,177 +1,125 @@
-import os
-import argparse
-import numpy as np
+from fastapi import FastAPI, HTTPException, Path
+
 import pandas as pd
-from src.utils import load_config, load_model, plot_top_players
-from src.predictor import fplpredictor
+import uvicorn
+
+from src.utils import load_config
+from src.logger import get_logger
+from src.scout import FPLScout
+from src.models import ResponseModel
+
+logger = get_logger(__name__)
 
 
-class FPLAnalyzer:
-    def __init__(self, data_path, config_path='config/config.yaml'):
-        """
-        Initializes the FPLAnalyzer with data path and configuration settings.
+# --- App Initialization ---
+app = FastAPI(
+    title="OpenFPL API",
+    description="AI-powered Fantasy Premier League Scout API",
+    version="1.0.0"
+)
 
-        Args:
-            data_path (str): Path to the FPL data file.
-            config_path (str): Path to the configuration file.
-        """
-        self.data_path = data_path
-        self.config = load_config(config_path)
-        self.models = self.load_models({
-            'pipeline': 'models/processor.pkl',
-            'linear_regression': 'models/linear_regression.pkl',
-            'xgboost': 'models/xgboost_model.pkl'
-        })
-        self.predictions = pd.DataFrame()
+app.state.predictions_cache = {}
 
-    def load_models(self, model_paths):
-        """
-        Load the necessary models for predictions.
+# Load configuration and model paths
+logger.info("Loading configuration and model paths...")
+config = load_config('config/config.yaml')
+data_path = 'data/external/fpl-data-stats-2.csv'
+model_paths = [meta['path'] for meta in config['models'].values()]
+logger.info(f"Loaded model paths: {model_paths}")
 
-        Args:
-            model_paths (dict): Dictionary containing paths to the models.
+# --- Endpoints ---
 
-        Returns:
-            dict: Loaded models including pipeline, linear regression, and XGBoost.
-        """
-        return {
-            'pipeline': load_model(model_paths['pipeline']),
-            'linear_regression': load_model(model_paths['linear_regression']),
-            'xgboost': load_model(model_paths['xgboost'])
-        }
+@app.get("/")
+async def root():
+    logger.info("Root endpoint called")
+    return {
+        "message": "OpenFPL - AI Fantasy Premier League Scout",
+        "version": "1.0.0",
+        "credits": "Developed by Kassem@elcaiseri, 2025",
+        "documentation": "/docs"
+    }
 
-    def run_predictions(self):
-        """
-        Run predictions using the loaded models and data.
+@app.get("/health", tags=["Health Check"])
+async def health_check():
+    logger.info("Health check endpoint called")
+    return {"status": "healthy"}
 
-        Returns:
-            pd.DataFrame: DataFrame containing the predictions.
-        """
-        self.predictions, _ = fplpredictor(
-            data_path=self.data_path,
-            api_url=self.config['api_config']['url'],
-            api_key=os.getenv("api_key", ""),
-            pipeline=self.models['pipeline'],
-            categorical_columns=self.config['categorical_columns'],
-            numerical_columns=self.config['numerical_columns'],
-            target_column=self.config['target_column'],
-            inference_columns=self.config['categorical_columns'] + ["now_cost"] + self.config['target_column'],
-            team_name_mapping=self.config['team_name_mapping'],
-            lr=self.models['linear_regression'],
-            xgboost_model=self.models['xgboost']
+@app.get("/scout-team", response_model=ResponseModel, tags=["Scout Team"])
+async def get_scout_team():
+    """Get optimal team for current gameweek"""
+    logger.info("Scout team endpoint called")
+    cache = app.state.predictions_cache
+    scout = FPLScout(model_paths, data_path, gameweek=None, cached=cache)
+    gameweek = scout.gameweek
+
+    try:
+        # Use cached predictions if available
+        if gameweek in cache:
+            logger.info(f"Using cached predictions for gameweek {gameweek}")
+            player_predictions = cache[gameweek]
+        else:
+            logger.info(f"Generating predictions for gameweek {gameweek}")
+            player_predictions = await scout.get_player_predictions()
+            cache[gameweek] = player_predictions
+
+        # Ensure player_predictions is a DataFrame
+        df_predictions = (
+            player_predictions
+            if isinstance(player_predictions, pd.DataFrame)
+            else pd.DataFrame(player_predictions)
         )
-        return self.predictions
 
-    def select_best_team(self, budget=100.0, auto_select_bench=False):
-        """
-        Selects the best FPL team based on predicted points within a given budget.
+        logger.info("Selecting optimal team")
+        optimal_team = scout.select_optimal_team(df_predictions)
 
-        Args:
-            budget (float): The total budget for selecting the team.
-            auto_select_bench (bool): If True, automatically selects the cheapest player for each position as bench players.
+        # Ensure optimal_team is serializable
+        if hasattr(optimal_team, "to_dict"):
+            optimal_team = optimal_team.to_dict('records')
 
-        Returns:
-            pd.DataFrame: DataFrame containing the selected players for the team.
-        """
-        if self.predictions.empty:
-            print("No predictions available for team selection.")
-            return pd.DataFrame()
+        logger.info("Optimal team generated successfully")
+        return ResponseModel(content=optimal_team)
+    except Exception as e:
+        logger.error(f"Error generating scout team: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating scout team: {str(e)}"
+        )
 
-        self.predictions['points_square_per_million'] = np.log(self.predictions['total_points'] ** 2 / self.predictions['now_cost'])
-        self.predictions = self.predictions.sort_values(by='points_square_per_million', ascending=False).reset_index(drop=True)
+@app.get("/scout-report", response_model=ResponseModel, tags=["Scout Report"])
+async def get_scout_report():
+    """Get all player predictions for current gameweek"""
+    logger.info("Scout report endpoint called")
+    cache = app.state.predictions_cache
+    scout = FPLScout(model_paths, data_path, gameweek=None, cached=cache)
+    gameweek = scout.gameweek
 
-        position_limits = {'goalkeepers': 2, 'defenders': 5, 'midfielders': 5, 'forwards': 3}
-        team_limits = 3
+    if gameweek in cache:
+        logger.info(f"Using cached predictions for gameweek {gameweek}")
+        predictions = cache[gameweek]
+        if hasattr(predictions, "to_dict"):
+            predictions = predictions.sort_values(by="expected_points", ascending=False).to_dict('records')
+        return ResponseModel(content=predictions)
 
-        team = {'goalkeepers': [], 'defenders': [], 'midfielders': [], 'forwards': []}
-        team_count = {}
-        total_cost = 0.0
+    try:
+        logger.info(f"Generating predictions for gameweek {gameweek}")
+        player_predictions = await scout.get_player_predictions()
+        cache[gameweek] = player_predictions
 
-        position_map = {1: 'goalkeepers', 2: 'defenders', 3: 'midfielders', 4: 'forwards'}
+        # Ensure predictions are serializable
+        if hasattr(player_predictions, "to_dict"):
+            predictions_data = player_predictions.to_dict('records')
+        else:
+            predictions_data = player_predictions
 
-        def can_add_player(player, position):
-            if len(team[position]) >= position_limits[position]:
-                return False
-            if team_count.get(player['team_name'], 0) >= team_limits:
-                return False
-            if total_cost + player['now_cost'] > budget:
-                return False
-            return True
-
-        if auto_select_bench:
-            self.predictions['points_square_per_million'] = np.exp(self.predictions['points_square_per_million'])
-            for element_type, position in position_map.items():
-                cheapest_player = self.predictions[self.predictions['element_type'] == element_type].nsmallest(1, 'now_cost').iloc[0]
-                team[position].append(cheapest_player)
-                total_cost += cheapest_player['now_cost']
-                team_count[cheapest_player['team_name']] = team_count.get(cheapest_player['team_name'], 0) + 1
-
-        for _, player in self.predictions.iterrows():
-            position = position_map[player['element_type']]
-            if can_add_player(player, position):
-                team[position].append(player)
-                total_cost += player['now_cost']
-                team_count[player['team_name']] = team_count.get(player['team_name'], 0) + 1
-
-        selected_team = pd.concat([pd.DataFrame(team[pos]) for pos in team])
-        selected_team.element_type = selected_team.element_type.map(position_map)
-        expected_points = selected_team['total_points'].sum()
-
-        print(f"Total Cost: {total_cost:.1f}M, Expected Points: {expected_points:.1f} Points, Bank: {budget-total_cost:.1f}M, Low budget: {auto_select_bench}")
-        return selected_team
-
-    def plot_top_players(self, tops=32):
-        """
-        Save and plot the top players based on predictions.
-
-        Args:
-            tops (int): Number of top players to plot.
-        """
-        if self.predictions.empty:
-            print("No predictions available for plotting.")
-            return
-        gameweek = self.predictions.gameweek.iloc[0]
-        save_path = f'data/external/fpl_prediction_gameweek{gameweek}.png'
-        plot_top_players(self.predictions, gameweek=gameweek, tops=tops, save_path=save_path)
-        print(f"Predictions saved and plotted: {save_path}")
-
-    def run(self, budget, tops, auto_select_bench, run_top_players, run_best_team):
-        """
-        Run both top player prediction and best team selection based on specified options.
-
-        Args:
-            budget (float): The total budget for selecting the team.
-            tops (int): Number of top players to plot.
-            auto_select_bench (bool): Whether to auto-select the cheapest players as bench.
-            run_top_players (bool): Whether to run the top players prediction.
-            run_best_team (bool): Whether to run the best team selection.
-        """
-        self.run_predictions()
-        if run_top_players:
-            print("Running top players prediction...")
-            self.plot_top_players(tops)
-        if run_best_team:
-            print("Running best team selection...")
-            selected_team = self.select_best_team(budget, auto_select_bench)
-            print(selected_team)
-
+        logger.info("Scout report generated successfully")
+        return ResponseModel(content=predictions_data)
+    except Exception as e:
+        logger.error(f"Error getting scout report: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting scout report: {str(e)}"
+        )
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run FPL prediction and team selection.")
-    parser.add_argument('--data_path', type=str, default='data/external/fpl-data-stats2025.csv', help='Path to the data file.')
-    parser.add_argument('--budget', type=float, default=100.0, help='Total budget for selecting the team.')
-    parser.add_argument('--tops', type=int, default=32, help='Number of top players to plot.')
-    parser.add_argument('--auto_select_bench', action='store_true', help='Enable auto-selecting the cheapest bench players.')
-    parser.add_argument('--run_top_players', action='store_true', help='Run the top players prediction.')
-    parser.add_argument('--run_best_team', action='store_true', help='Run the best team selection.')
-
-    args = parser.parse_args()
-
-    analyzer = FPLAnalyzer(data_path=args.data_path)
-    analyzer.run(
-        budget=args.budget,
-        tops=args.tops,
-        auto_select_bench=args.auto_select_bench,
-        run_top_players=args.run_top_players,
-        run_best_team=args.run_best_team
-    )
+    logger.info("Starting OpenFPL API server...")
+    uvicorn.run(app, host="0.0.0.0", port=8000)

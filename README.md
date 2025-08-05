@@ -1,6 +1,6 @@
-# FantasyLTX
+# OpenFPL
 
-Introducing **Fantasy-Premier-League-LTX** (Linear Tree Expert) – a predictive tool for Fantasy Premier League (FPL) that leverages linear and tree-based models to optimize your FPL team! This project combines historical data, match information, and advanced models to predict player performances and help you build the best team possible.
+**OpenFPL** - An AI-powered Fantasy Premier League Scout that leverages machine learning models to predict player performances and optimize your FPL team selections. This project combines historical data, real-time match information, and advanced ML models including Linear Regression, XGBoost, and CatBoost to help you build the best possible team.
 
 ## Table of Contents
 - [Project Overview](#project-overview)
@@ -8,187 +8,298 @@ Introducing **Fantasy-Premier-League-LTX** (Linear Tree Expert) – a predictive
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-  - [Finding Top Players](#finding-top-players)
-  - [Finding the Best Team](#finding-the-best-team)
-  - [Running Both Features](#running-both-features)
-- [Model Version and Last Date Trained](#model-version-and-last-date-trained)
+   - [Running the FPL Scout API](#running-the-fpl-scout-api)
+   - [API Endpoints](#api-endpoints)
+- [Model Information](#model-information)
+- [API Integration](#api-integration)
 - [Scripts Explanation](#scripts-explanation)
 - [Contributing](#contributing)
 - [License](#license)
+- [Contact](#contact)
 
 ## Project Overview
 
-The FPL Prediction Project uses historical player performance data, combined with match data fetched from an external API, to predict player points for upcoming gameweeks. The predictions are made using a combination of Linear Regression and XGBoost models, allowing users to make data-driven decisions for their FPL teams.
+OpenFPL is an AI Fantasy Premier League Scout that uses machine learning to predict player performances for upcoming gameweeks. The system fetches live match data, processes historical player statistics, and uses an ensemble of trained models to provide accurate predictions and optimal team selections.
+
+**Key Features:**
+- Multi-model ensemble (Linear Regression, XGBoost, CatBoost)
+- Real-time match data integration via Football Data API
+- Asynchronous player prediction processing
+- Automated optimal team selection with budget constraints
+- Position-based player recommendations
+- Captain and vice-captain suggestions
 
 ## Project Structure
 
 ```
-fpl-prediction-project/
+OpenFPL/
 │
 ├── config/                   # Configuration files
-│   └── config.yaml           # Configuration for model parameters, paths, etc.
+│   └── config.yaml           # Model paths, team mappings, API settings
 │
 ├── data/                     # Data storage
-│   ├── external/             # External data from APIs or other sources
-│   │   └── fpl-data-stats2025.csv
-│   ├── processed/            # Cleaned and processed data files
-│   └── raw/                  # Raw data files
+│   └── external/             # External data from FPL sources
+│       └── *.csv             # Player statistics files
 │
-├── models/                   # Trained models storage
-│   ├── processor.pkl
-│   ├── linear_regression.pkl
-│   └── xgboost_model.pkl
+├── models/                   # Trained ML models
+│   ├── reg_0.pkl             # Linear Regression pipeline
+│   ├── reg_1.pkl             # XGBoost pipeline
+│   └── reg_2.pkl             # CatBoost pipeline
 │
-├── notebooks/                # Jupyter Notebooks for exploratory analysis
-│   └── fpl_analysis.ipynb
+├── src/                      # Source code
+│   ├── scout.py              # Main FPLScout class for predictions
+│   ├── models.py             # Pydantic response models
+│   ├── utils.py              # Configuration and utility functions
+│   └── logger.py             # Logging configuration
 │
-├── src/                      # Source code for the project
-│   ├── __init__.py           # Makes src a package
-│   ├── data_preparation.py   # Scripts for data cleaning and preprocessing
-│   ├── feature_engineering.py # Scripts for feature engineering
-│   ├── inference.py          # Scripts for making predictions
-│   ├── utils.py              # Utility functions
-│   ├── team_selection.py     # Scripts for selecting the optimal FPL team
-│   ├── find_top_players.py   # Script to find top players based on predictions
-│   └── find_best_team.py     # Script to find the best team within budget
-│
-├── main.py                   # Main script to run the prediction process
-├── requirements.txt          # List of dependencies
-└── .gitignore                # Git ignore file to exclude unnecessary files
+├── main.py                   # FastAPI application entry point
+├── requirements.txt          # Project dependencies
+└── README.md                 # Project documentation
 ```
 
 ## Installation
 
+### Local Development
+
 1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/elcaiseri/fpl-prediction.git
-   cd fpl-prediction
-   ```
+    ```bash
+    git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
+    cd Fantasy-Premier-League-LTX
+    ```
 
 2. **Create a virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+    ```
 
 3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4. **Set up API Key**:
+    ```bash
+    export FPL_API_KEY="your_football_data_api_key"
+    ```
+
+### Docker Deployment
+
+1. **Clone the repository**:
+    ```bash
+    git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
+    cd Fantasy-Premier-League-LTX
+    ```
+
+2. **Build and run with Docker**:
+    ```bash
+    docker build -t openfpl .
+    docker run -p 8000:8000 -e FPL_API_KEY="your_api_key" openfpl
+    ```
 
 ## Configuration
 
-Before running the project, ensure that the configuration file `config/config.yaml` is correctly set up. Key configuration options include:
+Configure the system through `config/config.yaml`:
 
-- **API Configuration**: Set the `url` and `api_key` for fetching match data.
-- **Model Paths**: Define paths to saved models and pipelines.
-- **Columns Configuration**: Specify the categorical, numerical, and target columns.
+- **Models**: Paths to trained model files and metadata
+- **Team Mappings**: API team names to FPL team names
+- **Categorical Columns**: Player and match features used for predictions
+- **API Configuration**: Football Data API settings
 
 ## Usage
 
-### Finding Top Players
+### Running the FPL Scout API
 
-1. **Download the latest player data**:
-   Go to [FPL Statistics](https://www.fpl-data.co.uk/statistics), scroll down to the bottom of the page, and click the "Download CSV" button to download the updated player data. Save the CSV file in the `data/external/` directory with the name `fpl-data-stats2025.csv`.
+#### Option 1: Direct Python Execution
+Start the FastAPI server to access the FPL Scout via REST API:
 
-2. **Run the main script to find top players**:
-   ```bash
-   python main.py --data_path data/external/fpl-data-stats2025.csv --run_top_players
-   ```
+```bash
+python main.py
+```
 
-![fpl gameweek prediction](data/external/fpl_prediction_gameweek4.png)
+Or using uvicorn directly:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
 
+#### Option 2: Docker Deployment
+Build and run the application using Docker:
 
-### Finding the Best Team
+```bash
+# Build the Docker image
+docker build -t openfpl .
 
-1. **Run the main script to find the best team**:
-   ```bash
-   python main.py --data_path data/external/fpl-data-stats2025.csv --budget 100.5 --auto_select_bench --run_best_team
-   ```
+# Run the container
+docker run -d \
+  --name openfpl-api \
+  -p 8000:8000 \
+  -e FPL_API_KEY="your_football_data_api_key" \
+  openfpl
 
-| element_type | web_name   | team_name      | opponent_team_name | was_home | gameweek | now_cost | total_points | points_square_per_million |
-|--------------|------------|----------------|--------------------|----------|----------|----------|--------------|---------------------------|
-| goalkeepers  | Fabianski  | West Ham       | Fulham             | False    | 4        | 4.0      | 0.116304     | 0.003382                   |
-| goalkeepers  | A.Becker   | Liverpool      | Nottingham Forest  | True     | 4        | 5.5      | 7.055220     | 9.050204                   |
-| defenders    | Keane      | Everton        | Aston Villa        | False    | 4        | 4.0      | 1.846797     | 0.852664                   |
-| defenders    | Romero     | Tottenham      | Arsenal            | True     | 4        | 5.1      | 5.495184     | 5.920990                   |
-| defenders    | Gabriel    | Arsenal        | Tottenham          | False    | 4        | 6.0      | 5.204891     | 4.515148                   |
-| defenders    | Pedro Porro| Tottenham      | Arsenal            | True     | 4        | 5.5      | 4.951616     | 4.457909                   |
-| defenders    | Robinson   | Fulham         | West Ham           | True     | 4        | 4.6      | 4.498729     | 4.399688                   |
-| midfielders  | M.França   | Crystal Palace | Leicester          | True     | 4        | 4.4      | -0.000319    | 0.0000000231               |
-| midfielders  | Luis Díaz  | Liverpool      | Nottingham Forest  | True     | 4        | 7.6      | 10.733676    | 15.159450                  |
-| midfielders  | M.Salah    | Liverpool      | Nottingham Forest  | True     | 4        | 12.7     | 13.468941    | 14.284440                  |
-| midfielders  | Mbeumo     | Brentford      | Manchester City    | False    | 4        | 7.1      | 8.220697     | 9.518291                   |
-| midfielders  | Semenyo    | Bournemouth    | Chelsea            | True     | 4        | 5.6      | 6.681000     | 7.970673                   |
-| forwards     | Jebbison   | Bournemouth    | Chelsea            | True     | 4        | 4.5      | 0.121055     | 0.003257                   |
-| forwards     | Haaland    | Manchester City| Brentford          | True     | 4        | 15.2     | 13.249590    | 11.549450                  |
-| forwards     | Welbeck    | Brighton       | Ipswich            | True     | 4        | 5.7      | 7.765669     | 10.579930                  |
+# Check container status
+docker ps
 
+# View logs
+docker logs openfpl-api
+```
 
-### Running Both Features
+#### Option 3: Docker Compose (Recommended)
+Create a `docker-compose.yml` file:
 
-1. **Run both top player prediction and best team selection**:
-   ```bash
-   python main.py --data_path data/external/fpl-data-stats2025.csv --budget 100.5 --auto_select_bench --run_top_players --run_best_team
-   ```
+```yaml
+version: '3.8'
+services:
+  openfpl:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - FPL_API_KEY=your_football_data_api_key
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config:/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
 
-### Explanation of Command-Line Arguments
-- `--data_path`: Path to the CSV file containing the latest player data. Default is `data/external/fpl-data-stats2025.csv`.
-- `--budget`: Specifies the total budget available for selecting the best team. Default is `100.0`.
-- `--auto_select_bench`: If used, automatically selects the cheapest players as bench players to optimize the main team selection.
-- `--run_top_players`: Executes the top players' prediction based on the latest data and trained models.
-- `--run_best_team`: Executes the best team selection within the specified budget constraints.
+Then run:
+```bash
+docker-compose up -d
+```
 
-### Example Commands
-- **Find top players only**:
-  ```bash
-  python main.py --run_top_players
-  ```
-- **Find the best team within budget**:
-  ```bash
-  python main.py --budget 102 --run_best_team
-  ```
-- **Find both top players and the best team**:
-  ```bash
-  python main.py --run_top_players --run_best_team
-  ```
+The API will be available at `http://localhost:8000`
 
-## Model Version and Last Date Trained
+### API Endpoints
 
-| Model                  | Version | Last Trained       | Changes                                     | Current |
-|------------------------|---------|--------------------|---------------------------------------------|---------|
-| Linear Regression      | v1.0    | September 5, 2024  | Initial training with historical data.      | ✅       |
-| XGBoost                | v1.0    | September 5, 2024  | Initial training with historical data.      | ✅       |
-| Preprocessing Pipeline | v1.0    | September 5, 2024  | Initial setup and data processing pipeline. | ✅       |
-| XGBoost                | v2.0    | September 17, 2024  | Add more weights for categorical features. | ✅       |
-| Preprocessing Pipeline | v2.0    | September 17, 2024  | Fix new/unseen players. | ✅       |
+- **GET /** - Root endpoint with API information
+- **GET /health** - Health check and API status
+- **GET /scout-team** - Get optimal team for current gameweek
+- **GET /scout-report** - Get all player predictions for current gameweek
 
-- **Model**: The name of the model or pipeline.
-- **Version**: Indicates the current version of the model in use.
-- **Last Trained**: The date when the model or pipeline was last trained or updated.
-- **Changes**: Summary of the changes or updates made during the training.
-- **Current**: A checkmark (✅) indicates the most recent and currently used version.
+**Example API Calls:**
+```bash
+# Get optimal team
+curl http://localhost:8000/scout-team
+
+# Get all player predictions
+curl http://localhost:8000/scout-report
+
+# Check API health
+curl http://localhost:8000/health
+```
+
+**Example API Response for /scout-team:**
+```json
+{
+  "content": [
+    {
+      "element_type": "Goalkeeper",
+      "web_name": "Alisson",
+      "team_name": "Liverpool",
+      "expected_points": 5.2,
+      "role": null
+    },
+    {
+      "element_type": "Defender",
+      "web_name": "Alexander-Arnold",
+      "team_name": "Liverpool",
+      "expected_points": 8.1,
+      "role": "captain"
+    }
+  ],
+  "version": "1.0.0",
+  "credits": "OpenFPL - Developed by Kassem@elcaiseri, 2025"
+}
+```
+
+**Endpoint Names Explained:**
+- 🏆 `/scout-team` - Your optimal FPL team selection
+- 📊 `/scout-report` - Comprehensive player analysis and predictions
+- 🏥 `/health` - API health check
+
+Access the interactive API documentation at `http://localhost:8000/docs`
+
+## Model Information
+
+| Model             | Version | Description                    |
+|-------------------|---------|--------------------------------|
+| Linear Regression | v2.0    | Baseline linear model          |
+| XGBoost          | v2.0    | Gradient boosting ensemble     |
+| CatBoost         | v1.0    | Categorical boosting model     |
+
+**Model Features:**
+- Ensemble predictions for improved accuracy
+- Feature importance analysis
+- Optimized for FPL player performance prediction
+
+## API Integration
+
+OpenFPL integrates with the Football Data API to fetch:
+- Live match fixtures
+- Team vs team matchups
+- Home/away status
+- Gameweek information
+
+**Required Environment Variable:**
+```bash
+FPL_API_KEY=your_api_key_here
+```
 
 ## Scripts Explanation
 
-- **`src/inference.py`**: Contains functions to merge data, prepare data for the next gameweek, and perform predictions using the trained models.
-- **`src/find_top_players.py`**: Finds the top players based on predicted performance for the upcoming gameweek.
-- **`src/find_best_team.py`**: Selects the best team within a specified budget based on predicted player performance.
-- **`main.py`**: The entry point of the project, handling configuration loading, model loading, and calling the necessary functions to run predictions and team selection.
-- **`src/utils.py`**: Utility functions for loading data, models, and configurations, as well as fetching match data from the API.
-- **`src/data_preparation.py`**: Functions for cleaning and transforming data.
+### Core Components
 
-## What is next?
+- **`main.py`**: FastAPI application entry point with REST endpoints for FPL predictions
+- **`src/scout.py`**: Main FPLScout class that handles predictions, team selection, and API integration
+- **`src/models.py`**: Pydantic response models for API data validation
+- **`src/utils.py`**: Configuration loading and utility functions
+- **`src/logger.py`**: Centralized logging configuration
 
-  - Enhance the Team Selection Algorithm: Refine algorithms for improved accuracy and efficiency.
-  - Develop a Simple UI: Create a user-friendly interface for non-developers.
-  - Improve Documentation: Help us by enhancing the project documentation.
-  - Fix Bugs: Report or resolve any bugs or issues you encounter.
+### Key Classes
+
+**FPLScout**: AI-powered player scout
+- Asynchronous player prediction processing
+- Real-time match data integration
+- Optimal team selection with budget constraints
+- Position-based recommendations
+
+**ResponseModel**: Pydantic model for standardized API responses
+- Structured JSON responses with content, version, and credits
+- Type validation and serialization
+
+## What's New in OpenFPL
+
+- **🎯 Fine-Tuned for 2024/2025 Season**: Models optimized and trained on the latest Premier League season data for maximum accuracy
+- **🚀 CatBoost Integration**: Enhanced machine learning pipeline with CatBoost algorithm implementation (addressing [GitHub Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
+- **🔌 RESTful API**: Complete FastAPI implementation with endpoints for team selection and player predictions
+- **🏷️ Rebranding**: Complete rebrand from Fantasy-Premier-League-LTX to OpenFPL - Open Source Fantasy Premier League AI Scout
+- **🔧 Code Refactoring**: Improved code structure, modularity, and maintainability with proper separation of concerns
+- **🤖 AI-Powered Predictions**: Advanced ensemble of Linear Regression, XGBoost, and CatBoost models
+- **⚡ Asynchronous Processing**: Fast parallel prediction processing for all players
+- **🔴 Live Data Integration**: Real-time match data via Football Data API
+- **🐳 Docker Support**: Containerized deployment for easy setup and scalability
 
 ## Contributing
 
-Contributions are welcome! If you have suggestions or improvements, please fork the repository, create a new branch, and submit a pull request.
+Contributions are welcome! Areas for improvement:
+
+- **Enhanced Algorithms**: Improve prediction accuracy and team selection logic
+- **Web Interface**: Develop a user-friendly web application
+- **Mobile App**: Create mobile applications for iOS/Android
+- **Additional Features**: Player injury tracking, form analysis, fixture difficulty
+- **Documentation**: Improve code documentation and tutorials
+
+Please fork the repository, create a feature branch, and submit a pull request.
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contact
+
+For questions or support, contact [kassem@elcaiseri.com](mailto:kassem@elcaiseri.com).
