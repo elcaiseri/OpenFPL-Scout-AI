@@ -86,7 +86,7 @@ class FPLScout:
         logger.debug(f"Preprocessed data for player {processed_data['web_name'].iloc[0]} (opponent: {opponent_team}, home: {is_home}).")
         return processed_data[:self.MAX_RECENT_GAMES]
 
-    async def _predict_player_points(self, player_data: pd.DataFrame) -> float:
+    async def _lazy_predict_player_points(self, player_data: pd.DataFrame) -> float:
         """Asynchronously predict player points using ensemble of models."""
         loop = asyncio.get_event_loop()
         futures = [
@@ -117,7 +117,7 @@ class FPLScout:
 
     async def _create_prediction_task(self, processed_group: pd.DataFrame) -> pd.DataFrame:
         """Create prediction task for a single player."""
-        prediction = await self._predict_player_points(processed_group)
+        prediction = await self._lazy_predict_player_points(processed_group)
 
         result_columns = self.CATEGORICAL_COLS
         result_data = processed_group[result_columns].drop_duplicates()
