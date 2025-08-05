@@ -5,6 +5,9 @@ import pandas as pd
 import numpy as np
 import asyncio
 from typing import List, Dict, Any, Optional
+import requests
+import os
+
 from logger import get_logger
 from utils import load_config
 
@@ -30,14 +33,17 @@ class FPLScout:
             3: 'Midfielder',
             4: 'Forward'
         }
-        self.MAX_RECENT_GAMES = 5
-        self.GAMEWEEK_THRESHOLD = 38
+        self.MAX_RECENT_GAMES = max(config.get('max_recent_games', 5), 5)
 
         logger.info("Initializing FPLScout...")
         # Load models and data
         self.models = self._load_models(model_paths)
-        self.data = self._load_data(data_path)
+        self.data = self._load_data(data_path, gameweek)
         self.gameweek = gameweek or self._get_next_gameweek()
+
+        self.team_mapping = config.get('team_name_mapping', {})
+        self.gw_match_data = self._fetch_gw_match_data()
+
         logger.info(f"FPLScout initialized for gameweek {self.gameweek}.")
 
     def _load_models(self, model_paths: List[str]) -> List[Any]:
@@ -47,7 +53,7 @@ class FPLScout:
         logger.info(f"Loaded {len(models)} models.")
         return models
 
-    def _load_data(self, data_path: Optional[str]) -> pd.DataFrame:
+    def _load_data(self, data_path: Optional[str], gameweek: Optional[int] = None) -> pd.DataFrame:
         """Load and filter player data."""
         if not data_path:
             logger.warning("No data path provided. Returning empty DataFrame.")
@@ -55,9 +61,12 @@ class FPLScout:
 
         logger.info(f"Loading data from {data_path}")
         data = pd.read_csv(data_path)
-        filtered_data = data[data.gameweek < self.GAMEWEEK_THRESHOLD]
-        logger.info(f"Loaded {len(filtered_data)} rows of player data (filtered by gameweek < {self.GAMEWEEK_THRESHOLD}).")
-        return filtered_data
+
+        if gameweek:
+            data = data[data.gameweek <= gameweek].copy()
+            logger.info(f"Filtered data for gameweek {gameweek}.")
+        logger.info(f"Loaded {len(data)} rows of player data.")
+        return data
 
     def _get_next_gameweek(self) -> int:
         """Get the next gameweek number (1-38)."""
@@ -66,7 +75,7 @@ class FPLScout:
         else:
             next_gw = int(self.data.gameweek.max()) + 1
         # Ensure next_gw is within 1 and 38
-        next_gw = max(1, min(next_gw, self.GAMEWEEK_THRESHOLD))
+        next_gw = max(1, min(next_gw, 38))
         logger.info(f"Next gameweek determined as {next_gw}.")
         return next_gw
 
@@ -105,8 +114,8 @@ class FPLScout:
 
         for (player_name, team_name), group in self.data.groupby(['web_name', 'team_name']):
             # TODO: Replace with realistic fixture data
-            opponent_team = np.random.choice(self.data['team_name'].unique())
-            is_home = np.random.choice([True, False])
+            opponent_team = self.gw_match_data.get(team_name, {}).get('opponent_team_name', 'Unknown')
+            is_home = self.gw_match_data.get(team_name, {}).get('was_home', False)
 
             processed_group = self._preprocess_player_data(group, opponent_team, is_home)
             prediction_tasks.append(self._create_prediction_task(processed_group))
@@ -163,16 +172,67 @@ class FPLScout:
 
         return team_df
 
+    def _fetch_gw_match_data(self) -> Dict[str, dict]:
+        """
+        Fetch Premier League match data for the current gameweek and return a mapping of team to opponent and match info.
+        """
+
+        api_url = "https://api.football-data.org/v4/competitions/PL/matches"
+        api_key = os.getenv("FPL_API_KEY", "")
+        if not api_key:
+            logger.error("API key for football-data.org is not set. Please set the FPL_API_KEY environment variable.")
+            raise ValueError("API key not set.")
+
+        headers = {
+            "X-Auth-Token": api_key
+        }
+        params = {"matchday": self.gameweek}
+
+        logger.info(f"Fetching PL match data for gameweek {self.gameweek}...")
+        response = requests.get(api_url, headers=headers, params=params)
+        response.raise_for_status()  # Raise an error for bad responses
+
+        data = response.json()
+
+        matches = []
+        for match in data.get("matches", []):
+            matches.append({
+                "team_name": match["homeTeam"]["name"],
+                "opponent_team_name": match["awayTeam"]["name"],
+                "utcDate": match["utcDate"],
+                "status": match["status"],
+                "gameweek": match["season"].get("currentMatchday", self.gameweek),
+                "was_home": True
+            })
+            matches.append({
+                "team_name": match["awayTeam"]["name"],
+                "opponent_team_name": match["homeTeam"]["name"],
+                "utcDate": match["utcDate"],
+                "status": match["status"],
+                "gameweek": match["season"].get("currentMatchday", self.gameweek),
+                "was_home": False
+            })
+
+        df = pd.DataFrame(matches)
+        if hasattr(self, "team_mapping") and self.team_mapping:
+            df[["team_name", "opponent_team_name"]] = df[["team_name", "opponent_team_name"]].replace(self.team_mapping)
+
+        df.set_index("team_name", inplace=True)
+        match_dict = df.to_dict(orient="index")
+        logger.info(f"Fetched {len(match_dict)//2} PL matches for gameweek {self.gameweek}.")
+        return match_dict
+
 
 if __name__ == "__main__":
     # Example usage
     data_path = "data/external/fpl-data-stats-2.csv"
     model_paths = [meta_data['path'] for meta_data in config['models'].values()]
+    gameweek = 1
 
     async def main():
         # Initialize scout and generate team selection
         logger.info("Starting FPLScout main routine...")
-        scout = FPLScout(model_paths, data_path)
+        scout = FPLScout(model_paths, data_path, gameweek)
         player_predictions = await scout.get_player_predictions()
         optimal_team = scout.select_optimal_team(player_predictions)
         optimal_team_df = pd.DataFrame(optimal_team)
