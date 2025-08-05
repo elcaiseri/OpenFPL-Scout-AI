@@ -64,3 +64,5 @@ models:
     last_trained: "August 5, 2025"
     path: "models/reg_2.pkl"
     year: 2024-2025
+
+max_recent_games: 5
