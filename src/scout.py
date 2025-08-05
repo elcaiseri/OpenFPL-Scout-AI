@@ -8,8 +8,8 @@ from typing import List, Dict, Any, Optional
 import requests
 import os
 
-from logger import get_logger
-from utils import load_config
+from src.logger import get_logger
+from src.utils import load_config
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -23,7 +23,7 @@ print(f"Configuration loaded: {config}")
 class FPLScout:
     """Fantasy Premier League player scout for prediction and team selection."""
 
-    def __init__(self, model_paths: List[str], data_path: Optional[str] = None, gameweek: Optional[int] = None):
+    def __init__(self, model_paths: List[str], data_path: Optional[str] = None, gameweek: Optional[int] = None, cached: bool = False):
         # Configuration constants
         self.CATEGORICAL_COLS = config['categorical_columns']
         self.TOP_N_BY_POSITION = {1: 2, 2: 5, 3: 5, 4: 3}  # GK, DEF, MID, FWD
@@ -42,7 +42,11 @@ class FPLScout:
         self.gameweek = gameweek or self._get_next_gameweek()
 
         self.team_mapping = config.get('team_name_mapping', {})
-        self.gw_match_data = self._fetch_gw_match_data()
+
+        if not cached:
+            self.gw_match_data = self._fetch_gw_match_data()
+        else:
+            self.gw_match_data = {}
 
         logger.info(f"FPLScout initialized for gameweek {self.gameweek}.")
 
@@ -189,7 +193,7 @@ class FPLScout:
         params = {"matchday": self.gameweek}
 
         logger.info(f"Fetching PL match data for gameweek {self.gameweek}...")
-        response = requests.get(api_url, headers=headers, params=params)
+        response = requests.get(api_url, headers=headers, params=params, timeout=30)
         response.raise_for_status()  # Raise an error for bad responses
 
         data = response.json()
@@ -221,7 +225,6 @@ class FPLScout:
         match_dict = df.to_dict(orient="index")
         logger.info(f"Fetched {len(match_dict)//2} PL matches for gameweek {self.gameweek}.")
         return match_dict
-
 
 if __name__ == "__main__":
     # Example usage

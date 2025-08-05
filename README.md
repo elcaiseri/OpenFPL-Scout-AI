@@ -8,7 +8,8 @@
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-   - [Running the FPL Scout](#running-the-fpl-scout)
+   - [Running the FPL Scout API](#running-the-fpl-scout-api)
+   - [API Endpoints](#api-endpoints)
 - [Model Information](#model-information)
 - [API Integration](#api-integration)
 - [Scripts Explanation](#scripts-explanation)
@@ -47,14 +48,18 @@ OpenFPL/
 │
 ├── src/                      # Source code
 │   ├── scout.py              # Main FPLScout class for predictions
+│   ├── models.py             # Pydantic response models
 │   ├── utils.py              # Configuration and utility functions
 │   └── logger.py             # Logging configuration
 │
+├── main.py                   # FastAPI application entry point
 ├── requirements.txt          # Project dependencies
 └── README.md                 # Project documentation
 ```
 
 ## Installation
+
+### Local Development
 
 1. **Clone the repository**:
     ```bash
@@ -78,6 +83,20 @@ OpenFPL/
     export FPL_API_KEY="your_football_data_api_key"
     ```
 
+### Docker Deployment
+
+1. **Clone the repository**:
+    ```bash
+    git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
+    cd Fantasy-Premier-League-LTX
+    ```
+
+2. **Build and run with Docker**:
+    ```bash
+    docker build -t openfpl .
+    docker run -p 8000:8000 -e FPL_API_KEY="your_api_key" openfpl
+    ```
+
 ## Configuration
 
 Configure the system through `config/config.yaml`:
@@ -89,23 +108,121 @@ Configure the system through `config/config.yaml`:
 
 ## Usage
 
-### Running the FPL Scout
+### Running the FPL Scout API
 
-Use the trained models to get player predictions and optimal team selection:
+#### Option 1: Direct Python Execution
+Start the FastAPI server to access the FPL Scout via REST API:
 
 ```bash
-python src/scout.py
+python main.py
 ```
 
-**Example Output:**
+Or using uvicorn directly:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
-element_type    web_name       team_name        expected_points    role
-Goalkeeper      Alisson        Liverpool        5.2
-Defender        Alexander-Arnold Liverpool       8.1               captain
-Defender        Saliba         Arsenal          6.8
-Midfielder      Salah          Liverpool        12.4              vice
-Forward         Haaland        Man City         10.9
+
+#### Option 2: Docker Deployment
+Build and run the application using Docker:
+
+```bash
+# Build the Docker image
+docker build -t openfpl .
+
+# Run the container
+docker run -d \
+  --name openfpl-api \
+  -p 8000:8000 \
+  -e FPL_API_KEY="your_football_data_api_key" \
+  openfpl
+
+# Check container status
+docker ps
+
+# View logs
+docker logs openfpl-api
 ```
+
+#### Option 3: Docker Compose (Recommended)
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+services:
+  openfpl:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - FPL_API_KEY=your_football_data_api_key
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config:/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
+Then run:
+```bash
+docker-compose up -d
+```
+
+The API will be available at `http://localhost:8000`
+
+### API Endpoints
+
+- **GET /** - Root endpoint with API information
+- **GET /health** - Health check and API status
+- **GET /scout-team** - Get optimal team for current gameweek
+- **GET /scout-report** - Get all player predictions for current gameweek
+
+**Example API Calls:**
+```bash
+# Get optimal team
+curl http://localhost:8000/scout-team
+
+# Get all player predictions
+curl http://localhost:8000/scout-report
+
+# Check API health
+curl http://localhost:8000/health
+```
+
+**Example API Response for /scout-team:**
+```json
+{
+  "content": [
+    {
+      "element_type": "Goalkeeper",
+      "web_name": "Alisson",
+      "team_name": "Liverpool",
+      "expected_points": 5.2,
+      "role": null
+    },
+    {
+      "element_type": "Defender",
+      "web_name": "Alexander-Arnold",
+      "team_name": "Liverpool",
+      "expected_points": 8.1,
+      "role": "captain"
+    }
+  ],
+  "version": "1.0.0",
+  "credits": "OpenFPL - Developed by Kassem@elcaiseri, 2025"
+}
+```
+
+**Endpoint Names Explained:**
+- 🏆 `/scout-team` - Your optimal FPL team selection
+- 📊 `/scout-report` - Comprehensive player analysis and predictions
+- 🏥 `/health` - API health check
+
+Access the interactive API documentation at `http://localhost:8000/docs`
 
 ## Model Information
 
@@ -137,7 +254,9 @@ FPL_API_KEY=your_api_key_here
 
 ### Core Components
 
+- **`main.py`**: FastAPI application entry point with REST endpoints for FPL predictions
 - **`src/scout.py`**: Main FPLScout class that handles predictions, team selection, and API integration
+- **`src/models.py`**: Pydantic response models for API data validation
 - **`src/utils.py`**: Configuration loading and utility functions
 - **`src/logger.py`**: Centralized logging configuration
 
@@ -149,13 +268,21 @@ FPL_API_KEY=your_api_key_here
 - Optimal team selection with budget constraints
 - Position-based recommendations
 
+**ResponseModel**: Pydantic model for standardized API responses
+- Structured JSON responses with content, version, and credits
+- Type validation and serialization
+
 ## What's New in OpenFPL
 
+- **🎯 Fine-Tuned for 2024/2025 Season**: Models optimized and trained on the latest Premier League season data for maximum accuracy
+- **🚀 CatBoost Integration**: Enhanced machine learning pipeline with CatBoost algorithm implementation (addressing [GitHub Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
+- **🔌 RESTful API**: Complete FastAPI implementation with endpoints for team selection and player predictions
+- **🏷️ Rebranding**: Complete rebrand from Fantasy-Premier-League-LTX to OpenFPL - Open Source Fantasy Premier League AI Scout
+- **🔧 Code Refactoring**: Improved code structure, modularity, and maintainability with proper separation of concerns
 - **🤖 AI-Powered Predictions**: Advanced ensemble of Linear Regression, XGBoost, and CatBoost models
 - **⚡ Asynchronous Processing**: Fast parallel prediction processing for all players
 - **🔴 Live Data Integration**: Real-time match data via Football Data API
-- **🎯 Smart Team Selection**: Automated optimal team selection with captain recommendations
-- **🏷️ New Branding**: Rebranded as OpenFPL - Open Source Fantasy Premier League AI Scout
+- **🐳 Docker Support**: Containerized deployment for easy setup and scalability
 
 ## Contributing
 
