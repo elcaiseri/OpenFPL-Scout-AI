@@ -10,10 +10,12 @@ __pycache__/
 .DS_Store
 
 # Data and output files
-*.json
+#*.json
+*.csv
 *.png
 *.zip
 *info
+
 
 # Notebooks
 *.ipynb
