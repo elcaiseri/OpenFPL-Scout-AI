@@ -65,4 +65,4 @@ models:
     path: "models/reg_2.pkl"
     year: 2024-2025
 
-max_recent_games: 15
+max_recent_games: 10
