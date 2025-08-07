@@ -1,27 +1,68 @@
 import pandas as pd
 import yaml
+import os
+import requests
+from typing import Dict
 
 def load_config(config_path):
-    """
-    Load configuration settings from a YAML file.
-
-    Args:
-        config_path (str): Path to the configuration file.
-
-    Returns:
-        dict: Configuration settings.
-    """
+    """Load configuration settings from a YAML file."""
     try:
         with open(config_path, 'r') as file:
             config = yaml.safe_load(file)
-        print(f"Configuration loaded successfully from {config_path}.")
         return config
-    except FileNotFoundError:
-        print(f"File not found: {config_path}")
-    except yaml.YAMLError:
-        print(f"Error parsing the YAML configuration file: {config_path}")
-    except Exception as e:
-        print(f"Error loading configuration from {config_path}: {e}")
-    return {}
+    except (FileNotFoundError, yaml.YAMLError, Exception):
+        return {}
+
+def get_next_gameweek(data) -> int:
+    """Determine the next gameweek number based on loaded data."""
+    if data.empty or "gameweek" not in data.columns:
+        return 1
+    next_gw = int(data["gameweek"].max()) + 1
+    if not (1 <= next_gw <= 38):
+        next_gw = 1
+    return next_gw
 
 
+def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, dict]:
+    """Fetch Premier League match data for the given gameweek and return a mapping of team to opponent and match info."""
+    api_url = "https://api.football-data.org/v4/competitions/PL/matches"
+    api_key = os.getenv("FPL_API_KEY", "")
+    if not api_key:
+        raise ValueError("API key for football-data.org is not set. Please set the FPL_API_KEY environment variable.")
+
+    headers = {
+        "X-Auth-Token": api_key
+    }
+    params = {"matchday": gameweek}
+
+    response = requests.get(api_url, headers=headers, params=params, timeout=30)
+    response.raise_for_status()
+
+    data = response.json()
+
+    matches = []
+    for match in data.get("matches", []):
+        matches.append({
+            "team_name": match["homeTeam"]["name"],
+            "opponent_team_name": match["awayTeam"]["name"],
+            "utcDate": match["utcDate"],
+            "status": match["status"],
+            "gameweek": match["season"].get("currentMatchday", gameweek),
+            "was_home": True
+        })
+        matches.append({
+            "team_name": match["awayTeam"]["name"],
+            "opponent_team_name": match["homeTeam"]["name"],
+            "utcDate": match["utcDate"],
+            "status": match["status"],
+            "gameweek": match["season"].get("currentMatchday", gameweek),
+            "was_home": False
+        })
+
+    df = pd.DataFrame(matches)
+    if team_mapping:
+        df[["team_name", "opponent_team_name"]] = df[["team_name", "opponent_team_name"]].replace(team_mapping)
+
+    df.set_index("team_name", inplace=True)
+    match_dict = df.to_dict(orient="index")
+    return match_dict
