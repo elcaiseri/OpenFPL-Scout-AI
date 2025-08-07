@@ -1,0 +1,158 @@
+{
+    "scout_team": [
+        {
+            "element_type": "Midfielder",
+            "web_name": "M.Salah",
+            "team_name": "Liverpool",
+            "opponent_team_name": "Bournemouth",
+            "was_home": true,
+            "gameweek": 1,
+            "expected_points": 7.090402202518676,
+            "role": "captain"
+        },
+        {
+            "element_type": "Midfielder",
+            "web_name": "Bowen",
+            "team_name": "West Ham",
+            "opponent_team_name": "Sunderland AFC",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 6.880834983442729,
+            "role": "vice"
+        },
+        {
+            "element_type": "Midfielder",
+            "web_name": "Mbeumo",
+            "team_name": "Brentford",
+            "opponent_team_name": "Nottingham Forest",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 5.9562182007061,
+            "role": ""
+        },
+        {
+            "element_type": "Forward",
+            "web_name": "Wissa",
+            "team_name": "Brentford",
+            "opponent_team_name": "Nottingham Forest",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 5.61605104405157,
+            "role": ""
+        },
+        {
+            "element_type": "Midfielder",
+            "web_name": "J.Murphy",
+            "team_name": "Newcastle United",
+            "opponent_team_name": "Aston Villa",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 5.355324236661688,
+            "role": ""
+        },
+        {
+            "element_type": "Midfielder",
+            "web_name": "Luis D\u00edaz",
+            "team_name": "Liverpool",
+            "opponent_team_name": "Bournemouth",
+            "was_home": true,
+            "gameweek": 1,
+            "expected_points": 5.129745216771147,
+            "role": ""
+        },
+        {
+            "element_type": "Defender",
+            "web_name": "Cucurella",
+            "team_name": "Chelsea",
+            "opponent_team_name": "Crystal Palace",
+            "was_home": true,
+            "gameweek": 1,
+            "expected_points": 5.022898162114835,
+            "role": ""
+        },
+        {
+            "element_type": "Forward",
+            "web_name": "Marmoush",
+            "team_name": "Manchester City",
+            "opponent_team_name": "Wolverhampton Wanderers",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.758516875900246,
+            "role": ""
+        },
+        {
+            "element_type": "Forward",
+            "web_name": "Watkins",
+            "team_name": "Aston Villa",
+            "opponent_team_name": "Newcastle United",
+            "was_home": true,
+            "gameweek": 1,
+            "expected_points": 4.755265459088012,
+            "role": ""
+        },
+        {
+            "element_type": "Goalkeeper",
+            "web_name": "Flekken",
+            "team_name": "Brentford",
+            "opponent_team_name": "Nottingham Forest",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.56026685702697,
+            "role": ""
+        },
+        {
+            "element_type": "Defender",
+            "web_name": "Mu\u00f1oz",
+            "team_name": "Crystal Palace",
+            "opponent_team_name": "Chelsea",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.356677482151185,
+            "role": ""
+        },
+        {
+            "element_type": "Defender",
+            "web_name": "Gvardiol",
+            "team_name": "Manchester City",
+            "opponent_team_name": "Wolverhampton Wanderers",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.290436125176819,
+            "role": ""
+        },
+        {
+            "element_type": "Defender",
+            "web_name": "A\u00eft-Nouri",
+            "team_name": "Wolverhampton Wanderers",
+            "opponent_team_name": "Manchester City",
+            "was_home": true,
+            "gameweek": 1,
+            "expected_points": 4.276529299505918,
+            "role": ""
+        },
+        {
+            "element_type": "Defender",
+            "web_name": "Sch\u00e4r",
+            "team_name": "Newcastle United",
+            "opponent_team_name": "Aston Villa",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.189600887232329,
+            "role": ""
+        },
+        {
+            "element_type": "Goalkeeper",
+            "web_name": "Ederson M.",
+            "team_name": "Manchester City",
+            "opponent_team_name": "Wolverhampton Wanderers",
+            "was_home": false,
+            "gameweek": 1,
+            "expected_points": 4.169898532244669,
+            "role": ""
+        }
+    ],
+    "player_points": [],
+    "gameweek": 1,
+    "version": "1.1.0",
+    "credits": "OpenFPL-Scout - Developed by Kassem@elcaiseri.com, @2025"
+}
