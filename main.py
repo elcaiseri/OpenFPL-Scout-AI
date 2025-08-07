@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException, Path
 
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import pandas as pd
 
-from src.utils import load_config
+from src.utils import load_config, save_scout_team_to_json
 from src.logger import get_logger
 from src.scout import FPLScout
 from src.models import ResponseModel
@@ -21,6 +23,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# mount ui
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
 app.state.predictions_cache = {}
 
 # Load configuration and model paths
@@ -29,10 +35,17 @@ config = load_config('config/config.yaml')
 data_path = 'data/external/fpl-data-stats-2.csv'
 
 # --- Endpoints ---
-
-@app.get("/")
+@app.get("/", tags=["Root"])
 async def root():
-    logger.info("Root endpoint called")
+    """Serve the main HTML page."""
+    with open("static/index.html") as f:
+        html_content = f.read()
+
+    return HTMLResponse(content=html_content, status_code=200, media_type="text/html")
+
+@app.get("/api", tags=["API"])
+async def api_root():
+    logger.info("API root endpoint called")
     return {
         "message": "OpenFPL - AI Fantasy Premier League Scout",
         "version": "1.0.0",
@@ -40,12 +53,12 @@ async def root():
         "documentation": "/docs"
     }
 
-@app.get("/health", tags=["Health Check"])
+@app.get("/api/health", tags=["Health Check"])
 async def health_check():
     logger.info("Health check endpoint called")
     return {"status": "healthy"}
 
-@app.post("/scout", response_model=ResponseModel, tags=["Scout"])
+@app.post("/api/scout", response_model=ResponseModel, tags=["Scout"])
 async def get_scout_team(file: UploadFile = File(...)):
     logger.info("Scout team endpoint (with upload) called")
     cache = app.state.predictions_cache
@@ -68,11 +81,15 @@ async def get_scout_team(file: UploadFile = File(...)):
 
         scout_team = scout.select_optimal_team(player_predictions_df)
 
-        return ResponseModel(
+
+        response = ResponseModel(
             scout_team=scout_team,
             player_points=[],
             gameweek=scout.gameweek
         )
+        save_scout_team_to_json(response, scout.gameweek)
+
+        return response
     except Exception as e:
         logger.error(f"Error in /scout endpoint: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
