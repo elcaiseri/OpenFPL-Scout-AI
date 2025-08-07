@@ -1,14 +1,20 @@
 # OpenFPL-Scout-AI
 
-OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It leverages historical stats, live fixtures, and advanced ML models.
+![OpenFPL Scout AI](assets/openfpl-scout-preview.png)
+
+OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
 
 ## Features
 
-- Ensemble predictions (Linear Regression, XGBoost, CatBoost)
-- Real-time fixture and match data integration
-- Fast, async player predictions
-- Automated optimal team selection (by position)
-- Captain/vice-captain assignment
+- 🎯 **AI-Powered Predictions**: Ensemble ML models (Linear Regression, XGBoost, CatBoost)
+- ⚽ **Interactive Web UI**: Beautiful pitch visualization with player cards
+- 📊 **Real-time Data**: Live fixture and match data integration
+- 🚀 **Fast Performance**: Async player predictions and caching
+- 🏆 **Smart Team Selection**: Automated optimal team selection by position
+- 👑 **Captain Assignment**: Intelligent captain/vice-captain selection
+- 📱 **Mobile Responsive**: Works perfectly on all devices
+- 📸 **Screenshot Feature**: Download your team lineup as PNG
+- 🎨 **Professional Design**: FPL-themed UI with gradient backgrounds
 
 ## Installation
 
@@ -20,14 +26,25 @@ docker run -d -p 8000:8000 --name openfpl-api openfpl-scout-ai
 
 ## Usage
 
+### Web Interface
+Visit [http://localhost:8000](http://localhost:8000) for the interactive team visualization:
+
+- **Visual Team Display**: See your optimal team laid out on a football pitch
+- **Player Cards**: Detailed cards showing player stats, fixtures, and expected points
+- **Gameweek Selection**: Navigate between different gameweeks
+- **Screenshot Export**: Download your team lineup as a high-quality image
+- **Interactive Elements**: Click on player cards for detailed information
+
+### API Documentation
 API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ### Endpoints
 
-- `POST /scout` — Upload FPL stats CSV, receive optimal team and predictions
-- `GET /health` — Health check
+- `GET /` — Interactive web interface with team visualization
+- `POST /api/scout` — Upload FPL stats CSV, receive optimal team and predictions
+- `GET /api/health` — Health check
 
-**Sample `/scout` response:**
+**Sample `/api/scout` response:**
 ```json
 {
   "scout_team": [
@@ -52,6 +69,21 @@ API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
   "credits": "OpenFPL-Scout-AI - Developed by Kassem@elcaiseri.com, 2025"
 }
 ```
+
+## Screenshots
+
+The web interface provides a beautiful visualization of your optimal FPL team:
+
+![Team Visualization](assets/FPL-Scout-Team-GW1-2025-08-07.png)
+
+Features of the UI:
+- **Football Pitch Layout**: Players arranged in realistic formation
+- **Color-Coded Positions**: Goalkeepers (Orange), Defenders (Blue), Midfielders (Light Blue), Forwards (Green)
+- **Captain Badges**: Golden 'C' for captain, Silver 'VC' for vice-captain
+- **Fixture Information**: Opponent teams and home/away indicators
+- **Expected Points**: AI-predicted points for each player
+- **Team Statistics**: Total expected points and player count
+- **Responsive Design**: Works on desktop, tablet, and mobile devices
 
 ## Model Overview
 
@@ -87,6 +119,9 @@ FPL_API_KEY=your_api_key_here
 
 ## What's New
 
+- **🎨 Beautiful Web Interface**: Interactive team visualization with football pitch layout
+- **📸 Screenshot Feature**: Export your team lineup as high-quality PNG images
+- **📱 Mobile Responsive**: Perfect experience on all devices
 - **2024/2025 Season**: Models updated with latest data
 - **CatBoost Integration**: Improved ML pipeline ([Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
 - **RESTful API**: FastAPI endpoints for team selection and predictions
@@ -101,9 +136,10 @@ FPL_API_KEY=your_api_key_here
 
 Contributions welcome! Ideas for improvement:
 - Enhanced algorithms and selection logic
-- Web/mobile interfaces
+- Additional UI features and visualizations
 - Player injury/form tracking
 - Better documentation
+- Mobile app development
 
 Fork, branch, and submit a pull request.
 
