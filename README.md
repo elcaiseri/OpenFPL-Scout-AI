@@ -1,6 +1,6 @@
-# OpenFPL
+# OpenFPL-Scout-AI
 
-**OpenFPL** - An AI-powered Fantasy Premier League Scout that leverages machine learning models to predict player performances and optimize your FPL team selections. This project combines historical data, real-time match information, and advanced ML models including Linear Regression, XGBoost, and CatBoost to help you build the best possible team.
+**OpenFPL-Scout-AI** is an AI-powered Fantasy Premier League Scout leveraging machine learning models to predict player performances and optimize your FPL team selections. This project combines historical data, real-time match information, and advanced ML models (Linear Regression, XGBoost, CatBoost) to help you build the best possible team.
 
 ## Table of Contents
 - [Project Overview](#project-overview)
@@ -8,8 +8,8 @@
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-   - [Running the FPL Scout API](#running-the-fpl-scout-api)
-   - [API Endpoints](#api-endpoints)
+  - [Running the FPL Scout API](#running-the-fpl-scout-api)
+  - [API Endpoints](#api-endpoints)
 - [Model Information](#model-information)
 - [API Integration](#api-integration)
 - [Scripts Explanation](#scripts-explanation)
@@ -19,7 +19,7 @@
 
 ## Project Overview
 
-OpenFPL is an AI Fantasy Premier League Scout that uses machine learning to predict player performances for upcoming gameweeks. The system fetches live match data, processes historical player statistics, and uses an ensemble of trained models to provide accurate predictions and optimal team selections.
+OpenFPL-Scout-AI uses machine learning to predict player performances for upcoming gameweeks. The system fetches live match data, processes historical player statistics, and uses an ensemble of trained models to provide accurate predictions and optimal team selections.
 
 **Key Features:**
 - Multi-model ensemble (Linear Regression, XGBoost, CatBoost)
@@ -32,7 +32,7 @@ OpenFPL is an AI Fantasy Premier League Scout that uses machine learning to pred
 ## Project Structure
 
 ```
-OpenFPL/
+OpenFPL-Scout-AI/
 │
 ├── config/                   # Configuration files
 │   └── config.yaml           # Model paths, team mappings, API settings
@@ -62,40 +62,40 @@ OpenFPL/
 ### Local Development
 
 1. **Clone the repository**:
-    ```bash
-    git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
-    cd Fantasy-Premier-League-LTX
-    ```
+   ```bash
+   git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
+   cd Fantasy-Premier-League-LTX
+   ```
 
 2. **Create a virtual environment**:
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+   ```
 
 3. **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 4. **Set up API Key**:
-    ```bash
-    export FPL_API_KEY="your_football_data_api_key"
-    ```
+   ```bash
+   export FPL_API_KEY="your_football_data_api_key"
+   ```
 
 ### Docker Deployment
 
 1. **Clone the repository**:
-    ```bash
-    git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
-    cd Fantasy-Premier-League-LTX
-    ```
+   ```bash
+   git clone https://github.com/elcaiseri/Fantasy-Premier-League-LTX.git
+   cd Fantasy-Premier-League-LTX
+   ```
 
 2. **Build and run with Docker**:
-    ```bash
-    docker build -t openfpl .
-    docker run -p 8000:8000 -e FPL_API_KEY="your_api_key" openfpl
-    ```
+   ```bash
+   docker build -t openfpl-scout-ai .
+   docker run -p 8000:8000 -e FPL_API_KEY="your_api_key" openfpl-scout-ai
+   ```
 
 ## Configuration
 
@@ -127,14 +127,14 @@ Build and run the application using Docker:
 
 ```bash
 # Build the Docker image
-docker build -t openfpl .
+docker build -t openfpl-scout-ai .
 
 # Run the container
 docker run -d \
   --name openfpl-api \
   -p 8000:8000 \
   -e FPL_API_KEY="your_football_data_api_key" \
-  openfpl
+  openfpl-scout-ai
 
 # Check container status
 docker ps
@@ -149,22 +149,22 @@ Create a `docker-compose.yml` file:
 ```yaml
 version: '3.8'
 services:
-  openfpl:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - FPL_API_KEY=your_football_data_api_key
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./config:/app/config
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  openfpl-scout-ai:
+   build: .
+   ports:
+    - "8000:8000"
+   environment:
+    - FPL_API_KEY=your_football_data_api_key
+   volumes:
+    - ./data:/app/data
+    - ./models:/app/models
+    - ./config:/app/config
+   restart: unless-stopped
+   healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
 ```
 
 Then run:
@@ -197,23 +197,23 @@ curl http://localhost:8000/health
 ```json
 {
   "content": [
-    {
-      "element_type": "Goalkeeper",
-      "web_name": "Alisson",
-      "team_name": "Liverpool",
-      "expected_points": 5.2,
-      "role": null
-    },
-    {
-      "element_type": "Defender",
-      "web_name": "Alexander-Arnold",
-      "team_name": "Liverpool",
-      "expected_points": 8.1,
-      "role": "captain"
-    }
+   {
+    "element_type": "Goalkeeper",
+    "web_name": "Alisson",
+    "team_name": "Liverpool",
+    "expected_points": 5.2,
+    "role": null
+   },
+   {
+    "element_type": "Defender",
+    "web_name": "Alexander-Arnold",
+    "team_name": "Liverpool",
+    "expected_points": 8.1,
+    "role": "captain"
+   }
   ],
   "version": "1.0.0",
-  "credits": "OpenFPL - Developed by Kassem@elcaiseri, 2025"
+  "credits": "OpenFPL-Scout-AI - Developed by Kassem@elcaiseri, 2025"
 }
 ```
 
@@ -229,8 +229,8 @@ Access the interactive API documentation at `http://localhost:8000/docs`
 | Model             | Version | Description                    |
 |-------------------|---------|--------------------------------|
 | Linear Regression | v2.0    | Baseline linear model          |
-| XGBoost          | v2.0    | Gradient boosting ensemble     |
-| CatBoost         | v1.0    | Categorical boosting model     |
+| XGBoost           | v2.0    | Gradient boosting ensemble     |
+| CatBoost          | v1.0    | Categorical boosting model     |
 
 **Model Features:**
 - Ensemble predictions for improved accuracy
@@ -239,7 +239,7 @@ Access the interactive API documentation at `http://localhost:8000/docs`
 
 ## API Integration
 
-OpenFPL integrates with the Football Data API to fetch:
+OpenFPL-Scout-AI integrates with the Football Data API to fetch:
 - Live match fixtures
 - Team vs team matchups
 - Home/away status
@@ -272,7 +272,7 @@ FPL_API_KEY=your_api_key_here
 - Structured JSON responses with content, version, and credits
 - Type validation and serialization
 
-## What's New in OpenFPL
+## What's New in OpenFPL-Scout-AI
 
 - **🎯 Fine-Tuned for 2024/2025 Season**: Models optimized and trained on the latest Premier League season data for maximum accuracy
 - **🚀 CatBoost Integration**: Enhanced machine learning pipeline with CatBoost algorithm implementation (addressing [GitHub Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
