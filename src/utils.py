@@ -3,6 +3,7 @@ import yaml
 import os
 import requests
 from typing import Dict
+import json
 
 def load_config(config_path):
     """Load configuration settings from a YAML file."""
@@ -66,3 +67,11 @@ def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, d
     df.set_index("team_name", inplace=True)
     match_dict = df.to_dict(orient="index")
     return match_dict
+
+def save_scout_team_to_json(scout_team, gameweek: int):
+    """Save scout team data to a JSON file."""
+    scout_team_json = scout_team.model_dump()
+    save_dir = "data/internal/scout_team"
+    os.makedirs(save_dir, exist_ok=True)
+    with open(f"{save_dir}/gw_{gameweek}.json", "w") as json_file:
+        json.dump(scout_team_json, json_file, indent=4)
