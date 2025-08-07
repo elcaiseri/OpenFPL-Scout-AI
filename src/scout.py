@@ -1,30 +1,28 @@
-from glob import glob
-from logging import config
 import joblib
 import pandas as pd
 import numpy as np
 import asyncio
 from typing import List, Dict, Any, Optional
-import requests
-import os
 
 from src.logger import get_logger
-from src.utils import load_config
+from src.utils import fetch_gw_match_data, load_config
 
 import warnings
 warnings.filterwarnings("ignore")
 
 # Configure logger
 logger = get_logger(__name__)
-config = load_config('config/config.yaml')
-print(f"Configuration loaded: {config}")
+#config = load_config('config/config.yaml')
+#print(f"Configuration loaded: {config}")
 
 
 class FPLScout:
     """Fantasy Premier League player scout for prediction and team selection."""
 
-    def __init__(self, model_paths: List[str], data_path: Optional[str] = None, gameweek: Optional[int] = None, cached: bool = False):
+    def __init__(self, config, data_path: str, gameweek: Optional[int] = None):
         # Configuration constants
+        self.config = config
+        self.data_path = data_path
         self.CATEGORICAL_COLS = config['categorical_columns']
         self.TOP_N_BY_POSITION = {1: 2, 2: 5, 3: 5, 4: 3}  # GK, DEF, MID, FWD
         self.POSITION_MAPPING = {
@@ -37,16 +35,11 @@ class FPLScout:
 
         logger.info("Initializing FPLScout...")
         # Load models and data
-        self.models = self._load_models(model_paths)
+        self.models = self._load_models([meta['path'] for meta in config['models'].values()])
         self.data = self._load_data(data_path, gameweek)
-        self.gameweek = gameweek or self._get_next_gameweek()
+        self.gameweek = gameweek or self._set_gameweek()
 
         self.team_mapping = config.get('team_name_mapping', {})
-
-        if not cached:
-            self.gw_match_data = self._fetch_gw_match_data()
-        else:
-            self.gw_match_data = {}
 
         logger.info(f"FPLScout initialized for gameweek {self.gameweek}.")
 
@@ -72,15 +65,13 @@ class FPLScout:
         logger.info(f"Loaded {len(data)} rows of player data.")
         return data
 
-    def _get_next_gameweek(self) -> int:
-        """Get the next gameweek number (1-38)."""
-        if self.data.empty or self.data.gameweek.max() < 1:
+    def _set_gameweek(self) -> int:
+        """Determine the next gameweek based on loaded data."""
+        if self.data.empty or 'gameweek' not in self.data.columns:
+            return 1
+        next_gw = int(self.data['gameweek'].max()) + 1
+        if not (1 <= next_gw <= 38):
             next_gw = 1
-        else:
-            next_gw = int(self.data.gameweek.max()) + 1
-        # Ensure next_gw is within 1 and 38
-        next_gw = max(1, min(next_gw, 38))
-        logger.info(f"Next gameweek determined as {next_gw}.")
         return next_gw
 
     def _preprocess_player_data(self,
@@ -116,10 +107,12 @@ class FPLScout:
         logger.info("Generating player predictions...")
         prediction_tasks = []
 
+        gw_match_data = fetch_gw_match_data(self.gameweek, self.config["team_name_mapping"])
+
         for (player_name, team_name), group in self.data.groupby(['web_name', 'team_name']):
             # TODO: Replace with realistic fixture data
-            opponent_team = self.gw_match_data.get(team_name, {}).get('opponent_team_name', 'Unknown')
-            is_home = self.gw_match_data.get(team_name, {}).get('was_home', False)
+            opponent_team = gw_match_data.get(team_name, {}).get('opponent_team_name', 'Unknown')
+            is_home = gw_match_data.get(team_name, {}).get('was_home', False)
 
             processed_group = self._preprocess_player_data(group, opponent_team, is_home)
             prediction_tasks.append(self._create_prediction_task(processed_group))
@@ -176,60 +169,10 @@ class FPLScout:
 
         return team_df
 
-    def _fetch_gw_match_data(self) -> Dict[str, dict]:
-        """
-        Fetch Premier League match data for the current gameweek and return a mapping of team to opponent and match info.
-        """
-
-        api_url = "https://api.football-data.org/v4/competitions/PL/matches"
-        api_key = os.getenv("FPL_API_KEY", "")
-        if not api_key:
-            logger.error("API key for football-data.org is not set. Please set the FPL_API_KEY environment variable.")
-            raise ValueError("API key not set.")
-
-        headers = {
-            "X-Auth-Token": api_key
-        }
-        params = {"matchday": self.gameweek}
-
-        logger.info(f"Fetching PL match data for gameweek {self.gameweek}...")
-        response = requests.get(api_url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()  # Raise an error for bad responses
-
-        data = response.json()
-
-        matches = []
-        for match in data.get("matches", []):
-            matches.append({
-                "team_name": match["homeTeam"]["name"],
-                "opponent_team_name": match["awayTeam"]["name"],
-                "utcDate": match["utcDate"],
-                "status": match["status"],
-                "gameweek": match["season"].get("currentMatchday", self.gameweek),
-                "was_home": True
-            })
-            matches.append({
-                "team_name": match["awayTeam"]["name"],
-                "opponent_team_name": match["homeTeam"]["name"],
-                "utcDate": match["utcDate"],
-                "status": match["status"],
-                "gameweek": match["season"].get("currentMatchday", self.gameweek),
-                "was_home": False
-            })
-
-        df = pd.DataFrame(matches)
-        if hasattr(self, "team_mapping") and self.team_mapping:
-            df[["team_name", "opponent_team_name"]] = df[["team_name", "opponent_team_name"]].replace(self.team_mapping)
-
-        df.set_index("team_name", inplace=True)
-        match_dict = df.to_dict(orient="index")
-        logger.info(f"Fetched {len(match_dict)//2} PL matches for gameweek {self.gameweek}.")
-        return match_dict
-
 if __name__ == "__main__":
     # Example usage
     data_path = "data/external/fpl-data-stats-2.csv"
-    model_paths = [meta_data['path'] for meta_data in config['models'].values()]
+    model_paths = [meta_data['path'] for meta_data in self.config['models'].values()]
     gameweek = 1
 
     async def main():
