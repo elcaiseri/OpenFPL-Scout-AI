@@ -6,4 +6,4 @@ class ResponseModel(BaseModel):
     player_points: List[Dict[str, Any]] = []
     gameweek: int
     version: str = "1.1.0"
-    credits: str = "OpenFPL-Scout - Developed by Kassem@elcaiseri.com, @2025"
+    credits: str = "OpenFPL-Scout AI - Developed by Kassem@elcaiseri.com, @2025"
