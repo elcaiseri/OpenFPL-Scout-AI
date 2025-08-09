@@ -73,7 +73,6 @@ const domElements = {
     get totalPoints() { return document.getElementById('total-points'); },
     get playerCount() { return document.getElementById('player-count'); },
     get credits() { return document.getElementById('credits'); },
-    get screenshotBtn() { return document.getElementById('screenshot-btn'); },
     get container() { return document.querySelector('.container'); }
 };
 
@@ -419,101 +418,6 @@ const gameweekManager = {
     }
 };
 
-// Screenshot Functionality
-const screenshotManager = {
-    /**
-     * Take screenshot of the team display
-     */
-    async takeScreenshot() {
-        const button = domElements.screenshotBtn;
-        const container = domElements.container;
-
-        if (!button || !container) return;
-
-        try {
-            uiStateManager.setButtonLoading(button, true, '📸 Capturing...');
-
-            // Wait for UI update
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // Scroll to top for proper positioning
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-
-            // Wait for scroll to complete
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            if (typeof html2canvas === 'undefined') {
-                throw new Error('Screenshot library not available');
-            }
-
-            const canvas = await html2canvas(container, this.getScreenshotOptions(container));
-            this.downloadScreenshot(canvas);
-
-            uiStateManager.setButtonLoading(button, false, '✅ Downloaded!');
-            setTimeout(() => {
-                uiStateManager.setButtonLoading(button, false, '📸 Screenshot');
-            }, 2000);
-
-        } catch (error) {
-            console.error('Screenshot failed:', error);
-            uiStateManager.setButtonLoading(button, false, '❌ Failed');
-            
-            setTimeout(() => {
-                uiStateManager.setButtonLoading(button, false, '📸 Screenshot');
-            }, 2000);
-
-            // Fallback to print dialog
-            this.fallbackScreenshot();
-        }
-    },
-
-    /**
-     * Get screenshot configuration options
-     */
-    getScreenshotOptions(container) {
-        return {
-            backgroundColor: '#667eea',
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            logging: false,
-            width: container.offsetWidth,
-            height: container.offsetHeight,
-            x: 0,
-            y: 0,
-            scrollX: 0,
-            scrollY: 0,
-            windowWidth: window.innerWidth,
-            windowHeight: window.innerHeight
-        };
-    },
-
-    /**
-     * Download the screenshot
-     */
-    downloadScreenshot(canvas) {
-        const link = document.createElement('a');
-        const date = new Date().toISOString().split('T')[0];
-        link.download = `FPL-Scout-Team-GW${appState.currentGameweek}-${date}.png`;
-        link.href = canvas.toDataURL('image/png', 1.0);
-
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    },
-
-    /**
-     * Fallback screenshot method
-     */
-    fallbackScreenshot() {
-        if (window.print) {
-            window.print();
-        } else {
-            alert('Screenshot feature not supported. Please use your device\'s built-in screenshot function.');
-        }
-    }
-};
-
 // Event Handlers
 const eventHandlers = {
     /**
@@ -578,22 +482,6 @@ const eventListeners = {
         const gameweekSelect = domElements.gameweekSelect;
         if (gameweekSelect) {
             gameweekSelect.addEventListener('change', eventHandlers.handleGameweekChange);
-        }
-
-        // Screenshot button
-        const screenshotBtn = domElements.screenshotBtn;
-        if (screenshotBtn) {
-            screenshotBtn.addEventListener('click', () => screenshotManager.takeScreenshot());
-        }
-
-        // Keyboard accessibility for screenshot
-        if (screenshotBtn) {
-            screenshotBtn.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    screenshotManager.takeScreenshot();
-                }
-            });
         }
     }
 };

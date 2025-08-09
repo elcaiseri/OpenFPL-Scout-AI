@@ -10,9 +10,6 @@
 
     <title>FPL Scout Team - OpenFPL AI</title>
 
-    <!-- External Libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-
     <!-- Local Styles -->
     <link rel="stylesheet" href="static/style.css">
 </head>
@@ -28,14 +25,9 @@
         <!-- Controls Section -->
         <section class="gameweek-selector">
             <label for="gameweek-select">Select Gameweek:</label>
-            <div class="screenshot-controls">
-                <select id="gameweek-select" aria-label="Select gameweek to view">
-                    <option value="">Loading gameweeks...</option>
-                </select>
-                <button id="screenshot-btn" class="screenshot-button" aria-label="Take screenshot of current team">
-                    📸 Screenshot
-                </button>
-            </div>
+            <select id="gameweek-select" aria-label="Select gameweek to view">
+                <option value="">Loading gameweeks...</option>
+            </select>
         </section>
 
         <!-- Statistics Section -->

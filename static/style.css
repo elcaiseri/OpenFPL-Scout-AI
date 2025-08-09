@@ -139,44 +139,6 @@ body::after {
     box-shadow: 0 0 0 3px rgba(0, 255, 135, 0.2);
 }
 
-/* === SCREENSHOT CONTROLS === */
-.screenshot-controls {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.screenshot-button {
-    background: var(--header-gradient);
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: var(--border-radius);
-    font-size: 1rem;
-    font-weight: bold;
-    cursor: pointer;
-    margin-left: 10px;
-    transition: var(--transition-normal);
-    box-shadow: var(--shadow-medium);
-}
-
-.screenshot-button:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-heavy);
-}
-
-.screenshot-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.screenshot-button:active {
-    transform: translateY(0);
-}
-
 /* === PITCH/FIELD === */
 .pitch {
     background: linear-gradient(90deg, #228B22 0%, #32CD32 50%, #228B22 100%);
@@ -546,17 +508,6 @@ body::after {
         font-size: 0.9rem;
         min-width: 120px;
     }
-
-    .screenshot-button {
-        margin-left: 0;
-        margin-top: 10px;
-        width: 100%;
-        max-width: 200px;
-    }
-
-    .screenshot-controls {
-        flex-direction: column;
-    }
 }
 
 /* Mobile optimizations */
@@ -632,10 +583,6 @@ body::after {
         display: none;
     }
 
-    .screenshot-button {
-        display: none;
-    }
-
     body::before {
         color: rgba(0, 0, 0, 0.03) !important;
     }
@@ -683,7 +630,6 @@ body::after {
 
 /* === FOCUS ACCESSIBILITY === */
 .player-card:focus,
-.screenshot-button:focus,
 .gameweek-selector select:focus {
     outline: 2px solid var(--primary-green);
     outline-offset: 2px;
