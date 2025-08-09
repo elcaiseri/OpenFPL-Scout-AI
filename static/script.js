@@ -88,7 +88,7 @@ const playerCardRenderer = {
         const homeIndicator = formattedPlayer.was_home ? 'home' : 'away';
 
         return `
-            <div class="player-card ${roleClass}" 
+            <div class="player-card ${roleClass}"
                  data-player='${JSON.stringify(formattedPlayer)}'
                  tabindex="0"
                  role="button"
@@ -97,8 +97,8 @@ const playerCardRenderer = {
                 <div class="player-name">${formattedPlayer.web_name}</div>
                 <div class="team-name">${formattedPlayer.team_name}</div>
                 <div class="fixture">
-                    vs ${formattedPlayer.opponent_team_name} 
-                    <span class="home-indicator ${homeIndicator}" 
+                    vs ${formattedPlayer.opponent_team_name}
+                    <span class="home-indicator ${homeIndicator}"
                           aria-label="${formattedPlayer.was_home ? 'Home' : 'Away'} game"></span>
                 </div>
                 <div class="expected-points">${formattedPlayer.expected_points.toFixed(2)}</div>
@@ -144,7 +144,7 @@ const teamRenderer = {
 
         const positions = this.groupPlayersByPosition(data.scout_team);
         const pitchHTML = this.createFormationHTML(positions);
-        
+
         domElements.pitch.innerHTML = pitchHTML;
         domElements.pitch.classList.add('fade-in');
     },
@@ -180,7 +180,7 @@ const teamRenderer = {
      */
     createFormationHTML(positions) {
         const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
-        
+
         return positionOrder.map(position => {
             const players = positions[position];
             if (!players || players.length === 0) return '';
@@ -399,12 +399,12 @@ const gameweekManager = {
         try {
             appState.isLoading = true;
             const data = await dataLoader.loadDataFromFile(gameweek);
-            
+
             appState.currentData = data;
             teamRenderer.renderTeam(data);
             statisticsManager.updateStatistics(data);
             uiStateManager.updateHeaderAndCredits(data);
-            
+
         } catch (error) {
             const errorMessage = `
                 <strong>Error loading Gameweek ${gameweek} data</strong><br>
@@ -456,7 +456,7 @@ Position: ${playerData.element_type}
 Fixture: ${playerData.team_name} vs ${playerData.opponent_team_name} (${playerData.was_home ? 'Home' : 'Away'})
 Expected Points: ${playerData.expected_points.toFixed(2)}${playerData.role ? `\nRole: ${playerData.role.charAt(0).toUpperCase() + playerData.role.slice(1)}` : ''}
         `.trim();
-        
+
         alert(message);
     },
 
