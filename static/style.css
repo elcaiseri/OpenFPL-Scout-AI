@@ -1,0 +1,701 @@
+/* === RESET & BASE STYLES === */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    /* Color Variables */
+    --primary-purple: #37003c;
+    --primary-green: #00ff87;
+    --background-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --header-gradient: linear-gradient(135deg, #37003c 0%, #00ff87 100%);
+
+    /* Position Colors */
+    --goalkeeper-color: #FF6B35;
+    --defender-color: #004E98;
+    --midfielder-color: #3A86FF;
+    --forward-color: #06FFA5;
+
+    /* Typography */
+    --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+    /* Spacing */
+    --border-radius: 8px;
+    --border-radius-large: 15px;
+    --shadow-light: 0 2px 10px rgba(0, 0, 0, 0.1);
+    --shadow-medium: 0 4px 15px rgba(0, 0, 0, 0.15);
+    --shadow-heavy: 0 8px 20px rgba(0, 0, 0, 0.2);
+
+    /* Transitions */
+    --transition-fast: 0.2s ease;
+    --transition-normal: 0.3s ease;
+}
+
+body {
+    font-family: var(--font-family);
+    background: var(--background-gradient);
+    min-height: 100vh;
+    padding: 10px;
+    position: relative;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+/* === WATERMARKS === */
+body::before {
+    content: "@elcaiseri";
+    position: absolute;
+    top: auto;
+    left: auto;
+    transform: none;
+    font-size: 1.9rem;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.8);
+    z-index: 10;
+    pointer-events: none;
+    white-space: nowrap;
+    background: rgba(55, 0, 60, 0.7);
+    padding: 4px 8px;
+    border-radius: 4px;
+    backdrop-filter: blur(2px);
+    display: none;
+}
+
+body::after {
+    content: "@elcaiseri";
+    position: fixed;
+    bottom: 10px;
+    right: 15px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.7);
+    z-index: 1000;
+    pointer-events: none;
+    background: rgba(55, 0, 60, 0.8);
+    padding: 4px 8px;
+    border-radius: 4px;
+    backdrop-filter: blur(2px);
+}
+
+/* === MAIN CONTAINER === */
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    background: white;
+    border-radius: var(--border-radius-large);
+    box-shadow: var(--shadow-medium);
+    overflow: visible;
+    position: relative;
+    z-index: 2;
+}
+
+/* === HEADER === */
+.header {
+    background: var(--header-gradient);
+    color: white;
+    padding: 15px 20px;
+    text-align: center;
+    position: relative;
+}
+
+.header h1 {
+    font-size: 1.8rem;
+    margin-bottom: 5px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.header .gameweek {
+    font-size: 1rem;
+    opacity: 0.9;
+}
+
+/* === GAMEWEEK SELECTOR === */
+.gameweek-selector {
+    margin: 10px 20px;
+    text-align: center;
+}
+
+.gameweek-selector select {
+    padding: 8px 12px;
+    border: 2px solid var(--primary-purple);
+    border-radius: var(--border-radius);
+    background: white;
+    color: var(--primary-purple);
+    font-size: 1rem;
+    cursor: pointer;
+    min-width: 150px;
+    transition: var(--transition-normal);
+}
+
+.gameweek-selector select:hover {
+    border-color: var(--primary-green);
+}
+
+.gameweek-selector select:focus {
+    outline: none;
+    border-color: var(--primary-green);
+    box-shadow: 0 0 0 3px rgba(0, 255, 135, 0.2);
+}
+
+/* === SCREENSHOT CONTROLS === */
+.screenshot-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.screenshot-button {
+    background: var(--header-gradient);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: var(--transition-normal);
+    box-shadow: var(--shadow-medium);
+}
+
+.screenshot-button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-heavy);
+}
+
+.screenshot-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.screenshot-button:active {
+    transform: translateY(0);
+}
+
+/* === PITCH/FIELD === */
+.pitch {
+    background: linear-gradient(90deg, #228B22 0%, #32CD32 50%, #228B22 100%);
+    background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+    background-size: 15px 15px;
+    padding: 20px 15px;
+    position: relative;
+}
+
+/* === FORMATION LINES === */
+.formation-line {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 15px 0;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* === PLAYER CARDS === */
+.player-card {
+    background: white;
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+    box-shadow: var(--shadow-medium);
+    transition: var(--transition-normal);
+    cursor: pointer;
+    min-width: 100px;
+    max-width: 130px;
+    position: relative;
+    border: 2px solid transparent;
+    flex: 1;
+}
+
+.player-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-heavy);
+}
+
+.player-card:active {
+    transform: translateY(0);
+}
+
+.player-card.captain {
+    border-color: #FFD700;
+    background: linear-gradient(145deg, #fff 0%, #FFF8DC 100%);
+}
+
+.player-card.vice {
+    border-color: #C0C0C0;
+    background: linear-gradient(145deg, #fff 0%, #F5F5F5 100%);
+}
+
+/* Player Card Content */
+.player-name {
+    font-weight: bold;
+    font-size: 0.85rem;
+    color: var(--primary-purple);
+    margin-bottom: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.team-name {
+    font-size: 0.7rem;
+    color: #666;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fixture {
+    font-size: 0.65rem;
+    color: #888;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.expected-points {
+    background: var(--primary-purple);
+    color: white;
+    padding: 3px 6px;
+    border-radius: 15px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    display: inline-block;
+}
+
+/* === ROLE BADGES === */
+.role-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.7rem;
+    box-shadow: var(--shadow-light);
+}
+
+.role-badge.captain {
+    background: #FFD700;
+    color: var(--primary-purple);
+}
+
+.role-badge.vice {
+    background: #C0C0C0;
+    color: var(--primary-purple);
+}
+
+/* === POSITION LABELS === */
+.position-label {
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 1rem;
+    font-weight: bold;
+    color: white;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    padding: 5px 15px;
+    border-radius: 20px;
+    display: block;
+    width: fit-content;
+    margin: 0 auto 15px auto;
+    position: relative;
+}
+
+.position-label.midfielder::after {
+    content: "@elcaiseri";
+    position: absolute;
+    right: -80px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.7rem;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(55, 0, 60, 0.8);
+    padding: 3px 6px;
+    border-radius: 3px;
+    backdrop-filter: blur(2px);
+    white-space: nowrap;
+}
+
+/* Position-specific colors */
+.goalkeeper {
+    background: var(--goalkeeper-color);
+}
+
+.defender {
+    background: var(--defender-color);
+}
+
+.midfielder {
+    background: var(--midfielder-color);
+}
+
+.forward {
+    background: var(--forward-color);
+}
+
+/* === HOME/AWAY INDICATORS === */
+.home-indicator {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-left: 3px;
+}
+
+.home-indicator.home {
+    background: var(--primary-green);
+}
+
+.home-indicator.away {
+    background: #ff4757;
+}
+
+/* === STATISTICS SECTION === */
+.stats-section {
+    padding: 15px 20px;
+    background: #f8f9fa;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.stat-card {
+    background: white;
+    padding: 12px;
+    border-radius: var(--border-radius);
+    text-align: center;
+    box-shadow: var(--shadow-light);
+    transition: var(--transition-fast);
+}
+
+.stat-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-medium);
+}
+
+.stat-value {
+    font-size: 1.3rem;
+    font-weight: bold;
+    color: var(--primary-purple);
+}
+
+.stat-label {
+    color: #666;
+    margin-top: 3px;
+    font-size: 0.8rem;
+}
+
+/* === CREDITS === */
+.credits {
+    text-align: center;
+    padding: 10px;
+    color: #666;
+    font-size: 0.75rem;
+    background: #f8f9fa;
+    border-top: 1px solid #eee;
+    position: relative;
+}
+
+.credits::after {
+    content: "Created by @elcaiseri";
+    display: block;
+    margin-top: 5px;
+    font-weight: bold;
+    color: var(--primary-purple);
+}
+
+/* === LOADING & ERROR STATES === */
+.loading {
+    text-align: center;
+    padding: 30px;
+    font-size: 1rem;
+    color: #666;
+}
+
+.error {
+    text-align: center;
+    padding: 30px;
+    font-size: 1rem;
+    color: #dc3545;
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: var(--border-radius);
+    margin: 20px;
+}
+
+/* === RESPONSIVE DESIGN === */
+
+/* Tablet optimizations */
+@media (max-width: 768px) {
+    body {
+        padding: 5px;
+    }
+
+    body::after {
+        font-size: 0.7rem;
+        padding: 4px 6px;
+    }
+
+    .container {
+        border-radius: 10px;
+    }
+
+    .header {
+        padding: 10px 15px;
+    }
+
+    .header h1 {
+        font-size: 1.5rem;
+    }
+
+    .header .gameweek {
+        font-size: 0.9rem;
+    }
+
+    .pitch {
+        padding: 15px 10px;
+    }
+
+    .formation-line {
+        gap: 5px;
+        margin: 10px 0;
+    }
+
+    .player-card {
+        min-width: 80px;
+        max-width: 110px;
+        padding: 6px;
+    }
+
+    .player-name {
+        font-size: 0.75rem;
+    }
+
+    .team-name {
+        font-size: 0.65rem;
+    }
+
+    .fixture {
+        font-size: 0.6rem;
+    }
+
+    .expected-points {
+        font-size: 0.7rem;
+        padding: 2px 5px;
+    }
+
+    .position-label {
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+    }
+
+    .position-label.midfielder::after {
+        right: -70px;
+        font-size: 0.6rem;
+        padding: 2px 5px;
+    }
+
+    .stats-section {
+        padding: 10px 15px;
+    }
+
+    .stats-grid {
+        gap: 8px;
+    }
+
+    .stat-card {
+        padding: 8px;
+    }
+
+    .stat-value {
+        font-size: 1.1rem;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+    }
+
+    .role-badge {
+        width: 18px;
+        height: 18px;
+        font-size: 0.65rem;
+        top: -6px;
+        right: -6px;
+    }
+
+    .gameweek-selector {
+        margin: 5px 10px;
+    }
+
+    .gameweek-selector select {
+        font-size: 0.9rem;
+        min-width: 120px;
+    }
+
+    .screenshot-button {
+        margin-left: 0;
+        margin-top: 10px;
+        width: 100%;
+        max-width: 200px;
+    }
+
+    .screenshot-controls {
+        flex-direction: column;
+    }
+}
+
+/* Mobile optimizations */
+@media (max-width: 480px) {
+    body::after {
+        font-size: 0.6rem;
+        padding: 3px 5px;
+    }
+
+    .formation-line {
+        gap: 3px;
+    }
+
+    .player-card {
+        min-width: 70px;
+        max-width: 90px;
+        padding: 4px;
+    }
+
+    .player-name {
+        font-size: 0.7rem;
+    }
+
+    .team-name {
+        font-size: 0.6rem;
+    }
+
+    .fixture {
+        font-size: 0.55rem;
+    }
+
+    .expected-points {
+        font-size: 0.65rem;
+    }
+
+    .stats-grid {
+        gap: 6px;
+    }
+
+    .stat-value {
+        font-size: 1rem;
+    }
+
+    .stat-label {
+        font-size: 0.7rem;
+    }
+
+    .position-label.midfielder::after {
+        right: -60px;
+        font-size: 0.55rem;
+        padding: 2px 4px;
+    }
+}
+
+/* === PRINT STYLES === */
+@media print {
+    body {
+        background: white;
+        padding: 0;
+    }
+
+    .container {
+        box-shadow: none;
+        border: 1px solid #ddd;
+    }
+
+    .player-card:hover {
+        transform: none;
+        box-shadow: var(--shadow-medium);
+    }
+
+    .gameweek-selector {
+        display: none;
+    }
+
+    .screenshot-button {
+        display: none;
+    }
+
+    body::before {
+        color: rgba(0, 0, 0, 0.03) !important;
+    }
+
+    body::after {
+        color: rgba(55, 0, 60, 0.9) !important;
+        background: rgba(255, 255, 255, 0.95) !important;
+        border: 1px solid rgba(55, 0, 60, 0.3);
+    }
+
+    .credits::after {
+        color: var(--primary-purple) !important;
+        font-weight: bold !important;
+    }
+}
+
+/* === UTILITY CLASSES === */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* === FOCUS ACCESSIBILITY === */
+.player-card:focus,
+.screenshot-button:focus,
+.gameweek-selector select:focus {
+    outline: 2px solid var(--primary-green);
+    outline-offset: 2px;
+}
+
+/* === SCROLL BEHAVIOR === */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Remove single-page constraint to enable scrolling */
+.single-page {
+    max-height: none;
+    overflow: visible;
+}
