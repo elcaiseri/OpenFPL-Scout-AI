@@ -16,11 +16,15 @@ import os
 
 logger = get_logger(__name__)
 
+# Load configuration and model paths
+logger.info("Loading configuration and model paths...")
+config = load_config('config/config.yaml')
+
 # --- App Initialization ---
 app = FastAPI(
     title="OpenFPL API",
     description="AI-powered Fantasy Premier League Scout API",
-    version="1.0.0"
+    version=config.get('version', '1.0.0'),
 )
 
 # mount ui
@@ -28,11 +32,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/data", StaticFiles(directory="data"), name="data")
 
 app.state.predictions_cache = {}
-
-# Load configuration and model paths
-logger.info("Loading configuration and model paths...")
-config = load_config('config/config.yaml')
-data_path = 'data/external/fpl-data-stats-2.csv'
 
 # --- Endpoints ---
 @app.get("/", tags=["Root"])
@@ -48,9 +47,9 @@ async def api_root():
     logger.info("API root endpoint called")
     return {
         "message": "OpenFPL - AI Fantasy Premier League Scout",
-        "version": "1.0.0",
+        "version": config.get('version', '1.0.0'),
+        "documentation": "/docs",
         "credits": "Developed by Kassem@elcaiseri, 2025",
-        "documentation": "/docs"
     }
 
 @app.get("/api/health", tags=["Health Check"])
@@ -76,16 +75,17 @@ async def get_scout_team(file: UploadFile = File(...)):
             logger.info(f"Using cached predictions for gameweek {scout.gameweek}")
             player_predictions_df = cache[scout.gameweek]
         else:
-            player_predictions_df = await scout.get_player_predictions()
+            player_predictions_df = scout.get_player_predictions()
             cache[scout.gameweek] = player_predictions_df
 
         scout_team = scout.select_optimal_team(player_predictions_df)
 
-
         response = ResponseModel(
             scout_team=scout_team,
             player_points=[],
-            gameweek=scout.gameweek
+            gameweek=scout.gameweek,
+            version=config.get('version', '1.0.0'),
+
         )
         save_scout_team_to_json(response, scout.gameweek)
 
