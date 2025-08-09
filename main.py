@@ -43,7 +43,7 @@ async def root():
     return HTMLResponse(content=html_content, status_code=200, media_type="text/html")
 
 @app.get("/api", tags=["API"])
-async def api_root():
+async def api_root(api_key: str = Depends(verify_api_key)):
     logger.info("API root endpoint called")
     return {
         "message": "OpenFPL - AI Fantasy Premier League Scout",
@@ -53,7 +53,7 @@ async def api_root():
     }
 
 @app.get("/api/health", tags=["Health Check"])
-async def health_check():
+async def health_check(api_key: str = Depends(verify_api_key)):
     logger.info("Health check endpoint called")
     return {"status": "healthy"}
 
