@@ -1,17 +1,17 @@
-from fastapi import FastAPI, HTTPException, Path
-
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi import File, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-import pandas as pd
+from fastapi import status
 
 from src.utils import load_config, save_scout_team_to_json
 from src.logger import get_logger
 from src.scout import FPLScout
 from src.models import ResponseModel
-from fastapi import File, UploadFile
+from src.auth import verify_api_key
+
 from tempfile import NamedTemporaryFile
 import shutil
-from fastapi import status
 import os
 
 logger = get_logger(__name__)
@@ -43,7 +43,7 @@ async def root():
     return HTMLResponse(content=html_content, status_code=200, media_type="text/html")
 
 @app.get("/api", tags=["API"])
-async def api_root():
+async def api_root(api_key: str = Depends(verify_api_key)):
     logger.info("API root endpoint called")
     return {
         "message": "OpenFPL - AI Fantasy Premier League Scout",
@@ -53,12 +53,12 @@ async def api_root():
     }
 
 @app.get("/api/health", tags=["Health Check"])
-async def health_check():
+async def health_check(api_key: str = Depends(verify_api_key)):
     logger.info("Health check endpoint called")
     return {"status": "healthy"}
 
 @app.post("/api/scout", response_model=ResponseModel, tags=["Scout"])
-async def get_scout_team(file: UploadFile = File(...)):
+async def get_scout_team(file: UploadFile = File(...), api_key: str = Depends(verify_api_key)):
     logger.info("Scout team endpoint (with upload) called")
     cache = app.state.predictions_cache
     tmp_path = None
