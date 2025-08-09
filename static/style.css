@@ -111,6 +111,11 @@ body::after {
     opacity: 0.9;
 }
 
+.hidden-preview {
+    display: none;
+    visibility: hidden;
+}
+
 /* === GAMEWEEK SELECTOR === */
 .gameweek-selector {
     margin: 10px 20px;
@@ -118,42 +123,25 @@ body::after {
 }
 
 .gameweek-selector select {
-    padding: 12px 16px;
+    padding: 8px 12px;
     border: 2px solid var(--primary-purple);
     border-radius: var(--border-radius);
-    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    background: white;
     color: var(--primary-purple);
     font-size: 1rem;
-    font-weight: 600;
     cursor: pointer;
-    min-width: 180px;
+    min-width: 150px;
     transition: var(--transition-normal);
-    box-shadow: var(--shadow-light);
-    appearance: none;
-    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2337003c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    background-size: 16px;
-    padding-right: 40px;
 }
 
 .gameweek-selector select:hover {
     border-color: var(--primary-green);
-    background: linear-gradient(145deg, #ffffff 0%, #f0fff4 100%);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-medium);
 }
 
 .gameweek-selector select:focus {
     outline: none;
     border-color: var(--primary-green);
-    box-shadow: 0 0 0 3px rgba(0, 255, 135, 0.2), var(--shadow-medium);
-    background: white;
-}
-
-.gameweek-selector select:active {
-    transform: translateY(0);
-    box-shadow: var(--shadow-light);
+    box-shadow: 0 0 0 3px rgba(0, 255, 135, 0.2);
 }
 
 /* === PITCH/FIELD === */
@@ -661,4 +649,43 @@ html {
 .single-page {
     max-height: none;
     overflow: visible;
+}
+
+.gameweek-selector select {
+    padding: 12px 16px;
+    border: 2px solid var(--primary-purple);
+    border-radius: var(--border-radius);
+    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    color: var(--primary-purple);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    min-width: 180px;
+    transition: var(--transition-normal);
+    box-shadow: var(--shadow-light);
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2337003c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 40px;
+}
+
+.gameweek-selector select:hover {
+    border-color: var(--primary-green);
+    background: linear-gradient(145deg, #ffffff 0%, #f0fff4 100%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-medium);
+}
+
+.gameweek-selector select:focus {
+    outline: none;
+    border-color: var(--primary-green);
+    box-shadow: 0 0 0 3px rgba(0, 255, 135, 0.2), var(--shadow-medium);
+    background: white;
+}
+
+.gameweek-selector select:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow-light);
 }
