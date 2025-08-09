@@ -6,6 +6,10 @@
 
 OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
 
+## 🚀 Live Demo
+
+Try the live application: **[https://openfpl-scout-ai-186049008266.europe-west1.run.app](https://openfpl-scout-ai-186049008266.europe-west1.run.app)**
+
 ## Features
 
 - 🎯 **AI-Powered Predictions**: Ensemble ML models (Linear Regression, XGBoost, CatBoost)
@@ -29,7 +33,7 @@ docker run -d -p 8000:8000 --name openfpl-api openfpl-scout-ai
 ## Usage
 
 ### Web Interface
-Visit [http://localhost:8000](http://localhost:8000) for the interactive team visualization:
+Visit the [live demo](https://openfpl-scout-ai-186049008266.europe-west1.run.app) or [http://localhost:8000](http://localhost:8000) for local development:
 
 - **Visual Team Display**: See your optimal team laid out on a football pitch
 - **Player Cards**: Detailed cards showing player stats, fixtures, and expected points
@@ -38,7 +42,7 @@ Visit [http://localhost:8000](http://localhost:8000) for the interactive team vi
 - **Interactive Elements**: Click on player cards for detailed information
 
 ### API Documentation
-API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+API docs: [Live API Docs](https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs) or [http://localhost:8000/docs](http://localhost:8000/docs) for local development
 
 ### Endpoints
 
@@ -121,6 +125,7 @@ FPL_API_KEY=your_api_key_here
 
 ## What's New
 
+- **🌐 Live Deployment**: Now available on Google Cloud Platform
 - **🎨 Beautiful Web Interface**: Interactive team visualization with football pitch layout
 - **📸 Screenshot Feature**: Export your team lineup as high-quality PNG images
 - **📱 Mobile Responsive**: Perfect experience on all devices

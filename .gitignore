@@ -14,7 +14,7 @@ __pycache__/
 *.csv
 *.zip
 *info
-
+data/
 
 # Notebooks
 *.ipynb
