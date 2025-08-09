@@ -1,7 +1,6 @@
 import joblib
 import pandas as pd
 import numpy as np
-import asyncio
 from typing import List, Dict, Any, Optional
 
 from src.logger import get_logger
@@ -12,9 +11,6 @@ warnings.filterwarnings("ignore")
 
 # Configure logger
 logger = get_logger(__name__)
-#config = load_config('config/config.yaml')
-#print(f"Configuration loaded: {config}")
-
 
 class FPLScout:
     """Fantasy Premier League player scout for prediction and team selection."""
@@ -29,7 +25,8 @@ class FPLScout:
             1: 'Goalkeeper',
             2: 'Defender',
             3: 'Midfielder',
-            4: 'Forward'
+            4: 'Forward',
+            5: 'Coach'  # Placeholder for coach
         }
         self.MAX_RECENT_GAMES = max(config.get('max_recent_games', 5), 5)
 
@@ -74,63 +71,56 @@ class FPLScout:
             next_gw = 1
         return next_gw
 
-    def _preprocess_player_data(self,
-                                player_data: pd.DataFrame,
-                                opponent_team: str,
-                                is_home: bool) -> pd.DataFrame:
+    def _preprocess_player_data(self, df: pd.DataFrame, n: int) -> pd.DataFrame:
         """Preprocess player data for prediction."""
-        processed_data = player_data.copy()
-        processed_data = processed_data.sort_values('gameweek', ascending=False)
+        # Get last n rows per player, then aggregate
+        # Exclude categorical columns from aggregation
+        cat_cols = ['element_type', 'team_name', 'opponent_team_name', 'was_home', 'gameweek']
+        num_cols = [col for col in df.drop(["web_name"], axis=1).columns if col not in cat_cols]
+        return (
+            df.sort_values(['web_name', 'gameweek'], ascending=[True, False])
+              .groupby('web_name')
+              .head(n)
+              .groupby('web_name')
+              .agg({col: 'mean' for col in num_cols} | {col: 'first' for col in cat_cols})
+        ).reset_index(drop=False)
 
-        # Add match context
-        processed_data["gameweek"] = self.gameweek
-        processed_data["opponent_team_name"] = opponent_team
-        processed_data["was_home"] = is_home
-
-        logger.debug(f"Preprocessed data for player {processed_data['web_name'].iloc[0]} (opponent: {opponent_team}, home: {is_home}).")
-        return processed_data[:self.MAX_RECENT_GAMES]
-
-    async def _lazy_predict_player_points(self, player_data: pd.DataFrame) -> float:
-        """Asynchronously predict player points using ensemble of models."""
-        loop = asyncio.get_event_loop()
-        futures = [
-            loop.run_in_executor(None, model.predict, player_data)
-            for model in self.models
-        ]
-        predictions = await asyncio.gather(*futures)
-        mean_pred = np.mean(predictions).item()
-        logger.debug(f"Predicted points: {mean_pred} for player {player_data['web_name'].iloc[0]}")
+    def _lazy_predict_player_points(self, player_data: pd.DataFrame) -> np.ndarray:
+        """Predict player points using ensemble of models."""
+        predictions = [model.predict(player_data) for model in self.models]
+        mean_pred = np.mean(predictions, axis=0)
+        logger.debug(f"Predicted points for {len(player_data)} players")
         return mean_pred
 
-    async def get_player_predictions(self) -> pd.DataFrame:
+    def get_player_predictions(self) -> pd.DataFrame:
         """Generate predictions for all players."""
         logger.info("Generating player predictions...")
-        prediction_tasks = []
 
         gw_match_data = fetch_gw_match_data(self.gameweek, self.config["team_name_mapping"])
 
-        for (player_name, team_name), group in self.data.groupby(['web_name', 'team_name']):
-            # TODO: Replace with realistic fixture data
-            opponent_team = gw_match_data.get(team_name, {}).get('opponent_team_name', 'Unknown')
-            is_home = gw_match_data.get(team_name, {}).get('was_home', False)
+        def get_opponent(x):
+            match = gw_match_data.get(x)
+            return match["opponent_team_name"] if isinstance(match, dict) and "opponent_team_name" in match else None
 
-            processed_group = self._preprocess_player_data(group, opponent_team, is_home)
-            prediction_tasks.append(self._create_prediction_task(processed_group))
+        def get_was_home(x):
+            match = gw_match_data.get(x)
+            return match["was_home"] if isinstance(match, dict) and "was_home" in match else None
 
-        results = await asyncio.gather(*prediction_tasks)
+        # Preprocess data
+        player_predictions = self._preprocess_player_data(self.data, self.MAX_RECENT_GAMES)
+        player_predictions["gameweek"] = self.gameweek
+        player_predictions["opponent_team_name"] = player_predictions["team_name"].apply(get_opponent)
+        player_predictions["was_home"] = player_predictions["team_name"].apply(get_was_home)
+
+        # Generate predictions
+        predictions = self._lazy_predict_player_points(player_predictions)
+        player_predictions["expected_points"] = predictions
+
+        # Return only required columns
+        result = player_predictions[self.CATEGORICAL_COLS + ['expected_points']].copy()
+
         logger.info("Player predictions complete.")
-        return pd.concat(results, ignore_index=True)
-
-    async def _create_prediction_task(self, processed_group: pd.DataFrame) -> pd.DataFrame:
-        """Create prediction task for a single player."""
-        prediction = await self._lazy_predict_player_points(processed_group)
-
-        result_columns = self.CATEGORICAL_COLS
-        result_data = processed_group[result_columns].drop_duplicates()
-        result_data['expected_points'] = prediction
-
-        logger.debug(f"Prediction for {result_data['web_name'].iloc[0]}: {prediction}")
-        return result_data
+        return result
 
     def select_optimal_team(self, player_predictions: pd.DataFrame) -> List[Dict[str, Any]]:
         """Select optimal team based on predicted points."""
@@ -171,18 +161,18 @@ class FPLScout:
 
 if __name__ == "__main__":
     # Example usage
+    config = load_config("config/config.yaml")
     data_path = "data/external/fpl-data-stats-2.csv"
-    model_paths = [meta_data['path'] for meta_data in self.config['models'].values()]
     gameweek = 1
 
-    async def main():
+    def main():
         # Initialize scout and generate team selection
         logger.info("Starting FPLScout main routine...")
-        scout = FPLScout(model_paths, data_path, gameweek)
-        player_predictions = await scout.get_player_predictions()
+        scout = FPLScout(config, data_path, gameweek)
+        player_predictions = scout.get_player_predictions()
         optimal_team = scout.select_optimal_team(player_predictions)
         optimal_team_df = pd.DataFrame(optimal_team)
         logger.info("Optimal team:")
         print(optimal_team_df)
 
-    asyncio.run(main())
+    main()

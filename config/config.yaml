@@ -66,3 +66,5 @@ models:
     year: 2024-2025
 
 max_recent_games: 38
+
+version: "2.2.0"
