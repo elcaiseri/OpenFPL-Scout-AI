@@ -37,6 +37,7 @@ class FPLScout:
         self.gameweek = gameweek or self._set_gameweek()
 
         self.team_mapping = config.get('team_name_mapping', {})
+        self.team_name_normalizer = config.get('gw_team_name_mapping', {})
 
         logger.info(f"FPLScout initialized for gameweek {self.gameweek}.")
 
@@ -106,8 +107,15 @@ class FPLScout:
             match = gw_match_data.get(x)
             return match["was_home"] if isinstance(match, dict) and "was_home" in match else None
 
+        def normalize_team_names(x):
+            if x in self.team_name_normalizer:
+                return self.team_name_normalizer[x]
+            return x
+
         # Preprocess data
         player_predictions = self._preprocess_player_data(self.data, self.MAX_RECENT_GAMES)
+        # TODO: post process player_predictions to match new fpl data format
+        player_predictions[["team_name","opponent_team_name"]] = player_predictions[["team_name","opponent_team_name"]].applymap(normalize_team_names)
         player_predictions["gameweek"] = self.gameweek
         player_predictions["opponent_team_name"] = player_predictions["team_name"].apply(get_opponent)
         player_predictions["was_home"] = player_predictions["team_name"].apply(get_was_home)

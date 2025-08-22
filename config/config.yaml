@@ -44,6 +44,35 @@ team_name_mapping:
   Newcastle United FC: "Newcastle United"
   Nottingham Forest FC: "Nottingham Forest"
   Wolverhampton Wanderers FC: "Wolverhampton Wanderers"
+  Burnley FC: "Burnley"
+  Leeds United FC: "Leeds United"
+  Sheffield United FC: "Sheffield United"
+  Sunderland AFC: "Sunderland"
+  Watford FC: "Watford"
+
+gw_team_name_mapping:
+  'Arsenal': 'Arsenal'
+  'Aston Villa': 'Aston Villa'
+  'Bournemouth': 'Bournemouth'
+  'Brentford': 'Brentford'
+  'Brighton': 'Brighton'
+  'Chelsea': 'Chelsea'
+  'Crystal Palace': 'Crystal Palace'
+  'Everton': 'Everton'
+  'Fulham': 'Fulham'
+  'Ipswich': 'Ipswich'
+  'Leicester': 'Leicester'
+  'Liverpool': 'Liverpool'
+  'Man City': 'Manchester City'
+  'Man Utd': 'Manchester United'
+  'Newcastle': 'Newcastle United'
+  "Nott'm Forest": 'Nottingham Forest'
+  'Southampton': 'Southampton'
+  'Spurs': 'Tottenham'
+  'West Ham': 'West Ham'
+  'Wolves': 'Wolverhampton Wanderers'
+  'Leeds': 'Leeds United'
+
 
 # Model Information
 models:
