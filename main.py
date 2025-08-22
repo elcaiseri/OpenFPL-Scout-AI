@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi import File, UploadFile
 from fastapi.responses import HTMLResponse
@@ -83,7 +84,7 @@ async def get_scout_team(file: UploadFile = File(...), api_key: str = Depends(ve
 
         response = ResponseModel(
             scout_team=scout_team,
-            player_points=player_predictions_df.to_json(orient="records"),
+            player_points=json.loads(player_predictions_df.to_json(orient="records")),
             gameweek=scout.gameweek,
             version=config.get('version', '1.0.0'),
 
