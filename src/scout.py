@@ -20,6 +20,7 @@ class FPLScout:
         self.config = config
         self.data_path = data_path
         self.CATEGORICAL_COLS = config['categorical_columns']
+        self.NUMERICAL_COLS = config['numerical_columns']
         self.TOP_N_BY_POSITION = {1: 2, 2: 5, 3: 5, 4: 3}  # GK, DEF, MID, FWD
         self.POSITION_MAPPING = {
             1: 'Goalkeeper',
@@ -48,6 +49,21 @@ class FPLScout:
         logger.info(f"Loaded {len(models)} models.")
         return models
 
+    def _ensure_numeric_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure configured numerical columns exist; create missing ones with 0 and coerce to numeric."""
+        if df.empty:
+            return df
+
+        numeric_cols = list(self.NUMERICAL_COLS or [])
+
+        # Create missing numeric columns with 0
+        for col in numeric_cols:
+            if col not in df.columns:
+                logger.warning(f"Column {col} missing in data. Creating with default 0.")
+                df[col] = 0
+
+        return df
+
     def _load_data(self, data_path: Optional[str], gameweek: Optional[int] = None) -> pd.DataFrame:
         """Load and filter player data."""
         if not data_path:
@@ -56,6 +72,7 @@ class FPLScout:
 
         logger.info(f"Loading data from {data_path}")
         data = pd.read_csv(data_path)
+        data = self._ensure_numeric_columns(data)
 
         if gameweek:
             data = data[data.gameweek <= gameweek].copy()
