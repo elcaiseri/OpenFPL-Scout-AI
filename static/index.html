@@ -77,12 +77,19 @@
             <div class="gameweek" id="gameweek-info" aria-live="polite">Loading...</div>
         </header>
 
-        <!-- Disclaimer Section -->
-        <div class="disclaimer" style="text-align:center; margin: 16px 0px; color: #b00; ">
-            <strong>Disclaimer:</strong> OpenScout AI does not cover player injuries, suspensions, or other
-            availability-related
-            conditions.
-        </div>
+        <!-- Collaboration Section -->
+        <section class="collaboration-section"
+            style="text-align: center; margin: 0px 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+            <h3 style="margin: 0 0 10px 0; font-size: 1.2em;">🚀 Join the Community!</h3>
+            <p style="margin: 0 0 15px 0; font-size: 0.9em; opacity: 0.9;">
+                Help us improve OpenFPL Scout AI! Contribute code, report bugs, or suggest features.
+            </p>
+            <a href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank" rel="noopener noreferrer"
+                style="display: inline-block; background: #fff; color: #333; padding: 10px 20px; border-radius: 25px; text-decoration: none; font-weight: bold; transition: transform 0.2s; box-shadow: 0 2px 10px rgba(0,0,0,0.2);"
+                onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
+                ⭐ Contribute on GitHub
+            </a>
+        </section>
 
         <!-- Controls Section -->
         <section class="gameweek-selector">
@@ -90,6 +97,13 @@
                 <option value="">Loading gameweeks...</option>
             </select>
         </section>
+
+        <!-- Disclaimer Section -->
+        <div class="disclaimer" style="text-align:center; margin: 16px 0px; color: #b00; ">
+            <strong>Disclaimer:</strong> OpenFPL Scout AI does not cover player injuries, suspensions, or other
+            availability-related
+            conditions.
+        </div>
 
         <!-- Statistics Section -->
         <section class="stats-section" aria-label="Team statistics">

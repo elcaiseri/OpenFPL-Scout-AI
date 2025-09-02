@@ -689,3 +689,121 @@ html {
     transform: translateY(0);
     box-shadow: var(--shadow-light);
 }
+
+/* === COLLABORATION SECTION === */
+.collaboration-section {
+    text-align: center;
+    margin: 0px;
+    padding: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: var(--border-radius-large);
+    color: white;
+    box-shadow: var(--shadow-medium);
+    position: relative;
+    overflow: hidden;
+}
+
+.collaboration-section::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='3' cy='3' r='3'/%3E%3Ccircle cx='13' cy='13' r='3'/%3E%3C/g%3E%3C/svg%3E");
+    pointer-events: none;
+}
+
+.collaboration-title {
+    margin: 0 0 10px 0;
+    font-size: 1.2em;
+    font-weight: bold;
+    position: relative;
+    z-index: 1;
+}
+
+.collaboration-description {
+    margin: 0 0 20px 0;
+    font-size: 0.9em;
+    opacity: 0.9;
+    line-height: 1.4;
+    position: relative;
+    z-index: 1;
+}
+
+.collaboration-button {
+    display: inline-block;
+    background: white;
+    color: var(--primary-purple);
+    padding: 12px 24px;
+    border-radius: 25px;
+    text-decoration: none;
+    font-weight: bold;
+    font-size: 0.9rem;
+    transition: var(--transition-normal);
+    box-shadow: var(--shadow-medium);
+    position: relative;
+    z-index: 1;
+    border: 2px solid transparent;
+}
+
+.collaboration-button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-heavy);
+    background: var(--primary-green);
+    color: var(--primary-purple);
+    border-color: white;
+}
+
+.collaboration-button:active {
+    transform: translateY(-1px);
+}
+
+.collaboration-button:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3), var(--shadow-heavy);
+}
+
+/* Responsive styles for collaboration section */
+@media (max-width: 768px) {
+    .collaboration-section {
+        margin: 15px 10px;
+        padding: 15px;
+    }
+
+    .collaboration-title {
+        font-size: 1.1em;
+    }
+
+    .collaboration-description {
+        font-size: 0.85em;
+        margin-bottom: 15px;
+    }
+
+    .collaboration-button {
+        padding: 10px 20px;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .collaboration-section {
+        margin: 10px 5px;
+        padding: 12px;
+    }
+
+    .collaboration-title {
+        font-size: 1em;
+        margin-bottom: 8px;
+    }
+
+    .collaboration-description {
+        font-size: 0.8em;
+        margin-bottom: 12px;
+    }
+
+    .collaboration-button {
+        padding: 8px 16px;
+        font-size: 0.8rem;
+    }
+}
