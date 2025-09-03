@@ -69,9 +69,13 @@ def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, d
     return match_dict
 
 def save_scout_team_to_json(scout_team, gameweek: int):
-    """Save scout team data to a JSON file."""
+    """Save scout team data to a JSON file if it doesn't already exist."""
     scout_team_json = scout_team.model_dump()
     save_dir = "data/internal/scout_team"
     os.makedirs(save_dir, exist_ok=True)
-    with open(f"{save_dir}/gw_{gameweek}.json", "w") as json_file:
-        json.dump(scout_team_json, json_file, indent=4)
+    file_path = f"{save_dir}/gw_{gameweek}.json"
+    # save gcp storage I/O api cost
+    if not os.path.exists(file_path):
+        with open(file_path, "w") as json_file:
+            json.dump(scout_team_json, json_file, indent=4)
+    # else do nothing
