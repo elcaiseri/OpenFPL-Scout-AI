@@ -14,6 +14,64 @@ def load_config(config_path):
     except (FileNotFoundError, yaml.YAMLError, Exception):
         return {}
 
+def get_environment_type(config: dict) -> str:
+    """Get the environment type from config or environment variable."""
+    # Check environment variable first, then config, then default
+    env_type = os.getenv("ENVIRONMENT", 
+                        config.get("environment", {}).get("type", "development"))
+    return env_type.lower()
+
+def get_static_files_strategy(config: dict) -> str:
+    """Get the static files strategy from config or environment variable."""
+    # Check environment variable first, then config, then default
+    strategy = os.getenv("STATIC_FILES_STRATEGY",
+                        config.get("static_files", {}).get("strategy", "local"))
+    return strategy.lower()
+
+def should_mount_static_files(config: dict) -> bool:
+    """Determine if static files should be mounted based on environment and strategy."""
+    env_type = get_environment_type(config)
+    strategy = get_static_files_strategy(config)
+    
+    # Mount static files if:
+    # 1. Environment is development, OR
+    # 2. Strategy is local regardless of environment
+    return env_type == "development" or strategy == "local"
+
+def get_static_file_url(config: dict, mount_path: str, filename: str) -> str:
+    """Generate the appropriate URL for a static file based on the current strategy."""
+    strategy = get_static_files_strategy(config)
+    
+    if strategy == "local" or should_mount_static_files(config):
+        # Use local mounted paths
+        return f"{mount_path.rstrip('/')}/{filename}"
+    elif strategy == "gcs":
+        # Use GCS bucket URL
+        gcs_config = config.get("static_files", {}).get("gcs", {})
+        bucket_name = gcs_config.get("bucket_name", "")
+        base_url = gcs_config.get("base_url", "")
+        
+        if base_url:
+            return f"{base_url.rstrip('/')}/{filename}"
+        elif bucket_name:
+            return f"https://storage.googleapis.com/{bucket_name}{mount_path.rstrip('/')}/{filename}"
+        else:
+            # Fallback to local path if GCS not configured
+            return f"{mount_path.rstrip('/')}/{filename}"
+    elif strategy == "cdn":
+        # Use CDN URL
+        cdn_config = config.get("static_files", {}).get("cdn", {})
+        base_url = cdn_config.get("base_url", "")
+        
+        if base_url:
+            return f"{base_url.rstrip('/')}{mount_path.rstrip('/')}/{filename}"
+        else:
+            # Fallback to local path if CDN not configured
+            return f"{mount_path.rstrip('/')}/{filename}"
+    else:
+        # Default to local path
+        return f"{mount_path.rstrip('/')}/{filename}"
+
 def get_next_gameweek(data) -> int:
     """Determine the next gameweek number based on loaded data."""
     if data.empty or "gameweek" not in data.columns:
