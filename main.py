@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import status
 
-from src.utils import load_config, save_scout_team_to_json
+from src.utils import load_config, save_scout_team_to_json, should_mount_static_files, get_environment_type, get_static_files_strategy
 from src.logger import get_logger
 from src.scout import FPLScout
 from src.models import ResponseModel
@@ -28,10 +28,34 @@ app = FastAPI(
     version=config.get('version', '1.0.0'),
 )
 
-# mount ui
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-app.mount("/data", StaticFiles(directory="data"), name="data")
+# Environment and static files configuration
+env_type = get_environment_type(config)
+static_strategy = get_static_files_strategy(config)
+
+logger.info(f"Environment: {env_type}, Static files strategy: {static_strategy}")
+
+# Conditionally mount static files
+if should_mount_static_files(config):
+    # Mount static files for local development or when strategy is 'local'
+    static_dirs = config.get("static_files", {}).get("local", {}).get("directories", [
+        {"name": "static", "path": "static", "mount_path": "/static"},
+        {"name": "assets", "path": "assets", "mount_path": "/assets"},
+        {"name": "data", "path": "data", "mount_path": "/data"}
+    ])
+    
+    for static_dir in static_dirs:
+        dir_path = static_dir["path"]
+        mount_path = static_dir["mount_path"]
+        name = static_dir["name"]
+        
+        # Only mount if directory exists
+        if os.path.exists(dir_path):
+            app.mount(mount_path, StaticFiles(directory=dir_path), name=name)
+            logger.info(f"Mounted static directory: {dir_path} -> {mount_path}")
+        else:
+            logger.warning(f"Static directory not found, skipping: {dir_path}")
+else:
+    logger.info("Static files mounting skipped (production mode with non-local strategy)")
 
 app.state.predictions_cache = {}
 

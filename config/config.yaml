@@ -130,4 +130,39 @@ models:
 
 max_recent_games: 38
 
+# Environment Configuration
+environment:
+  # Environment type: development, production
+  # Set via ENVIRONMENT environment variable (defaults to development)
+  type: "development"
+
+# Static File Configuration
+static_files:
+  # Strategy for serving static files: local, gcs, cdn
+  # Set via STATIC_FILES_STRATEGY environment variable (defaults to local)
+  strategy: "local"
+  
+  # GCS Configuration (used when strategy is 'gcs')
+  gcs:
+    bucket_name: ""
+    # Base URL for GCS bucket (optional, will be auto-generated if empty)
+    base_url: ""
+  
+  # CDN Configuration (used when strategy is 'cdn')
+  cdn:
+    base_url: ""
+  
+  # Local static directories (used when strategy is 'local')
+  local:
+    directories:
+      - name: "static"
+        path: "static"
+        mount_path: "/static"
+      - name: "assets" 
+        path: "assets"
+        mount_path: "/assets"
+      - name: "data"
+        path: "data"
+        mount_path: "/data"
+
 version: "2.4.2"
