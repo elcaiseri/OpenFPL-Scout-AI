@@ -8,7 +8,7 @@ const CONFIG = {
     dataPath: 'data/internal/scout_team/',
     filePrefix: 'gw_',
     fileExtension: '.json',
-    maxGameweeks: 38,
+    maxGameweeks: 4,
     defaultGameweek: 38
 };
 
@@ -17,7 +17,8 @@ const appState = {
     currentGameweek: CONFIG.defaultGameweek,
     availableGameweeks: [],
     currentData: null,
-    isLoading: false
+    isLoading: false,
+    cache: {} // Cache for storing gameweek data
 };
 
 // Utility Functions
@@ -304,6 +305,12 @@ const dataLoader = {
      * Load data from JSON file
      */
     async loadDataFromFile(gameweek) {
+        // Check if data is already in cache
+        if (appState.cache[gameweek]) {
+            console.log(`Using cached data for Gameweek ${gameweek}`);
+            return appState.cache[gameweek];
+        }
+
         const filePath = `${CONFIG.dataPath}${CONFIG.filePrefix}${gameweek}${CONFIG.fileExtension}`;
 
         try {
@@ -320,6 +327,9 @@ const dataLoader = {
             if (!data.scout_team || !Array.isArray(data.scout_team)) {
                 throw new Error('Invalid data format: missing scout_team array');
             }
+
+            // Store in cache
+            appState.cache[gameweek] = data;
 
             return data;
 
