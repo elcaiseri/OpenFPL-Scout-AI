@@ -506,9 +506,6 @@ const app = {
             // Set up event listeners
             eventListeners.init();
 
-            // Check screenshot library availability
-            this.checkScreenshotLibrary();
-
             // Discover available gameweeks
             uiStateManager.showLoading('Discovering available gameweeks...');
             appState.availableGameweeks = await dataLoader.discoverGameweeks();
@@ -545,14 +542,6 @@ const app = {
         }
     },
 
-    /**
-     * Check if screenshot library is available
-     */
-    checkScreenshotLibrary() {
-        if (typeof html2canvas === 'undefined') {
-            console.warn('html2canvas library not loaded, screenshot functionality will use fallback method');
-        }
-    }
 };
 
 // Start the application when DOM is ready
@@ -567,6 +556,5 @@ window.FPLScoutApp = {
     CONFIG,
     utils,
     teamRenderer,
-    screenshotManager,
     gameweekManager
 };
