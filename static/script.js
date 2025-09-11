@@ -23,7 +23,7 @@ const appState = {
     cache: {}, // Cache for storing gameweek data
     gameweeksCache: null, // Cache for available gameweeks list
     gameweeksCacheTimestamp: null, // Timestamp for gameweeks cache
-    gameweeksCacheExpiry: 5 * 60 * 1000 // 5 minutes cache expiry
+    gameweeksCacheExpiry: 7 * 24 * 60 * 60 * 1000 // 1 week cache expiry
 };
 
 // Utility Functions
