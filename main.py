@@ -103,3 +103,25 @@ async def get_scout_team(file: UploadFile = File(...), api_key: str = Depends(ve
                 logger.info(f"Temporary file {tmp_path} deleted.")
             except Exception as cleanup_error:
                 logger.warning(f"Failed to delete temporary file {tmp_path}: {cleanup_error}")
+
+@app.get("/api/scout/gw/{gameweek}", response_model=ResponseModel, tags=["Scout"])
+async def get_scout_gw_team(gameweek: int, api_key: str = Depends(verify_api_key)):
+    logger.info(f"Retrieve saved scout team for gameweek {gameweek}")
+
+    path = os.path.join("data", "internal", "scout_team", f"gw_{gameweek}.json")
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+
+        if not isinstance(payload, dict) or payload.get("gameweek") != gameweek:
+            raise ValueError("Invalid saved payload or mismatched gameweek")
+
+        return payload
+
+    except Exception as e:
+        logger.exception(f"Unexpected error retrieving saved scout team for GW {gameweek}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve saved scout team",
+        )
