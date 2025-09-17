@@ -26,8 +26,7 @@ class FPLScout:
             1: 'Goalkeeper',
             2: 'Defender',
             3: 'Midfielder',
-            4: 'Forward',
-            5: 'Coach'  # Placeholder for coach
+            4: 'Forward'
         }
         self.MAX_RECENT_GAMES = max(config.get('max_recent_games', 5), 5)
 
