@@ -46,6 +46,9 @@ numerical_columns:
   - "tackles"
   - "touches"
   - "penalty_area_touches"
+  - "Att Pen"
+  - "pos_touches"
+  - "clearances_blocks_interceptions"
 
 # Target column for model training
 target_column:
@@ -84,6 +87,7 @@ team_name_mapping:
   Sunderland AFC: "Sunderland"
   Watford FC: "Watford"
 
+# scout gw prediction
 gw_team_name_mapping:
   'Arsenal': 'Arsenal'
   'Aston Villa': 'Aston Villa'
@@ -111,23 +115,23 @@ gw_team_name_mapping:
 # Model Information
 models:
   linear_regression:
-    version: "v2.0"
-    last_trained: "August 5, 2025"
-    path: "models/reg_0.pkl"
+    version: "v3.0"
+    last_trained: "September 17, 2025"
+    path: "models/linear_regression_reg.pkl"
     year: 2024-2025
 
   xgboost:
-    version: "v2.0"
-    last_trained: "August 5, 2025"
-    path: "models/reg_1.pkl"
+    version: "v3.0"
+    last_trained: "September 17, 2025"
+    path: "models/xgboost_reg.pkl"
     year: 2024-2025
 
   catboost:
-    version: "v1.0"
-    last_trained: "August 5, 2025"
-    path: "models/reg_2.pkl"
+    version: "v2.0"
+    last_trained: "September 17, 2025"
+    path: "models/catboost_reg.pkl"
     year: 2024-2025
 
 max_recent_games: 4
 
-version: "2.5.2"
+version: "3.0.0"
