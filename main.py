@@ -31,7 +31,7 @@ app = FastAPI(
 # mount ui
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-app.mount("/data", StaticFiles(directory="data"), name="data")
+app.mount("/data/internal/scout_team", StaticFiles(directory="data/internal/scout_team"), name="scout-team-data")
 
 app.state.predictions_cache = {}
 
