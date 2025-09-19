@@ -159,8 +159,10 @@ body::after {
     justify-content: center;
     align-items: center;
     margin: 15px 0;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-wrap: nowrap;
+    gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* === PLAYER CARDS === */
@@ -172,11 +174,12 @@ body::after {
     box-shadow: var(--shadow-medium);
     transition: var(--transition-normal);
     cursor: pointer;
-    min-width: 100px;
-    max-width: 130px;
+    min-width: 80px;
+    max-width: 150px;
     position: relative;
     border: 2px solid transparent;
-    flex: 1;
+    flex: 1 1 auto;
+    box-sizing: border-box;
 }
 
 .player-card:hover {
@@ -465,14 +468,18 @@ body::after {
     }
 
     .formation-line {
-        gap: 5px;
+        gap: 4px;
         margin: 10px 0;
+        flex-wrap: nowrap;
+        justify-content: center;
     }
 
     .player-card {
-        min-width: 80px;
-        max-width: 110px;
-        padding: 6px;
+        min-width: 70px;
+        max-width: 120px;
+        width: auto;
+        padding: 5px;
+        flex: 1 1 auto;
     }
 
     .player-name {
@@ -559,24 +566,40 @@ body::after {
 
     .formation-line {
         gap: 3px;
+        margin: 8px 0;
+        flex-wrap: nowrap;
+        justify-content: center;
     }
 
     .player-card {
-        min-width: 70px;
-        max-width: 90px;
-        padding: 4px;
+        min-width: 60px;
+        max-width: 85px;
+        width: auto;
+        padding: 3px;
+        border-radius: 8px;
+        flex: 1 1 auto;
     }
 
     .player-name {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
+        line-height: 1.2;
+        margin-bottom: 2px;
     }
 
     .team-name {
-        font-size: 0.6rem;
+        font-size: 0.55rem;
+        line-height: 1.1;
     }
 
     .fixture {
-        font-size: 0.55rem;
+        font-size: 0.5rem;
+        line-height: 1.1;
+    }
+
+    .position-label {
+        font-size: 0.8rem;
+        margin-bottom: 6px;
+        padding: 3px 10px;
     }
 
     .expected-points {
@@ -596,9 +619,10 @@ body::after {
     }
 
     .position-label.midfielder::after {
-        right: -60px;
-        font-size: 0.55rem;
-        padding: 2px 4px;
+        right: -45px;
+        font-size: 0.45rem;
+        padding: 1px 3px;
+        border-radius: 2px;
     }
 
     /* Disclaimer responsive - mobile */
@@ -609,6 +633,50 @@ body::after {
         line-height: 1.4;
         max-width: calc(100% - 10px);
         border-radius: 6px;
+    }
+}
+
+/* Extra small mobile devices (≤360px) */
+@media (max-width: 360px) {
+    .formation-line {
+        gap: 2px;
+        margin: 6px 0;
+        flex-wrap: nowrap;
+        justify-content: center;
+    }
+
+    .player-card {
+        min-width: 55px;
+        max-width: 75px;
+        width: auto;
+        padding: 2px;
+        border-radius: 6px;
+        flex: 1 1 auto;
+    }
+
+    .player-name {
+        font-size: 0.6rem;
+        line-height: 1.1;
+    }
+
+    .team-name {
+        font-size: 0.5rem;
+    }
+
+    .fixture {
+        font-size: 0.45rem;
+    }
+
+    .position-label {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        margin-bottom: 4px;
+    }
+
+    .position-label.midfielder::after {
+        right: -35px;
+        font-size: 0.4rem;
+        padding: 1px 2px;
     }
 }
 
