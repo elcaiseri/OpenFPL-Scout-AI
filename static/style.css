@@ -411,8 +411,8 @@ body::after {
 /* === DISCLAIMER SECTION === */
 .disclaimer {
     text-align: center;
-    margin: 20px auto;
-    padding: 16px 20px;
+    margin: 10px auto;
+    padding: 12px 16px;
     color: #b00;
     background: rgba(255, 255, 255, 0.9);
     border: 2px solid #e0e0e0;
@@ -549,8 +549,8 @@ body::after {
 
     /* Disclaimer responsive - tablet */
     .disclaimer {
-        margin: 15px auto;
-        padding: 12px 16px;
+        margin: 10px auto;
+        padding: 8px 12px;
         font-size: 0.9rem;
         line-height: 1.4;
         max-width: 95%;
@@ -628,7 +628,7 @@ body::after {
     /* Disclaimer responsive - mobile */
     .disclaimer {
         margin: 10px 5px;
-        padding: 10px 12px;
+        padding: 8px 10px;
         font-size: 0.85rem;
         line-height: 1.4;
         max-width: calc(100% - 10px);
