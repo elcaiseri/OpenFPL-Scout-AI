@@ -28,7 +28,7 @@ class FPLScout:
             3: 'Midfielder',
             4: 'Forward'
         }
-        self.MAX_RECENT_GAMES = max(config.get('max_recent_games', 5), 5)
+        self.MAX_RECENT_GAMES = config.get('max_recent_games', 5)
 
         logger.info("Initializing FPLScout...")
         # Load models and data
