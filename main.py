@@ -59,6 +59,36 @@ async def health_check(api_key: str = Depends(verify_api_key)):
     logger.info("Health check endpoint called")
     return {"status": "healthy"}
 
+@app.get("/api/gameweeks", tags=["Data"])
+async def get_available_gameweeks():
+    """Get list of available gameweeks from scout team data directory."""
+    logger.info("Available gameweeks endpoint called")
+    try:
+        scout_data_dir = "data/internal/scout_team"
+        available_gameweeks = []
+        
+        if os.path.exists(scout_data_dir):
+            for filename in os.listdir(scout_data_dir):
+                if filename.startswith("gw_") and filename.endswith(".json"):
+                    try:
+                        # Extract gameweek number from filename like "gw_1.json"
+                        gw_num = int(filename.replace("gw_", "").replace(".json", ""))
+                        available_gameweeks.append(gw_num)
+                    except ValueError:
+                        continue
+        
+        available_gameweeks.sort()
+        logger.info(f"Found {len(available_gameweeks)} available gameweeks: {available_gameweeks}")
+        
+        return {
+            "gameweeks": available_gameweeks,
+            "total": len(available_gameweeks),
+            "latest": max(available_gameweeks) if available_gameweeks else None
+        }
+    except Exception as e:
+        logger.error(f"Error getting available gameweeks: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 @app.post("/api/scout", response_model=ResponseModel, tags=["Scout"])
 async def get_scout_team(file: UploadFile = File(...), api_key: str = Depends(verify_api_key)):
     logger.info("Scout team endpoint (with upload) called")
