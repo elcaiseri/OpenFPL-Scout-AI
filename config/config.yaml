@@ -6,6 +6,7 @@ drop_cols:
 
 # Categorical columns used in the analysis
 categorical_columns:
+  - "id"
   - "element_type"
   - "web_name"
   - "team_name"
@@ -134,4 +135,4 @@ models:
 
 max_recent_games: 4
 
-version: "3.0.0"
+version: "3.1.1"

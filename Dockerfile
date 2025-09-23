@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-RUN mkdir -p data
+RUN mkdir -p data/internal/scout_team
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -28,7 +28,7 @@ class FPLScout:
             3: 'Midfielder',
             4: 'Forward'
         }
-        self.MAX_RECENT_GAMES = max(config.get('max_recent_games', 5), 5)
+        self.MAX_RECENT_GAMES = config.get('max_recent_games', 5)
 
         logger.info("Initializing FPLScout...")
         # Load models and data
@@ -92,7 +92,7 @@ class FPLScout:
         """Preprocess player data for prediction."""
         # Get last n rows per player, then aggregate
         # Exclude categorical columns from aggregation
-        cat_cols = ['element_type', 'team_name', 'opponent_team_name', 'was_home', 'gameweek']
+        cat_cols = [c for c in self.CATEGORICAL_COLS if c != 'web_name']
         num_cols = [col for col in df.drop(["web_name"], axis=1).columns if col not in cat_cols]
         return (
             df.sort_values(['web_name', 'gameweek'], ascending=[True, False])
@@ -100,7 +100,7 @@ class FPLScout:
               .head(n)
               .groupby('web_name')
               .agg({col: 'mean' for col in num_cols} | {col: 'first' for col in cat_cols})
-        ).reset_index(drop=False)
+        ).reset_index(drop=False)#.fillna(0)
 
     def _lazy_predict_player_points(self, player_data: pd.DataFrame) -> np.ndarray:
         """Predict player points using ensemble of models."""
@@ -144,7 +144,7 @@ class FPLScout:
         result = player_predictions[self.CATEGORICAL_COLS + ['expected_points']].copy()
 
         logger.info("Player predictions complete.")
-        return result
+        return result #.set_index('id')
 
     def select_optimal_team(self, player_predictions: pd.DataFrame) -> List[Dict[str, Any]]:
         """Select optimal team based on predicted points."""
