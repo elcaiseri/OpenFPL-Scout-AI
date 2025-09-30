@@ -8,7 +8,7 @@ const CONFIG = {
     dataPath: 'data/internal/scout_team/',
     filePrefix: 'gw_',
     fileExtension: '.json',
-    maxGameweeks: 6,
+    maxGameweeks: 7,
     defaultGameweek: 38
 };
 
