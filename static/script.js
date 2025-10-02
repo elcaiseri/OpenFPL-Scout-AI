@@ -8,8 +8,10 @@ const CONFIG = {
     dataPath: 'data/internal/scout_team/',
     filePrefix: 'gw_',
     fileExtension: '.json',
-    maxGameweeks: 7,
-    defaultGameweek: 38
+    defaultGameweek: 38,
+    apiEndpoints: {
+        gameweeks: '/api/gameweeks'
+    }
 };
 
 // Application State
@@ -18,7 +20,10 @@ const appState = {
     availableGameweeks: [],
     currentData: null,
     isLoading: false,
-    cache: {} // Cache for storing gameweek data
+    cache: {}, // Cache for storing gameweek data
+    gameweeksCache: null, // Cache for available gameweeks list
+    gameweeksCacheTimestamp: null, // Timestamp for gameweeks cache
+    gameweeksCacheExpiry: 7 * 24 * 60 * 60 * 1000 // 1 week cache expiry
 };
 
 // Utility Functions
@@ -47,6 +52,33 @@ const utils = {
         } catch (error) {
             throw new Error('Invalid JSON response');
         }
+    },
+
+    /**
+     * Clear application caches
+     */
+    clearCache() {
+        appState.cache = {};
+        appState.gameweeksCache = null;
+        appState.gameweeksCacheTimestamp = null;
+        console.log('Application cache cleared');
+    },
+
+    /**
+     * Get cache status information
+     */
+    getCacheStatus() {
+        const now = Date.now();
+        const gameweeksCacheAge = appState.gameweeksCacheTimestamp ?
+            Math.round((now - appState.gameweeksCacheTimestamp) / 1000) : null;
+
+        return {
+            gameweekDataCached: Object.keys(appState.cache).length,
+            gameweeksCached: Boolean(appState.gameweeksCache),
+            gameweeksCacheAge: gameweeksCacheAge,
+            gameweeksCacheExpired: gameweeksCacheAge ?
+                gameweeksCacheAge > (appState.gameweeksCacheExpiry / 1000) : true
+        };
     },
 
     /**
@@ -340,23 +372,78 @@ const dataLoader = {
     },
 
     /**
-     * Discover available gameweeks
+     * Discover available gameweeks using API endpoint
      */
     async discoverGameweeks() {
-        const gameweeks = [];
-        const promises = [];
-
-        for (let gw = 1; gw <= CONFIG.maxGameweeks; gw++) {
-            const filePath = `${CONFIG.dataPath}${CONFIG.filePrefix}${gw}${CONFIG.fileExtension}`;
-            promises.push(
-                fetch(filePath, { method: 'HEAD' })
-                    .then(response => response.ok ? gw : null)
-                    .catch(() => null)
-            );
+        // Check if we have cached gameweeks data and it's still valid
+        const now = Date.now();
+        if (appState.gameweeksCache &&
+            appState.gameweeksCacheTimestamp &&
+            (now - appState.gameweeksCacheTimestamp) < appState.gameweeksCacheExpiry) {
+            console.log('Using cached gameweeks list');
+            return appState.gameweeksCache;
         }
 
-        const results = await Promise.all(promises);
-        return results.filter(gw => gw !== null).sort((a, b) => a - b);
+        try {
+            const response = await fetch(CONFIG.apiEndpoints.gameweeks);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch gameweeks: ${response.status} ${response.statusText}`);
+            }
+
+            const data = await utils.safeJsonParse(response);
+
+            if (!data.gameweeks || !Array.isArray(data.gameweeks)) {
+                throw new Error('Invalid gameweeks data format');
+            }
+
+            // Cache the result
+            appState.gameweeksCache = data.gameweeks;
+            appState.gameweeksCacheTimestamp = now;
+
+            console.log(`Discovered ${data.total} gameweeks:`, data.gameweeks);
+            return data.gameweeks;
+
+        } catch (error) {
+            console.warn('API gameweeks discovery failed, falling back to file discovery:', error);
+
+            // Fallback to the old method if API fails
+            return await this.discoverGameweeksFallback();
+        }
+    },
+
+    /**
+     * Fallback method: Discover available gameweeks by checking files
+     * Only used if API endpoint fails
+     */
+    async discoverGameweeksFallback() {
+        console.log('Using fallback gameweeks discovery method');
+        const gameweeks = [];
+        const maxCheck = 50; // Reasonable upper limit for gameweeks
+        const batchSize = 10; // Check in batches to avoid too many concurrent requests
+
+        for (let start = 1; start <= maxCheck; start += batchSize) {
+            const end = Math.min(start + batchSize - 1, maxCheck);
+            const promises = [];
+
+            for (let gw = start; gw <= end; gw++) {
+                const filePath = `${CONFIG.dataPath}${CONFIG.filePrefix}${gw}${CONFIG.fileExtension}`;
+                promises.push(
+                    fetch(filePath, { method: 'HEAD' })
+                        .then(response => response.ok ? gw : null)
+                        .catch(() => null)
+                );
+            }
+
+            const batchResults = await Promise.all(promises);
+            gameweeks.push(...batchResults.filter(gw => gw !== null));
+
+            // If we found no gameweeks in this batch, stop checking
+            if (batchResults.every(result => result === null)) {
+                break;
+            }
+        }
+
+        return gameweeks.sort((a, b) => a - b);
     }
 };
 
@@ -556,5 +643,9 @@ window.FPLScoutApp = {
     CONFIG,
     utils,
     teamRenderer,
-    gameweekManager
+    gameweekManager,
+    dataLoader,
+    // Utility functions for debugging and cache management
+    clearCache: utils.clearCache,
+    getCacheStatus: utils.getCacheStatus
 };
