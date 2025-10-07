@@ -6,9 +6,14 @@
 
 OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
 
-## 🚀 Live Demo
+## 🚀 Live Demo & API Access
 
-Try the live application: **[https://openfpl-scout-ai-186049008266.europe-west1.run.app](https://openfpl-scout-ai-186049008266.europe-west1.run.app)**
+**Web Interface:** **[https://openfpl-scout-ai-186049008266.europe-west1.run.app](https://openfpl-scout-ai-186049008266.europe-west1.run.app)**
+
+**🔥 API Access via RapidAPI:** **[Subscribe on RapidAPI Marketplace](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)** 
+- Free tier: 10 requests/hour
+- Professional support and documentation
+- Easy integration with RapidAPI headers
 
 ## Features
 
@@ -21,6 +26,7 @@ Try the live application: **[https://openfpl-scout-ai-186049008266.europe-west1.
 - 📱 **Mobile Responsive**: Works perfectly on all devices
 - 📸 **Screenshot Feature**: Download your team lineup as PNG
 - 🎨 **Professional Design**: FPL-themed UI with gradient backgrounds
+- 🔌 **RapidAPI Integration**: Professional API marketplace access
 
 ## Installation
 
@@ -41,16 +47,46 @@ Visit the [live demo](https://openfpl-scout-ai-186049008266.europe-west1.run.app
 - **Screenshot Export**: Download your team lineup as a high-quality image
 - **Interactive Elements**: Click on player cards for detailed information
 
+### API Access via RapidAPI
+
+**🔥 Primary API Access:** [Subscribe on RapidAPI Marketplace](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
+
+**Base URL:** `https://openfpl-api.p.rapidapi.com`
+
+**Authentication:**
+```http
+X-RapidAPI-Key: YOUR_RAPIDAPI_KEY
+X-RapidAPI-Host: openfpl-api.p.rapidapi.com
+```
+
+**Quick Example:**
+```javascript
+const options = {
+    method: 'GET',
+    headers: {
+        'X-RapidAPI-Key': 'YOUR_RAPIDAPI_KEY',
+        'X-RapidAPI-Host': 'openfpl-api.p.rapidapi.com'
+    }
+};
+
+fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
+    .then(response => response.json())
+    .then(data => console.log(data));
+```
+
 ### API Documentation
-API docs: [Live API Docs](https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs) or [http://localhost:8000/docs](http://localhost:8000/docs) for local development
+- **RapidAPI Docs:** [https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
+- **Live API Docs:** [https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs](https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs) (for local development)
 
-### Endpoints
+### Main Endpoints
 
-- `GET /` — Interactive web interface with team visualization
-- `POST /api/scout` — Upload FPL stats CSV, receive optimal team and predictions
 - `GET /api/health` — Health check
+- `GET /api/gameweeks` — Available gameweeks with saved data
+- `GET /api/gw/scout` — Get optimal FPL team for specific gameweek
+- `GET /api/gw/playerpoints` — Get filtered player point predictions
+- `GET /api` — API information and metadata
 
-**Sample `/api/scout` response:**
+**Sample `/api/gw/scout` response:**
 ```json
 {
   "scout_team": [
@@ -59,20 +95,23 @@ API docs: [Live API Docs](https://openfpl-scout-ai-186049008266.europe-west1.run
       "web_name": "Alisson",
       "team_name": "Liverpool",
       "expected_points": 5.2,
-      "role": ""
+      "role": "",
+      "now_cost": 55,
+      "selected_by_percent": 15.5
     },
     {
       "element_type": "Defender",
       "web_name": "Alexander-Arnold",
       "team_name": "Liverpool",
       "expected_points": 8.1,
-      "role": "captain"
+      "role": "captain",
+      "now_cost": 70,
+      "selected_by_percent": 45.2
     }
   ],
-  "player_points": [],
-  "gameweek": 1,
-  "version": "1.1.0",
-  "credits": "OpenFPL-Scout-AI - Developed by Kassem@elcaiseri.com, 2025"
+  "gameweek": 7,
+  "version": "4.0.0",
+  "credits": "OpenFPL-Scout AI - Team Predictions | Developed by Kassem @elcaiseri, 2025"
 }
 ```
 
@@ -110,10 +149,7 @@ Integrates with Football Data API for:
 - Home/away status
 - Gameweek info
 
-**Required Environment Variable:**
-```bash
-FPL_API_KEY=your_api_key_here
-```
+**For RapidAPI Users:** All data is pre-processed and cached for optimal performance.
 
 ## Code Structure
 
@@ -125,7 +161,9 @@ FPL_API_KEY=your_api_key_here
 
 ## What's New
 
-- **🌐 Live Deployment**: Now available on Google Cloud Platform
+- **🔌 RapidAPI Marketplace**: Now available on RapidAPI with professional support
+- **📈 Enhanced API**: New endpoints for gameweeks and player filtering
+- **🌐 Live Deployment**: Available on Google Cloud Platform
 - **🎨 Beautiful Web Interface**: Interactive team visualization with football pitch layout
 - **📸 Screenshot Feature**: Export your team lineup as high-quality PNG images
 - **📱 Mobile Responsive**: Perfect experience on all devices
@@ -154,6 +192,11 @@ Fork, branch, and submit a pull request.
 
 MIT License — see [LICENSE](LICENSE) for details.
 
-## Contact
+## API Support & Contact
 
-Questions/support: [kassem@elcaiseri.com](mailto:kassem@elcaiseri.com)
+**For API Support:**
+- **RapidAPI Marketplace:** [https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
+- **Email:** [support@openfpl.kassem.dev](mailto:iqasem4444@gmail.com)
+
+**General Questions:**
+- **Email:** [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
