@@ -63,7 +63,6 @@ async def get_api_info(api_key: str = Depends(verify_api_key)):
     return {
         "message": "OpenFPL - AI Fantasy Premier League Scout",
         "version": config.get('version', '1.0.0'),
-        "documentation": "/docs",
         "credits": "Developed by Kassem@elcaiseri, 2025",
         "usage": {
             "/api/gw/scout": {
