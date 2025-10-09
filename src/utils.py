@@ -1,9 +1,10 @@
 import pandas as pd
 import yaml
 import os
-import requests
 from typing import Dict
 import json
+import httpx
+from fastapi import Request, HTTPException, status
 
 def load_config(config_path):
     """Load configuration settings from a YAML file."""
@@ -24,7 +25,7 @@ def get_next_gameweek(data) -> int:
     return next_gw
 
 
-def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, dict]:
+async def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, dict]:
     """Fetch Premier League match data for the given gameweek and return a mapping of team to opponent and match info."""
     api_url = "https://api.football-data.org/v4/competitions/PL/matches"
     api_key = os.getenv("FPL_API_KEY", "")
@@ -36,10 +37,11 @@ def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, d
     }
     params = {"matchday": gameweek}
 
-    response = requests.get(api_url, headers=headers, params=params, timeout=30)
-    response.raise_for_status()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(api_url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
 
-    data = response.json()
+        data = response.json()
 
     matches = []
     for match in data.get("matches", []):
@@ -79,3 +81,40 @@ def save_scout_team_to_json(scout_team, gameweek: int):
         with open(file_path, "w") as json_file:
             json.dump(scout_team_json, json_file, indent=4)
     # else do nothing
+
+
+async def resolve_gameweek(request: Request):
+    """
+    Checks for 'gameweek' in request query params.
+    If present, returns it.
+    If not, calls RapidAPI to get the latest gameweek.
+    """
+    gameweek = request.query_params.get("gameweek")
+    if gameweek:
+        print(f"Using provided gameweek: {gameweek}")
+        return int(gameweek)
+
+    rapidapi_host = request.headers.get("x-rapidapi-host")
+    if not rapidapi_host:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing RapidAPI headers"
+        )
+
+    url = f"{rapidapi_host}/api/gameweeks"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=request.headers)
+        if response.status_code == 200:
+            latest = response.json().get("latest")
+            if latest:
+                return latest
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No gameweeks available"
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to fetch gameweeks from RapidAPI"
+            )
