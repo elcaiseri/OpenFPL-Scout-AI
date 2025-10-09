@@ -76,7 +76,6 @@ fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
 
 ### API Documentation
 - **RapidAPI Docs:** [https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
-- **Live API Docs:** [https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs](https://openfpl-scout-ai-186049008266.europe-west1.run.app/docs) (for local development)
 
 ### Main Endpoints
 
