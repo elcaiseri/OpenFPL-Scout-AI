@@ -67,7 +67,7 @@ async def get_api_info(api_key: str = Depends(verify_api_key)):
         "credits": "Developed by Kassem@elcaiseri, 2025",
         "usage": {
             "/api/gw/scout": {
-                "description": "Retrieve the scout team for a specific gameweek.",
+                "description": "Retrieve the scout team -only- points for a specific gameweek.",
                 "method": "GET",
                 "params": {
                     "gameweek": "int (optional, defaults to latest available)"
@@ -75,7 +75,7 @@ async def get_api_info(api_key: str = Depends(verify_api_key)):
                 "example": "/api/gw/scout?gameweek=1"
             },
             "/api/gw/playerpoints": {
-                "description": "Retrieve player point predictions for a gameweek, with optional filters.",
+                "description": "Retrieve all +700 players point predictions for a gameweek, with optional filters.",
                 "method": "GET",
                 "params": {
                     "gameweek": "int (optional, defaults to latest available)",
