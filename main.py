@@ -54,10 +54,10 @@ async def serve_index():
 @app.get("/api", tags=["API"], summary="Get API information")
 async def get_api_info(api_key: str = Depends(verify_api_key)):
     """
-    Get basic API information including version and documentation links.
-    
+    Get basic API information including version, documentation links, and endpoint usage.
+
     Returns:
-        dict: API metadata including version, documentation URL, and credits
+        dict: API metadata including version, documentation URL, credits, and endpoint usage info
     """
     logger.info("API information endpoint accessed")
     return {
@@ -65,6 +65,34 @@ async def get_api_info(api_key: str = Depends(verify_api_key)):
         "version": config.get('version', '1.0.0'),
         "documentation": "/docs",
         "credits": "Developed by Kassem@elcaiseri, 2025",
+        "usage": {
+            "/api/gw/scout": {
+                "description": "Retrieve the scout team for a specific gameweek.",
+                "method": "GET",
+                "params": {
+                    "gameweek": "int (optional, defaults to latest available)"
+                },
+                "example": "/api/gw/scout?gameweek=1"
+            },
+            "/api/gw/playerpoints": {
+                "description": "Retrieve player point predictions for a gameweek, with optional filters.",
+                "method": "GET",
+                "params": {
+                    "gameweek": "int (optional, defaults to latest available)",
+                    "element_type": "int (optional, position filter)",
+                    "web_name": "str (optional, player name filter)",
+                    "team_name": "str (optional, team name filter)",
+                    "was_home": "bool (optional, home/away filter)"
+                },
+                "example": "/api/gw/playerpoints?gameweek=1&element_type=3"
+            },
+            "/api/gameweeks": {
+                "description": "List all available gameweeks with scout team data.",
+                "method": "GET",
+                "params": {},
+                "example": "/api/gameweeks"
+            },
+        }
     }
 
 @app.get("/api/health", tags=["Health Check"], summary="Check API health status")
