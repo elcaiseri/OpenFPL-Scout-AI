@@ -1,11 +1,11 @@
 import json
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi import File, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import status
 
-from src.utils import load_config, save_scout_team_to_json
+from src.utils import load_config, save_scout_team_to_json, resolve_gameweek
 from src.logger import get_logger
 from src.scout import FPLScout
 from src.models import ResponseModel, PlayerPointsModel
@@ -189,7 +189,7 @@ async def generate_scout_team(file: UploadFile = File(...), api_key: str = Depen
                 logger.warning(f"Failed to delete temporary file {tmp_path}: {str(cleanup_error)}")
 
 @app.get("/api/gw/scout", response_model=ResponseModel, tags=["Scout"], summary="Get  scout team")
-async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key)):
+async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key), request: Request = None):
     """
     Retrieve a previously  scout team for a specific gameweek.
     
@@ -203,6 +203,8 @@ async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key)):
     Raises:
         HTTPException: If gameweek data file is not found or invalid
     """
+    gameweek = await resolve_gameweek(request)
+
     logger.info(f"Retrieving  scout team for gameweek {gameweek}")
 
     path = os.path.join("data", "internal", "scout_team", f"gw_{gameweek}.json")
@@ -239,7 +241,7 @@ async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/gw/playerpoints", response_model=ResponseModel, tags=["Scout"], summary="Get player predictions")
-async def get_player_predictions(params: PlayerPointsModel = Depends(), api_key: str = Depends(verify_api_key)):
+async def get_player_predictions(params: PlayerPointsModel = Depends(), api_key: str = Depends(verify_api_key), request: Request = None):
     """
     Retrieve player point predictions for a specific gameweek, optionally filtered by parameters.
 
@@ -253,7 +255,7 @@ async def get_player_predictions(params: PlayerPointsModel = Depends(), api_key:
     Raises:
         HTTPException: If gameweek data file is not found or invalid
     """
-    gameweek = params.gameweek
+    gameweek = await resolve_gameweek(request)
     logger.info(f"Retrieving player predictions for gameweek {gameweek} with filters: {params.dict()}")
 
     path = os.path.join("data", "internal", "scout_team", f"gw_{gameweek}.json")
