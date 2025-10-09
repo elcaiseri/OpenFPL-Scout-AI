@@ -188,8 +188,8 @@ async def generate_scout_team(file: UploadFile = File(...), api_key: str = Depen
             except Exception as cleanup_error:
                 logger.warning(f"Failed to delete temporary file {tmp_path}: {str(cleanup_error)}")
 
-@app.get("/api/gw/scout", response_model=ResponseModel, tags=["Scout"], summary="Get  scout team")
-async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key), request: Request = None):
+@app.get("/api/gw/scout", response_model=ResponseModel, tags=["Scout"], summary="Get scout team")
+async def get_scout_team(gameweek: int = None, api_key: str = Depends(verify_api_key), request: Request = None):
     """
     Retrieve a previously  scout team for a specific gameweek.
     
