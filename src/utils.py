@@ -94,12 +94,7 @@ async def resolve_gameweek(request: Request):
         print(f"Using provided gameweek: {gameweek}")
         return int(gameweek)
 
-    rapidapi_host = "https://openfpl-api.p.rapidapi.com" #request.headers.get("x-rapidapi-host")
-    if not rapidapi_host:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing RapidAPI headers"
-        )
+    rapidapi_host = "https://openfpl-api.p.rapidapi.com"
 
     url = f"{rapidapi_host}/api/gameweeks"
     async with httpx.AsyncClient() as client:
