@@ -20,7 +20,7 @@ class PlayerPointsModel(BaseModel):
         team_name (Optional[str]): Team name.
         was_home (Optional[bool]): Whether the match was at home.
     """
-    gameweek: int = Field(..., ge=1, le=38, description="Gameweek number (1-38)")
+    gameweek: Optional[int] = Field(None, ge=1, le=38, description="Gameweek number (1-38)")
     element_type: Optional[int] = Field(None, ge=1, le=4, description="Player position type GK=1, DEF=2, MID=3, FWD=4")
     web_name: Optional[str] = Field(None, description="Player name")
     team_name: Optional[str] = Field(None, description="Team name")
