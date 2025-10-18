@@ -1,7 +1,8 @@
 import logging
+from typing import Optional
 
-def get_logger(name=None):
-    logger = logging.getLogger(name or __name__)
+def get_logger(name: Optional[str] = None) -> logging.Logger:
+    logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     if not logger.handlers:
         handler = logging.StreamHandler()
