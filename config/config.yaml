@@ -50,6 +50,7 @@ numerical_columns:
   - "Att Pen"
   - "pos_touches"
   - "clearances_blocks_interceptions"
+  - "defensive_contribution"
 
 # Target column for model training
 target_column:
@@ -133,6 +134,5 @@ models:
     path: "models/catboost_reg.pkl"
     year: 2024-2025
 
-max_recent_games: 4
 
-version: "4.1.1"
+version: "4.2.0"
