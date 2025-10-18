@@ -4,15 +4,17 @@ import shutil
 import pandas as pd
 from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, status
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from typing import Optional
 
 from src.utils import load_config, save_scout_team_to_json
 from src.logger import get_logger
 from src.scout import FPLScout
 from src.models import ResponseModel, PlayerPointsModel
 from src.auth import verify_api_key
+import aiofiles
 
 logger = get_logger(__name__)
 
@@ -87,7 +89,7 @@ async def get_available_gameweeks():
 @app.post("/api/scout", response_model=ResponseModel)
 async def generate_scout_team(
     file: UploadFile = File(...), 
-    gameweek: int = None,
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
     api_key: str = Depends(verify_api_key)
 ):
     """Generate scout team from uploaded CSV."""
@@ -125,11 +127,13 @@ async def generate_scout_team(
 @app.get("/api/gw/scout", response_model=ResponseModel)
 async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key)):
     """Get saved scout team for gameweek."""
+
     path = f"data/internal/scout_team/gw_{gameweek}.json"
     
     try:
-        with open(path, "r") as f:
-            payload = json.load(f)
+        async with aiofiles.open(path, "r") as f:
+            content = await f.read()
+            payload = json.loads(content)
         
         return ResponseModel(
             scout_team=payload.get("scout_team", []),
@@ -152,9 +156,10 @@ async def get_player_predictions(
     path = f"data/internal/scout_team/gw_{params.gameweek}.json"
     
     try:
-        with open(path, "r") as f:
-            payload = json.load(f)
-        
+        async with aiofiles.open(path, "r") as f:
+            content = await f.read()
+            payload = json.loads(content)
+
         players = payload.get("player_points", [])
         
         # Apply filters
