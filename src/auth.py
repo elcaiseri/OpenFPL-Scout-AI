@@ -6,7 +6,10 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
-VALID_API_KEYS = os.getenv("VALID_API_KEYS", "").split(",") if os.getenv("VALID_API_KEYS") else []
+VALID_API_KEYS = (
+    os.getenv("VALID_API_KEYS", "").split(",") if os.getenv("VALID_API_KEYS") else []
+)
+
 
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
@@ -17,7 +20,7 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
         logger.warning("No API keys configured in environment variables")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication not properly configured"
+            detail="Authentication not properly configured",
         )
 
     if credentials.credentials not in VALID_API_KEYS:
