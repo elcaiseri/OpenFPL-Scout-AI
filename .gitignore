@@ -22,3 +22,4 @@ data/
 # Project-specific files
 trainer*.py
 models-*
+.venv/
