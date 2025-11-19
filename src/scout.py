@@ -92,7 +92,9 @@ class FPLScout:
 
         # Predict points
         logger.info("Generating predictions using ensemble models")
-        predictions = np.mean([model.predict(players) for model in self.models], axis=0)
+        predictions: np.ndarray = np.mean(
+            [model.predict(players) for model in self.models], axis=0
+        )
         players["expected_points"] = predictions
 
         return players[self.config["categorical_columns"] + ["expected_points"]]
