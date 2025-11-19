@@ -15,6 +15,10 @@ __pycache__/
 *.zip
 *info
 data/
+all_csv_history/
+mlruns/
+mlartifacts/
+catboost_info/
 
 # Notebooks
 *.ipynb
@@ -23,3 +27,6 @@ data/
 trainer*.py
 models-*
 .venv/
+.git/
+.idea/
+.vscode/
