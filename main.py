@@ -54,8 +54,16 @@ app.mount(
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     """Serve main UI."""
-    with open("static/index.html") as f:
-        return HTMLResponse(content=f.read())
+    try:
+        async with aiofiles.open("static/index.html", "r") as f:
+            content = await f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="static/index.html not found")
+    except Exception as e:
+        logger.error(f"Failed to read index.html: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read index.html")
+
+    return HTMLResponse(content=content)
 
 
 @app.get("/api")
