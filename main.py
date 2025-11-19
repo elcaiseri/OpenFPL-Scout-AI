@@ -1,32 +1,44 @@
 import json
 import os
 import shutil
+from contextlib import asynccontextmanager
 from tempfile import NamedTemporaryFile
-
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Query
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from typing import Optional
 
-from src.utils import load_config, save_scout_team_to_json
-from src.logger import get_logger
-from src.scout import FPLScout
-from src.models import ResponseModel, PlayerPointsModel
-from src.auth import verify_api_key
 import aiofiles
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+
+from src.auth import verify_api_key
+from src.logger import get_logger
+from src.models import PlayerPointsModel, ResponseModel
+from src.scout import FPLScout
+from src.utils import load_config, save_scout_team_to_json
 
 logger = get_logger(__name__)
 
-# Load config and initialize scout once
-logger.info("Initializing application")
-config = load_config("config/config.yaml")
-scout = FPLScout(config)
+config = {}
+scout: FPLScout
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global config, scout
+    logger.info("Initializing application")
+    config = load_config("config/config.yaml")
+    scout = FPLScout(config)
+    logger.info("FPLScout initialized and ready.")
+    yield
+    logger.info("Shutting down application.")
+
 
 # Initialize FastAPI
 app = FastAPI(
     title="OpenFPL API",
     description="AI-powered Fantasy Premier League Scout API",
     version=config.get("version", "1.0.0"),
+    lifespan=lifespan,
 )
 
 # Mount static files
@@ -215,3 +227,9 @@ async def get_player_predictions(
     except Exception as e:
         logger.error(f"Failed to get player predictions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

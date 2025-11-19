@@ -30,7 +30,6 @@ class FPLScout:
         self.models: List[Any] = [
             joblib.load(meta["path"]) for meta in config["models"].values()
         ]
-        self.gameweek = None
         logger.info(f"Loaded {len(self.models)} models")
 
     def get_player_predictions(
@@ -42,7 +41,7 @@ class FPLScout:
         data = pd.read_csv(data_path)
         logger.info(f"Loaded {len(data)} records")
 
-        self.gameweek = gameweek or int(data["gameweek"].max()) + 1
+        self.gameweek: int = gameweek or int(data["gameweek"].max()) + 1
         data = data[data.gameweek < self.gameweek] if gameweek else data
         logger.info(f"Filtered to {len(data)} records before gameweek {self.gameweek}")
 
