@@ -1,9 +1,10 @@
-import pandas as pd
-import yaml
-import os
-import requests
-from typing import Dict
 import json
+import os
+from typing import Dict, Hashable, Optional
+
+import pandas as pd
+import requests
+import yaml
 
 
 def load_config(config_path):
@@ -26,7 +27,9 @@ def get_next_gameweek(data) -> int:
     return next_gw
 
 
-def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, dict]:
+def fetch_gw_match_data(
+    gameweek: int, team_mapping: Optional[Dict[str, str]] = None
+) -> Dict[Hashable, dict]:
     """Fetch Premier League match data for the given gameweek and return a mapping of team to opponent and match info."""
     api_url = "https://api.football-data.org/v4/competitions/PL/matches"
     api_key = os.getenv("FPL_API_KEY", "")
@@ -67,7 +70,7 @@ def fetch_gw_match_data(gameweek: int, team_mapping: dict = None) -> Dict[str, d
         )
 
     df = pd.DataFrame(matches)
-    if team_mapping:
+    if team_mapping is not None:
         df[["team_name", "opponent_team_name"]] = df[
             ["team_name", "opponent_team_name"]
         ].replace(team_mapping)

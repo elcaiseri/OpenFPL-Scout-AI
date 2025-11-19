@@ -1,12 +1,12 @@
+import warnings
+from typing import Any, Dict, List, Optional
+
 import joblib
-import pandas as pd
 import numpy as np
-from typing import Dict, Any, Optional
+import pandas as pd
 
 from src.logger import get_logger
 from src.utils import fetch_gw_match_data, load_config
-
-import warnings
 
 warnings.filterwarnings("ignore")
 
@@ -16,13 +16,20 @@ logger = get_logger(__name__)
 class FPLScout:
     """Fantasy Premier League player scout for prediction and team selection."""
 
-    POSITION_MAPPING = {1: "Goalkeeper", 2: "Defender", 3: "Midfielder", 4: "Forward"}
-    TEAM_SELECTION = {1: 2, 2: 5, 3: 5, 4: 3}  # Players per position
+    POSITION_MAPPING: Dict[int, str] = {
+        1: "Goalkeeper",
+        2: "Defender",
+        3: "Midfielder",
+        4: "Forward",
+    }
+    TEAM_SELECTION: Dict[int, int] = {1: 2, 2: 5, 3: 5, 4: 3}  # Players per position
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         logger.info("Initializing FPLScout...")
-        self.models = [joblib.load(meta["path"]) for meta in config["models"].values()]
+        self.models: List[Any] = [
+            joblib.load(meta["path"]) for meta in config["models"].values()
+        ]
         self.gameweek = None
         logger.info(f"Loaded {len(self.models)} models")
 
@@ -46,8 +53,12 @@ class FPLScout:
                 data[col] = 0
 
         # Aggregate recent performance (last 5 games per player)
-        cat_cols = [c for c in self.config["categorical_columns"] if c != "web_name"]
-        num_cols = [c for c in data.columns if c in self.config["numerical_columns"]]
+        cat_cols: List[str] = [
+            c for c in self.config["categorical_columns"] if c != "web_name"
+        ]
+        num_cols: List[str] = [
+            c for c in data.columns if c in self.config["numerical_columns"]
+        ]
 
         players = (
             data.sort_values(["web_name", "gameweek"], ascending=[True, False])
@@ -65,13 +76,19 @@ class FPLScout:
         )
         normalizer = self.config.get("gw_team_name_mapping", {})
 
-        players["team_name"] = players["team_name"].map(lambda x: normalizer.get(x, x))
+        players["team_name"] = players["team_name"].map(
+            lambda x: normalizer.get(str(x), str(x)) if pd.notna(x) else None
+        )
         players["gameweek"] = self.gameweek
         players["opponent_team_name"] = players["team_name"].map(
-            lambda t: gw_matches.get(t, {}).get("opponent_team_name")
+            lambda t: gw_matches.get(str(t), {}).get("opponent_team_name", None)
+            if pd.notna(t)
+            else None
         )
         players["was_home"] = players["team_name"].map(
-            lambda t: gw_matches.get(t, {}).get("was_home")
+            lambda t: gw_matches.get(str(t), {}).get("was_home", None)
+            if pd.notna(t)
+            else None
         )
 
         # Predict points
