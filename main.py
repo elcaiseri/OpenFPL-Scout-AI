@@ -9,6 +9,7 @@ import aiofiles
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_redoc_html
 
 from src.auth import verify_api_key
 from src.logger import get_logger
@@ -33,12 +34,58 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application.")
 
 
-# Initialize FastAPI
+# Initialize FastAPI with enhanced branding
 app = FastAPI(
-    title="OpenFPL API",
-    description="AI-powered Fantasy Premier League Scout API",
+    title="OpenFPL Scout AI - Professional FPL Analytics API",
+    description="""
+## 🚀 AI-Powered Fantasy Premier League Intelligence Platform
+
+**OpenFPL Scout AI** is a professional-grade REST API that leverages ensemble machine learning to deliver cutting-edge Fantasy Premier League analytics and team optimization.
+
+### 🎯 Key Features
+
+- **🤖 Ensemble ML Models**: Combines XGBoost, CatBoost, and Linear Regression for superior prediction accuracy
+- **⚡ Real-time Analytics**: Access live player predictions and gameweek analytics
+- **🏆 Team Optimization**: Automated optimal team selection using advanced algorithms
+- **📊 Comprehensive Data**: Historical performance, fixture difficulty, and expected points
+- **🔒 Secure & Reliable**: Production-ready API with authentication and error handling
+- **📱 Developer Friendly**: Clear documentation, consistent responses, and easy integration
+
+### 💡 Use Cases
+
+1. **FPL Managers**: Get AI-powered team recommendations to maximize your weekly points
+2. **Data Analysts**: Access rich player performance data for custom analysis
+3. **App Developers**: Integrate FPL predictions into your fantasy football applications
+4. **Researchers**: Study player performance patterns using machine learning insights
+
+### 🔥 Quick Start
+
+Visit our [RapidAPI Marketplace](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api) for instant API access with free tier available.
+
+### 📚 Main Endpoints
+
+- `GET /api/gw/scout` - Get optimal FPL team for specific gameweek
+- `GET /api/gw/playerpoints` - Get filtered player point predictions
+- `GET /api/gameweeks` - List all available gameweeks with saved data
+- `GET /api/health` - Health check endpoint
+
+### 🏅 About
+
+Developed by [@elcaiseri](https://github.com/elcaiseri) | [GitHub Repository](https://github.com/elcaiseri/OpenFPL-Scout-AI)
+    """,
     version=config.get("version", "1.0.0"),
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url=None,  # We'll create a custom redoc endpoint
+    contact={
+        "name": "OpenFPL Scout AI Support",
+        "url": "https://github.com/elcaiseri/OpenFPL-Scout-AI",
+        "email": "iqasem4444@gmail.com",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://github.com/elcaiseri/OpenFPL-Scout-AI/blob/main/LICENSE",
+    },
 )
 
 # Mount static files
@@ -62,6 +109,21 @@ async def serve_index():
     except Exception as e:
         logger.error(f"Failed to read index.html: {e}")
         raise HTTPException(status_code=500, detail="Failed to read index.html")
+
+    return HTMLResponse(content=content)
+
+
+@app.get("/redoc", response_class=HTMLResponse, include_in_schema=False)
+async def serve_custom_redoc():
+    """Serve custom branded ReDoc documentation."""
+    try:
+        async with aiofiles.open("static/redoc.html", "r") as f:
+            content = await f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="static/redoc.html not found")
+    except Exception as e:
+        logger.error(f"Failed to read redoc.html: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read redoc.html")
 
     return HTMLResponse(content=content)
 

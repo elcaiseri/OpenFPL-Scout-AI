@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenFPL Scout AI - API Documentation</title>
+    <meta name="description" content="Official API documentation for OpenFPL Scout AI - AI-powered Fantasy Premier League analytics and team optimization platform">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="OpenFPL Scout AI - API Documentation">
+    <meta property="og:description" content="Professional API for FPL team optimization powered by ensemble machine learning">
+    <meta property="og:image" content="/assets/openfpl-scout-preview.png">
+    <meta property="og:type" content="website">
+    
+    <style>
+        :root {
+            --primary-purple: #37003c;
+            --primary-green: #00ff87;
+            --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --header-gradient: linear-gradient(135deg, #37003c 0%, #4a0050 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+        }
+
+        /* Custom Header Banner */
+        .api-header {
+            background: var(--header-gradient);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .api-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(0, 255, 135, 0.1) 0%, rgba(103, 126, 234, 0.1) 100%);
+            pointer-events: none;
+        }
+
+        .api-header-content {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary-green) 0%, #06FFA5 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: bold;
+            color: var(--primary-purple);
+            box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .api-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0;
+            line-height: 1.2;
+            background: linear-gradient(135deg, #ffffff 0%, var(--primary-green) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .api-tagline {
+            font-size: 1.25rem;
+            font-weight: 400;
+            margin: 15px 0 25px;
+            opacity: 0.95;
+            color: var(--primary-green);
+        }
+
+        .api-overview {
+            font-size: 1rem;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            opacity: 0.9;
+            color: rgba(255, 255, 255, 0.95);
+        }
+
+        .api-badges {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 25px;
+        }
+
+        .badge {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .badge:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .badge-primary {
+            background: rgba(0, 255, 135, 0.2);
+            border-color: var(--primary-green);
+        }
+
+        /* API Documentation Container */
+        .api-docs-container {
+            max-width: 1400px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .docs-iframe-wrapper {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            min-height: 800px;
+        }
+
+        .docs-iframe-wrapper iframe {
+            width: 100%;
+            min-height: 800px;
+            border: none;
+        }
+
+        .api-notice {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .api-notice h3 {
+            color: var(--primary-purple);
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .api-notice p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .api-notice ul {
+            margin-left: 20px;
+            color: #666;
+        }
+
+        .api-notice li {
+            margin: 8px 0;
+            line-height: 1.5;
+        }
+
+        .docs-link-button {
+            display: inline-block;
+            background: var(--header-gradient);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 10px 10px 0 0;
+            transition: all 0.3s ease;
+        }
+
+        .docs-link-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(55, 0, 60, 0.3);
+        }
+
+        /* Footer */
+        .api-footer {
+            background: #f8f9fa;
+            padding: 30px 20px;
+            text-align: center;
+            border-top: 1px solid #e0e0e0;
+            margin-top: 60px;
+        }
+
+        .api-footer p {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 5px 0;
+        }
+
+        .api-footer a {
+            color: var(--primary-purple);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s ease;
+        }
+
+        .api-footer a:hover {
+            color: var(--primary-green);
+        }
+
+        @media (max-width: 768px) {
+            .api-title {
+                font-size: 1.8rem;
+            }
+
+            .api-tagline {
+                font-size: 1rem;
+            }
+
+            .api-overview {
+                font-size: 0.9rem;
+            }
+
+            .logo {
+                width: 50px;
+                height: 50px;
+                font-size: 26px;
+            }
+
+            .api-badges {
+                gap: 8px;
+            }
+
+            .badge {
+                font-size: 0.75rem;
+                padding: 6px 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Custom Header -->
+    <div class="api-header">
+        <div class="api-header-content">
+            <div class="logo-container">
+                <div class="logo">⚽</div>
+                <h1 class="api-title">OpenFPL Scout AI</h1>
+            </div>
+            <p class="api-tagline">🚀 AI-Powered Fantasy Premier League Intelligence Platform</p>
+            <p class="api-overview">
+                Professional-grade REST API for Fantasy Premier League team optimization using ensemble machine learning.
+                Access AI-driven player predictions, optimal team selections, and gameweek analytics to maximize your FPL performance.
+                Powered by XGBoost, CatBoost, and Linear Regression models trained on comprehensive historical data.
+            </p>
+            <div class="api-badges">
+                <span class="badge badge-primary">✨ Ensemble ML Models</span>
+                <span class="badge">📊 Real-time Analytics</span>
+                <span class="badge">🎯 Team Optimization</span>
+                <span class="badge">⚡ Fast Performance</span>
+                <span class="badge">🔒 Secure API</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Documentation Content -->
+    <div class="api-docs-container">
+        <div class="api-notice">
+            <h3>📚 Interactive API Documentation</h3>
+            <p>
+                This is the official ReDoc documentation for OpenFPL Scout AI. Below you'll find comprehensive details about all available endpoints, 
+                request/response schemas, and example usage. The API provides powerful Fantasy Premier League analytics and team optimization capabilities.
+            </p>
+            <ul>
+                <li><strong>GET /api/gw/scout</strong> - Retrieve optimal FPL team for any gameweek</li>
+                <li><strong>GET /api/gw/playerpoints</strong> - Access detailed player predictions with filtering</li>
+                <li><strong>GET /api/gameweeks</strong> - List all available gameweeks with saved data</li>
+                <li><strong>GET /api/health</strong> - Check API health status</li>
+            </ul>
+            <a href="/docs" class="docs-link-button">🔄 Switch to Swagger UI</a>
+            <a href="/openapi.json" class="docs-link-button">📄 View OpenAPI Spec</a>
+            <a href="https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api" target="_blank" class="docs-link-button">🚀 Get API Key on RapidAPI</a>
+        </div>
+
+        <div class="docs-iframe-wrapper">
+            <!-- Embedded Swagger UI as fallback for ReDoc -->
+            <iframe src="/docs" title="API Documentation"></iframe>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="api-footer">
+        <p><strong>OpenFPL Scout AI</strong> - Professional Fantasy Premier League API</p>
+        <p>
+            Developed by <a href="https://github.com/elcaiseri" target="_blank">@elcaiseri</a> | 
+            <a href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank">GitHub</a> | 
+            <a href="https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api" target="_blank">RapidAPI</a>
+        </p>
+        <p style="margin-top: 15px; font-size: 0.8rem; color: #999;">
+            © 2025 OpenFPL Scout AI. Powered by Ensemble Machine Learning (XGBoost, CatBoost, Linear Regression)
+        </p>
+    </div>
+</body>
+</html>
