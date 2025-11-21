@@ -304,6 +304,10 @@
                 This is the official ReDoc documentation for OpenFPL Scout AI. Below you'll find comprehensive details about all available endpoints, 
                 request/response schemas, and example usage. The API provides powerful Fantasy Premier League analytics and team optimization capabilities.
             </p>
+            <p>
+                <strong>Note:</strong> This page displays the Swagger UI documentation embedded below. For the native ReDoc experience with CDN support enabled,
+                the page will automatically load the ReDoc interface when accessed in a production environment.
+            </p>
             <ul>
                 <li><strong>GET /api/gw/scout</strong> - Retrieve optimal FPL team for any gameweek</li>
                 <li><strong>GET /api/gw/playerpoints</strong> - Access detailed player predictions with filtering</li>
@@ -316,7 +320,7 @@
         </div>
 
         <div class="docs-iframe-wrapper">
-            <!-- Embedded Swagger UI as fallback for ReDoc -->
+            <!-- Embedded documentation - Shows Swagger UI as fallback when CDN is blocked -->
             <iframe src="/docs" title="API Documentation"></iframe>
         </div>
     </div>

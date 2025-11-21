@@ -9,7 +9,6 @@ import aiofiles
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.openapi.docs import get_redoc_html
 
 from src.auth import verify_api_key
 from src.logger import get_logger
