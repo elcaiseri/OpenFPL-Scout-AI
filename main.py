@@ -75,7 +75,7 @@ Developed by [@elcaiseri](https://github.com/elcaiseri) | [GitHub Repository](ht
     """,
     version=config.get("version", "1.0.0"),
     lifespan=lifespan,
-    docs_url="/docs",
+    docs_url=None,  # We'll create a custom docs endpoint
     redoc_url=None,  # We'll create a custom redoc endpoint
     contact={
         "name": "OpenFPL Scout AI Support",
@@ -124,6 +124,21 @@ async def serve_custom_redoc():
     except Exception as e:
         logger.error(f"Failed to read redoc.html: {e}")
         raise HTTPException(status_code=500, detail="Failed to read redoc.html")
+
+    return HTMLResponse(content=content)
+
+
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
+async def serve_custom_docs():
+    """Serve custom branded Swagger UI documentation."""
+    try:
+        async with aiofiles.open("static/docs.html", "r") as f:
+            content = await f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="static/docs.html not found")
+    except Exception as e:
+        logger.error(f"Failed to read docs.html: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read docs.html")
 
     return HTMLResponse(content=content)
 

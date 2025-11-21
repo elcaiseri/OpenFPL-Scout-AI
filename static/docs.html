@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenFPL Scout AI - Interactive API Documentation</title>
+    <meta name="description" content="Official Swagger UI documentation for OpenFPL Scout AI - Try out API endpoints interactively">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    
+    <style>
+        :root {
+            --primary-purple: #37003c;
+            --primary-green: #00ff87;
+            --header-gradient: linear-gradient(135deg, #37003c 0%, #4a0050 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+        }
+
+        /* Custom Header */
+        .api-header {
+            background: var(--header-gradient);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .api-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(0, 255, 135, 0.1) 0%, rgba(103, 126, 234, 0.1) 100%);
+            pointer-events: none;
+        }
+
+        .api-header-content {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .logo {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--primary-green) 0%, #06FFA5 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: bold;
+            color: var(--primary-purple);
+            box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .api-title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+            line-height: 1.2;
+            background: linear-gradient(135deg, #ffffff 0%, var(--primary-green) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .api-tagline {
+            font-size: 1rem;
+            font-weight: 400;
+            margin: 10px 0 0;
+            color: var(--primary-green);
+        }
+
+        .docs-link-button {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 15px 5px 0;
+            font-size: 0.9rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .docs-link-button:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        /* Swagger UI Container */
+        #swagger-ui {
+            max-width: 1460px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        /* Custom Swagger UI Styling */
+        .swagger-ui .topbar {
+            display: none !important;
+        }
+
+        .swagger-ui .info {
+            margin: 20px 0;
+        }
+
+        .swagger-ui .info .title {
+            color: var(--primary-purple) !important;
+        }
+
+        .swagger-ui .opblock.opblock-get .opblock-summary-method {
+            background: var(--primary-green) !important;
+        }
+
+        .swagger-ui .opblock.opblock-post .opblock-summary-method {
+            background: #667eea !important;
+        }
+
+        .swagger-ui .opblock.opblock-get .opblock-summary {
+            border-color: var(--primary-green) !important;
+        }
+
+        .swagger-ui .opblock.opblock-post .opblock-summary {
+            border-color: #667eea !important;
+        }
+
+        .swagger-ui .btn.execute {
+            background-color: var(--primary-purple) !important;
+            border-color: var(--primary-purple) !important;
+        }
+
+        .swagger-ui .btn.execute:hover {
+            background-color: #4a0050 !important;
+        }
+
+        /* Footer */
+        .api-footer {
+            background: white;
+            padding: 25px 20px;
+            text-align: center;
+            border-top: 1px solid #e0e0e0;
+            margin-top: 40px;
+        }
+
+        .api-footer p {
+            color: #666;
+            font-size: 0.85rem;
+            margin: 5px 0;
+        }
+
+        .api-footer a {
+            color: var(--primary-purple);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s ease;
+        }
+
+        .api-footer a:hover {
+            color: var(--primary-green);
+        }
+
+        @media (max-width: 768px) {
+            .api-title {
+                font-size: 1.5rem;
+            }
+
+            .api-tagline {
+                font-size: 0.9rem;
+            }
+
+            .logo {
+                width: 40px;
+                height: 40px;
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Custom Header -->
+    <div class="api-header">
+        <div class="api-header-content">
+            <div class="logo-container">
+                <div class="logo">⚽</div>
+                <h1 class="api-title">OpenFPL Scout AI - Interactive API</h1>
+            </div>
+            <p class="api-tagline">🚀 Try out our Fantasy Premier League API endpoints in real-time</p>
+            <div>
+                <a href="/redoc" class="docs-link-button">📚 View ReDoc</a>
+                <a href="/openapi.json" class="docs-link-button">📄 OpenAPI Spec</a>
+                <a href="https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api" target="_blank" class="docs-link-button">🚀 Get API Key</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Swagger UI -->
+    <div id="swagger-ui"></div>
+
+    <!-- Footer -->
+    <div class="api-footer">
+        <p><strong>OpenFPL Scout AI</strong> - Professional Fantasy Premier League API</p>
+        <p>
+            Developed by <a href="https://github.com/elcaiseri" target="_blank">@elcaiseri</a> | 
+            <a href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank">GitHub</a> | 
+            <a href="https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api" target="_blank">RapidAPI</a>
+        </p>
+        <p style="margin-top: 10px; font-size: 0.75rem; color: #999;">
+            © 2025 OpenFPL Scout AI. Powered by Ensemble Machine Learning
+        </p>
+    </div>
+
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            window.ui = SwaggerUIBundle({
+                url: "/openapi.json",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                docExpansion: "list",
+                filter: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                syntaxHighlight: {
+                    activate: true,
+                    theme: "monokai"
+                }
+            });
+        };
+    </script>
+</body>
+</html>
