@@ -133,9 +133,9 @@ Features of the UI:
 
 | Model             | Version | Description                    |
 |-------------------|---------|--------------------------------|
-| Linear Regression | v2.0    | Baseline linear model          |
-| XGBoost           | v2.0    | Gradient boosting ensemble     |
-| CatBoost          | v1.0    | Categorical boosting model     |
+| Linear Regression | v4.0    | Baseline linear model          |
+| XGBoost           | v4.0    | Gradient boosting ensemble     |
+| CatBoost          | v3.0    | Categorical boosting model     |
 
 - Ensemble predictions for accuracy
 - Feature importance analysis
