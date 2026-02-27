@@ -1,8 +1,7 @@
 # OpenFPL Scout API – Backend Documentation
 
-Version: 2.3.1
-
-Description: AI-powered Fantasy Premier League (FPL) Scout API providing optimal team selection, player projections, and gameweek analysis.
+**Version:** 2.3.1  
+**Description:** AI-powered Fantasy Premier League (FPL) Scout API – optimal team selection, player projections, and gameweek analysis.
 
 ---
 
