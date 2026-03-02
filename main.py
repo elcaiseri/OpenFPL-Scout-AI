@@ -118,18 +118,26 @@ async def get_available_gameweeks():
 async def generate_scout_team(
     file: UploadFile = File(...),
     gameweek: Optional[int] = Query(None, ge=1, le=38),
-    api_key: str = Depends(verify_api_key),
+    _api_key: str = Depends(verify_api_key),
 ):
     """Generate scout team from uploaded CSV."""
-    tmp_path = None
+    saved_csv_path = None
     try:
-        # Save uploaded file temporarily
-        with NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        # Save uploaded file under data/internal/api
+        api_data_dir = "data/internal/api"
+        os.makedirs(api_data_dir, exist_ok=True)
+
+        with NamedTemporaryFile(
+            delete=False,
+            suffix=".csv",
+            prefix=f"gw_{gameweek or 'auto'}_",
+            dir=api_data_dir,
+        ) as tmp:
             shutil.copyfileobj(file.file, tmp)
-            tmp_path = tmp.name
+            saved_csv_path = tmp.name
 
         # Get or generate predictions
-        predictions = scout.get_player_predictions(tmp_path, gameweek=gameweek)
+        predictions = scout.get_player_predictions(saved_csv_path, gameweek=gameweek)
 
         # Select team
         team = scout.select_optimal_team(predictions)
@@ -148,9 +156,6 @@ async def generate_scout_team(
     except Exception as e:
         logger.error(f"Failed to generate scout team: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 @app.get("/api/gw/scout", response_model=ResponseModel)
