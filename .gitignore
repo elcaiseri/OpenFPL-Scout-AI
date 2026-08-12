@@ -20,6 +20,6 @@ data/
 *.ipynb
 
 # Project-specific files
-trainer*.py
+#trainer*.py
 models-*
 .venv/
