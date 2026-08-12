@@ -29,6 +29,18 @@ const appState = {
 // Utility Functions
 const utils = {
     /**
+     * Escape untrusted player/API values before inserting template HTML.
+     */
+    escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    },
+
+    /**
      * Debounce function to limit rapid function calls
      */
     debounce(func, wait) {
@@ -105,8 +117,18 @@ const domElements = {
     get gameweekSelect() { return document.getElementById('gameweek-select'); },
     get totalPoints() { return document.getElementById('total-points'); },
     get playerCount() { return document.getElementById('player-count'); },
+    get captainName() { return document.getElementById('captain-name'); },
     get credits() { return document.getElementById('credits'); },
-    get container() { return document.querySelector('.container'); }
+    get container() { return document.querySelector('.container'); },
+    get playerDialog() { return document.getElementById('player-dialog'); },
+    get dialogClose() { return document.getElementById('dialog-close'); },
+    get dialogPlayerName() { return document.getElementById('dialog-player-name'); },
+    get dialogTeam() { return document.getElementById('dialog-team'); },
+    get dialogPoints() { return document.getElementById('dialog-points'); },
+    get dialogPosition() { return document.getElementById('dialog-position'); },
+    get dialogFixture() { return document.getElementById('dialog-fixture'); },
+    get dialogVenue() { return document.getElementById('dialog-venue'); },
+    get dialogRole() { return document.getElementById('dialog-role'); }
 };
 
 // Player Card Creation
@@ -119,18 +141,22 @@ const playerCardRenderer = {
         const roleClass = this.getRoleClass(formattedPlayer.role);
         const roleBadge = this.createRoleBadge(formattedPlayer.role);
         const homeIndicator = formattedPlayer.was_home ? 'home' : 'away';
+        const playerJson = utils.escapeHtml(JSON.stringify(formattedPlayer));
+        const playerName = utils.escapeHtml(formattedPlayer.web_name);
+        const teamName = utils.escapeHtml(formattedPlayer.team_name);
+        const opponentName = utils.escapeHtml(formattedPlayer.opponent_team_name);
 
         return `
             <div class="player-card ${roleClass}"
-                 data-player='${JSON.stringify(formattedPlayer)}'
+                 data-player="${playerJson}"
                  tabindex="0"
                  role="button"
-                 aria-label="Player: ${formattedPlayer.web_name}, Expected points: ${formattedPlayer.expected_points.toFixed(2)}">
+                 aria-label="Player: ${playerName}, Expected points: ${formattedPlayer.expected_points.toFixed(2)}">
                 ${roleBadge}
-                <div class="player-name">${formattedPlayer.web_name}</div>
-                <div class="team-name">${formattedPlayer.team_name}</div>
+                <div class="player-name">${playerName}</div>
+                <div class="team-name">${teamName}</div>
                 <div class="fixture">
-                    vs ${formattedPlayer.opponent_team_name}
+                    vs ${opponentName}
                     <span class="home-indicator ${homeIndicator}"
                           aria-label="${formattedPlayer.was_home ? 'Home' : 'Away'} game"></span>
                 </div>
@@ -270,6 +296,7 @@ const statisticsManager = {
         return {
             totalPoints: totalPoints.toFixed(2),
             playerCount: players.length,
+            captainName: captain ? captain.web_name : '—',
             captainPoints: captain ? parseFloat(captain.expected_points).toFixed(2) : '-',
             vicePoints: vice ? parseFloat(vice.expected_points).toFixed(2) : '-'
         };
@@ -285,6 +312,9 @@ const statisticsManager = {
         if (domElements.playerCount) {
             domElements.playerCount.textContent = stats.playerCount;
         }
+        if (domElements.captainName) {
+            domElements.captainName.textContent = stats.captainName;
+        }
     }
 };
 
@@ -294,7 +324,12 @@ const uiStateManager = {
      * Show loading state
      */
     showLoading(message = 'Loading team data...') {
-        domElements.pitch.innerHTML = `<div class="loading" role="status" aria-live="polite">${message}</div>`;
+        domElements.pitch.innerHTML = `
+            <div class="loading" role="status" aria-live="polite">
+                <span class="loading-ball" aria-hidden="true"></span>
+                ${utils.escapeHtml(message)}
+            </div>
+        `;
     },
 
     /**
@@ -503,9 +538,10 @@ const gameweekManager = {
             uiStateManager.updateHeaderAndCredits(data);
 
         } catch (error) {
+            const safeError = utils.escapeHtml(error.message);
             const errorMessage = `
                 <strong>Error loading Gameweek ${gameweek} data</strong><br>
-                ${error.message}<br><br>
+                ${safeError}<br><br>
                 <small>Make sure the file <code>${CONFIG.dataPath}${CONFIG.filePrefix}${gameweek}${CONFIG.fileExtension}</code> exists and is accessible.</small>
             `;
             uiStateManager.showError(errorMessage);
@@ -543,18 +579,25 @@ const eventHandlers = {
     },
 
     /**
-     * Show player information modal/alert
+     * Show player information in the projection dialog.
      */
     showPlayerInfo(playerData) {
-        const message = `
-Player: ${playerData.web_name}
-Team: ${playerData.team_name}
-Position: ${playerData.element_type}
-Fixture: ${playerData.team_name} vs ${playerData.opponent_team_name} (${playerData.was_home ? 'Home' : 'Away'})
-Expected Points: ${playerData.expected_points.toFixed(2)}${playerData.role ? `\nRole: ${playerData.role.charAt(0).toUpperCase() + playerData.role.slice(1)}` : ''}
-        `.trim();
+        const dialog = domElements.playerDialog;
+        const role = playerData.role
+            ? playerData.role.charAt(0).toUpperCase() + playerData.role.slice(1)
+            : 'Squad';
 
-        alert(message);
+        domElements.dialogPlayerName.textContent = playerData.web_name;
+        domElements.dialogTeam.textContent = playerData.team_name;
+        domElements.dialogPoints.textContent = playerData.expected_points.toFixed(2);
+        domElements.dialogPosition.textContent = playerData.element_type;
+        domElements.dialogFixture.textContent = `vs ${playerData.opponent_team_name}`;
+        domElements.dialogVenue.textContent = playerData.was_home ? 'Home' : 'Away';
+        domElements.dialogRole.textContent = role;
+
+        if (typeof dialog.showModal === 'function') {
+            dialog.showModal();
+        }
     },
 
     /**
@@ -579,6 +622,20 @@ const eventListeners = {
         const gameweekSelect = domElements.gameweekSelect;
         if (gameweekSelect) {
             gameweekSelect.addEventListener('change', eventHandlers.handleGameweekChange);
+        }
+
+        if (domElements.dialogClose) {
+            domElements.dialogClose.addEventListener('click', () => {
+                domElements.playerDialog.close();
+            });
+        }
+
+        if (domElements.playerDialog) {
+            domElements.playerDialog.addEventListener('click', (event) => {
+                if (event.target === domElements.playerDialog) {
+                    domElements.playerDialog.close();
+                }
+            });
         }
     }
 };
@@ -620,9 +677,10 @@ const app = {
 
         } catch (error) {
             console.error('Error initializing application:', error);
+            const safeError = utils.escapeHtml(error.message);
             const errorMessage = `
                 <strong>Failed to initialize application</strong><br>
-                ${error.message}<br><br>
+                ${safeError}<br><br>
                 <small>Please check the console for more details.</small>
             `;
             uiStateManager.showError(errorMessage);

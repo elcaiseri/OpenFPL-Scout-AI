@@ -4,27 +4,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#190525">
     <meta name="description"
-        content="OpenFPL Scout AI Team - Get the best Fantasy Premier League team recommendations powered by artificial intelligence. Optimize your FPL squad with data-driven player selections and maximize your points.">
+        content="OpenFPL Scout AI Team — data-driven Fantasy Premier League picks, captaincy and gameweek projections.">
     <meta name="keywords"
-        content="Fantasy Premier League, FPL, AI team selection, football predictions, premier league fantasy, FPL scout, fantasy football AI, player recommendations">
+        content="Fantasy Premier League, FPL, AI team selection, football predictions, FPL scout, player recommendations">
     <meta name="author" content="@elcaiseri">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://openfpl-scout-ai-186049008266.europe-west1.run.app/">
 
-    <!-- Application Preview Image -->
     <link rel="image_src"
         href="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
-    <meta name="image"
-        content="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
-
-    <!-- Open Graph Meta Tags -->
-    <meta property="og:title" content="OpenFPL Scout AI Team - Fantasy Premier League AI Recommendations">
+    <meta property="og:title" content="OpenFPL Scout AI — Own the Gameweek">
     <meta property="og:description"
-        content="Get the best Fantasy Premier League team recommendations powered by AI. Optimize your FPL squad with data-driven selections.">
+        content="Build a smarter Fantasy Premier League squad with four-model AI projections.">
     <meta property="og:image"
-        content="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
-    <meta property="og:image:secure_url"
         content="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -32,105 +26,184 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="OpenFPL Scout">
 
-    <!-- Twitter Card Meta Tags -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="OpenFPL Scout AI Team - Fantasy Premier League AI">
-    <meta name="twitter:description"
-        content="AI-powered Fantasy Premier League team recommendations to maximize your points.">
+    <meta name="twitter:title" content="OpenFPL Scout AI — Own the Gameweek">
+    <meta name="twitter:description" content="Four-model FPL projections, squad picks and captaincy calls.">
     <meta name="twitter:image"
         content="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
     <meta name="twitter:creator" content="@elcaiseri">
 
-    <!-- Structured Data -->
     <script type="application/ld+json">
     {
         "@context": "https://schema.org",
         "@type": "WebApplication",
-        "name": "OpenFPL Scout AI Team",
+        "name": "OpenFPL Scout AI",
         "description": "AI-powered Fantasy Premier League team recommendations",
         "url": "https://openfpl-scout-ai-186049008266.europe-west1.run.app/",
         "applicationCategory": "SportsApplication",
         "operatingSystem": "Web Browser",
-        "author": {
-            "@type": "Person",
-            "name": "@elcaiseri"
-        },
-        "image": "https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png"
+        "author": { "@type": "Person", "name": "@elcaiseri" }
     }
     </script>
 
-    <link rel="icon" type="image/png"
-        href="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png">
-    <title>OpenFPL Scout AI Team - Fantasy Premier League AI Recommendations | FPL Scout</title>
-
-    <!-- Local Styles -->
+    <link rel="icon" type="image/png" href="assets/openfpl-scout-preview.png">
     <link rel="stylesheet" href="static/style.css">
+    <title>OpenFPL Scout AI — Own the Gameweek</title>
 </head>
 
 <body>
-    <img src="https://openfpl-scout-ai-186049008266.europe-west1.run.app/assets/openfpl-scout-preview.png"
-        alt="Hidden Preview" style="display:none;" aria-hidden="true">
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
     <div class="container">
-        <!-- Header Section -->
         <header class="header">
-            <h1>OpenFPL Scout AI Team</h1>
-            <div class="gameweek" id="gameweek-info" aria-live="polite">Loading...</div>
-        </header>
+            <nav class="topbar" aria-label="Primary navigation">
+                <a class="brand" href="/" aria-label="OpenFPL Scout home">
+                    <span class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 44 44" role="img">
+                            <path d="M22 4 36 12v16L22 40 8 28V12L22 4Z" fill="none" stroke="currentColor"
+                                stroke-width="2.4" />
+                            <circle cx="22" cy="21" r="8" fill="none" stroke="currentColor"
+                                stroke-width="2.4" />
+                            <path d="m22 13 4.7 3.4-1.8 5.5h-5.8l-1.8-5.5L22 13Zm-4.7 3.4-4.6 2.1m12.2 3.4 3.6 4M19.1 21.9l-2.8 4.9m10.4-10.4 4.6 2.1"
+                                fill="none" stroke="currentColor" stroke-width="1.7" />
+                        </svg>
+                    </span>
+                    <span class="brand-copy">
+                        <strong>OpenFPL</strong>
+                        <small>Scout AI</small>
+                    </span>
+                </a>
 
-        <!-- Collaboration Section -->
-        <section class="collaboration-section"
-            style="text-align: center; margin: 0px 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
-            <h3 style="margin: 0 0 10px 0; font-size: 1.2em;">🚀 Join the Community!</h3>
-            <p style="margin: 0 0 15px 0; font-size: 0.9em; opacity: 0.9;">
-                Help us improve OpenFPL Scout AI! Contribute code, report bugs, or suggest features.
-            </p>
-            <a href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank" rel="noopener noreferrer"
-                style="display: inline-block; background: #fff; color: #333; padding: 10px 20px; border-radius: 25px; text-decoration: none; font-weight: bold; transition: transform 0.2s; box-shadow: 0 2px 10px rgba(0,0,0,0.2);"
-                onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
-                ⭐ Contribute on GitHub
-            </a>
-        </section>
-
-        <!-- Controls Section -->
-        <section class="gameweek-selector">
-            <select id="gameweek-select" aria-label="Select gameweek to view">
-                <option value="">Loading gameweeks...</option>
-            </select>
-        </section>
-
-        <!-- Disclaimer Section -->
-        <div class="disclaimer">
-            <strong>Disclaimer:</strong> OpenFPL Scout AI does not cover player injuries, suspensions, or other
-            availability-related
-            conditions.
-        </div>
-
-        <!-- Statistics Section -->
-        <section class="stats-section" aria-label="Team statistics">
-            <div class="stats-grid" id="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="total-points" aria-label="Total expected points">-</div>
-                    <div class="stat-label">Total Expected Points</div>
+                <div class="season-chip">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    2026/27 model live
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="player-count" aria-label="Number of players selected">-</div>
-                    <div class="stat-label">Players Selected</div>
+            </nav>
+
+            <div class="hero-grid">
+                <div class="hero-copy">
+                    <p class="eyebrow">Four models. One decisive squad.</p>
+                    <h1>Own the <span>gameweek.</span></h1>
+                    <p class="hero-description">
+                        Recent form, fixture context and AI projections distilled into a deadline-ready squad.
+                    </p>
+                </div>
+
+                <div class="gameweek-panel" aria-live="polite">
+                    <span class="panel-kicker">Current projection</span>
+                    <strong class="gameweek" id="gameweek-info">Loading…</strong>
+                    <span class="panel-meta">Updated from the latest model run</span>
                 </div>
             </div>
-        </section>
+        </header>
 
-        <!-- Team Formation Display -->
-        <main class="pitch" id="pitch" role="main" aria-label="Team formation display">
-            <div class="loading" role="status" aria-live="polite">Loading team data...</div>
+        <main>
+            <section class="control-deck" aria-label="Gameweek controls">
+                <div class="selector-copy">
+                    <span class="section-index">01</span>
+                    <div>
+                        <label for="gameweek-select">Choose your gameweek</label>
+                        <p>Review any published squad from the season.</p>
+                    </div>
+                </div>
+
+                <div class="gameweek-selector">
+                    <select id="gameweek-select" aria-label="Select gameweek to view">
+                        <option value="">Loading gameweeks…</option>
+                    </select>
+                </div>
+
+                <a class="community-link" href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank"
+                    rel="noopener noreferrer">
+                    <span>Build with us</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 12h14M13 6l6 6-6 6" />
+                    </svg>
+                </a>
+            </section>
+
+            <aside class="disclaimer" aria-label="Availability disclaimer">
+                <span class="disclaimer-icon" aria-hidden="true">!</span>
+                <p><strong>Selection note</strong> — Always confirm injuries, suspensions and press-conference news before the deadline.</p>
+            </aside>
+
+            <section class="stats-section" aria-label="Squad intelligence">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-index">02</span>
+                        <p>Squad intelligence</p>
+                    </div>
+                    <span class="live-label"><i></i> Data ready</span>
+                </div>
+
+                <div class="stats-grid" id="stats-grid">
+                    <article class="stat-card stat-primary">
+                        <span class="stat-icon" aria-hidden="true">xPts</span>
+                        <div class="stat-value" id="total-points" aria-label="Total expected points">—</div>
+                        <div class="stat-label">Projected squad points</div>
+                    </article>
+                    <article class="stat-card">
+                        <span class="stat-icon" aria-hidden="true">XV</span>
+                        <div class="stat-value" id="player-count" aria-label="Number of players selected">—</div>
+                        <div class="stat-label">Players selected</div>
+                    </article>
+                    <article class="stat-card">
+                        <span class="stat-icon crown-icon" aria-hidden="true">C</span>
+                        <div class="stat-value stat-name" id="captain-name">—</div>
+                        <div class="stat-label">Captain pick</div>
+                    </article>
+                    <article class="stat-card">
+                        <span class="stat-icon" aria-hidden="true">AI</span>
+                        <div class="stat-value">4×</div>
+                        <div class="stat-label">Model ensemble</div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="squad-section" aria-label="AI selected squad">
+                <div class="section-heading squad-heading">
+                    <div>
+                        <span class="section-index">03</span>
+                        <div>
+                            <p>AI squad board</p>
+                            <small>Tap any player for the full projection</small>
+                        </div>
+                    </div>
+                    <span class="formation-chip">2 • 5 • 5 • 3</span>
+                </div>
+
+                <div class="pitch" id="pitch" role="region" aria-label="Team formation display">
+                    <div class="loading" role="status" aria-live="polite">
+                        <span class="loading-ball" aria-hidden="true"></span>
+                        Building your squad…
+                    </div>
+                </div>
+            </section>
         </main>
 
-        <!-- Footer Credits -->
         <footer class="credits" id="credits">
-            Loading...
+            OpenFPL Scout AI
         </footer>
     </div>
 
-    <!-- Local Scripts -->
+    <dialog class="player-dialog" id="player-dialog" aria-labelledby="dialog-player-name">
+        <button class="dialog-close" id="dialog-close" type="button" aria-label="Close player details">×</button>
+        <span class="dialog-kicker">Player projection</span>
+        <h2 id="dialog-player-name">Player</h2>
+        <p class="dialog-team" id="dialog-team">Team</p>
+        <div class="dialog-score">
+            <strong id="dialog-points">0.00</strong>
+            <span>expected points</span>
+        </div>
+        <dl class="dialog-details">
+            <div><dt>Position</dt><dd id="dialog-position">—</dd></div>
+            <div><dt>Fixture</dt><dd id="dialog-fixture">—</dd></div>
+            <div><dt>Venue</dt><dd id="dialog-venue">—</dd></div>
+            <div><dt>Role</dt><dd id="dialog-role">Squad</dd></div>
+        </dl>
+    </dialog>
+
     <script src="static/script.js"></script>
 </body>
 
