@@ -152,6 +152,11 @@ The run writes each complete preprocessing/model pipeline plus
 `training_results.csv`, `cv_fold_results.csv`, `training_metadata.json`, and an
 append-only `training_history.jsonl`. Use `--quick` for a fast smoke test.
 
+At startup, the inference engine validates each saved model against the shared
+feature contract. Runtime inference uses player IDs, caches fixture lookups,
+supports per-model weights, and can continue when one model fails as long as
+`inference.minimum_successful_models` is satisfied.
+
 - Ensemble predictions for accuracy
 - Season-forward validation metrics
 - Optimized for FPL player performance
@@ -169,6 +174,7 @@ Integrates with Football Data API for:
 
 - `main.py`: FastAPI app and endpoints
 - `src/scout.py`: FPLScout class (predictions, team selection)
+- `src/features.py`: Shared training and inference feature contract
 - `src/models.py`: Pydantic response models
 - `src/utils.py`: Config and helpers
 - `src/logger.py`: Logging

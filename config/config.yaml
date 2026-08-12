@@ -53,6 +53,13 @@ numerical_columns:
 target_column:
   - "total_points"
 
+# Runtime inference behavior
+inference:
+  history_window: 5
+  minimum_successful_models: 3
+  cache_fixtures: true
+  clip_min: 0.0
+
 # API Configuration (Ensure the API key is handled securely)
 api_config:
   url: "https://api.football-data.org/v4/competitions/PL/matches"

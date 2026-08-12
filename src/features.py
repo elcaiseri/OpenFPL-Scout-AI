@@ -89,6 +89,13 @@ HISTORY_FEATURES = [
 
 NUMERICAL_FEATURES = ["gameweek", *HISTORY_FEATURES]
 MODEL_FEATURES = [*CATEGORICAL_FEATURES, *NUMERICAL_FEATURES]
+INFERENCE_REQUIRED_COLUMNS = [
+    "id",
+    "element_type",
+    "web_name",
+    "team_name",
+    "gameweek",
+]
 
 
 def normalize_fpl_columns(data: pd.DataFrame) -> pd.DataFrame:
@@ -120,6 +127,53 @@ def ensure_feature_columns(
         if column not in prepared.columns:
             prepared[column] = np.nan
     return prepared[list(feature_columns)]
+
+
+def prepare_recent_player_features(
+    data: pd.DataFrame, gameweek: int, history_window: int = 5
+) -> pd.DataFrame:
+    """Build one inference row per player from matches before ``gameweek``."""
+    if history_window < 1:
+        raise ValueError("history_window must be at least 1")
+
+    prepared = normalize_fpl_columns(data)
+    missing = sorted(set(INFERENCE_REQUIRED_COLUMNS).difference(prepared.columns))
+    if missing:
+        raise ValueError(f"Inference data is missing required columns: {missing}")
+    if prepared.empty:
+        raise ValueError("Inference data is empty")
+
+    prepared["gameweek"] = pd.to_numeric(prepared["gameweek"], errors="coerce")
+    prepared = prepared.loc[prepared["gameweek"] < gameweek].copy()
+    if prepared.empty:
+        raise ValueError(f"No player history is available before gameweek {gameweek}")
+
+    for column in HISTORY_FEATURES:
+        if column not in prepared.columns:
+            prepared[column] = np.nan
+        prepared[column] = pd.to_numeric(prepared[column], errors="coerce")
+
+    prepared = prepared.sort_values(
+        ["id", "gameweek"], ascending=[True, False], kind="stable"
+    )
+    recent = prepared.groupby("id", sort=False, group_keys=False).head(history_window)
+    latest = recent.drop_duplicates("id", keep="first").set_index("id")
+    history = recent.groupby("id", sort=False)[HISTORY_FEATURES].mean()
+
+    identity_columns = [
+        "web_name",
+        "element_type",
+        "team_name",
+        "opponent_team_name",
+        "was_home",
+    ]
+    for column in identity_columns:
+        if column not in latest.columns:
+            latest[column] = np.nan
+
+    players = latest[identity_columns].join(history, how="left").reset_index()
+    players["gameweek"] = int(gameweek)
+    return players
 
 
 def add_rolling_history(

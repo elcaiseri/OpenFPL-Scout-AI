@@ -9,6 +9,7 @@ import aiofiles
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from src.auth import verify_api_key
 from src.logger import get_logger
@@ -129,20 +130,23 @@ async def generate_scout_team(
             tmp_path = tmp.name
 
         # Get or generate predictions
-        predictions = scout.get_player_predictions(tmp_path, gameweek=gameweek)
+        predictions = await run_in_threadpool(
+            scout.get_player_predictions, tmp_path, gameweek
+        )
 
         # Select team
-        team = scout.select_optimal_team(predictions)
+        team = await run_in_threadpool(scout.select_optimal_team, predictions)
+        prediction_gameweek = int(predictions.attrs["gameweek"])
 
         # Build response
         response = ResponseModel(
             scout_team=json.loads(team.to_json(orient="records")),
             player_points=json.loads(predictions.to_json(orient="records")),
-            gameweek=scout.gameweek,
+            gameweek=prediction_gameweek,
             version=config.get("version", "1.0.0"),
         )
 
-        save_scout_team_to_json(response, scout.gameweek)
+        save_scout_team_to_json(response, prediction_gameweek)
         return response
 
     except Exception as e:

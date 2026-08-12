@@ -8,6 +8,7 @@ from src.features import (
     add_rolling_history,
     ensure_feature_columns,
     normalize_fpl_columns,
+    prepare_recent_player_features,
 )
 
 
@@ -70,6 +71,43 @@ class FeaturePreparationTests(unittest.TestCase):
 
         self.assertEqual(list(result.columns), MODEL_FEATURES)
         self.assertTrue(result.drop(columns="gameweek").isna().all().all())
+
+    def test_prepares_one_player_row_from_only_prior_gameweeks(self):
+        source = pd.DataFrame(
+            {
+                "id": [1, 1, 1, 2],
+                "element_type": [3, 3, 3, 4],
+                "web_name": ["One", "One", "One", "Two"],
+                "team_name": ["Man Utd"] * 3 + ["Spurs"],
+                "opponent_team_name": ["Arsenal"] * 4,
+                "was_home": [True, False, True, False],
+                "gameweek": [1, 2, 3, 1],
+                "goals": [1, 3, 100, 2],
+            }
+        )
+
+        result = prepare_recent_player_features(source, gameweek=3, history_window=2)
+
+        self.assertEqual(result.id.tolist(), [1, 2])
+        self.assertEqual(result.loc[result.id == 1, "goals"].iloc[0], 2.0)
+        self.assertEqual(result.loc[result.id == 1, "gameweek"].iloc[0], 3)
+        self.assertEqual(
+            result.loc[result.id == 1, "team_name"].iloc[0], "Manchester United"
+        )
+
+    def test_rejects_history_at_or_after_requested_gameweek(self):
+        source = pd.DataFrame(
+            {
+                "id": [1],
+                "element_type": [3],
+                "web_name": ["One"],
+                "team_name": ["Arsenal"],
+                "gameweek": [2],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "before gameweek 2"):
+            prepare_recent_player_features(source, gameweek=2)
 
 
 if __name__ == "__main__":
