@@ -5,6 +5,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from src.features import normalize_fpl_columns
 from src.logger import get_logger
 from src.utils import fetch_gw_match_data, load_config
 
@@ -38,18 +39,19 @@ class FPLScout:
         """Generate predictions for all players."""
         # Load and prepare data
         logger.info(f"Loading data from {data_path}")
-        data = pd.read_csv(data_path)
+        data = normalize_fpl_columns(pd.read_csv(data_path))
         logger.info(f"Loaded {len(data)} records")
 
         self.gameweek: int = gameweek or int(data["gameweek"].max()) + 1
         data = data[data.gameweek < self.gameweek] if gameweek else data
         logger.info(f"Filtered to {len(data)} records before gameweek {self.gameweek}")
 
-        # Add missing numerical columns and fill with 0
+        # Missing season-specific statistics must remain unknown so the fitted
+        # pipeline can impute them consistently with training data.
         for col in self.config["numerical_columns"]:
             if col not in data.columns:
-                logger.warning(f"Column {col} missing in data; filling with 0")
-                data[col] = 0
+                logger.warning(f"Column {col} missing in data; filling with NaN")
+                data[col] = np.nan
 
         # Aggregate recent performance (last 5 games per player)
         cat_cols: List[str] = [

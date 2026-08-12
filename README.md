@@ -4,7 +4,7 @@
 
 *Image credits: Generated with GPT-4o*
 
-OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
+OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Ridge, XGBoost, CatBoost, and MLP) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
 
 ## 🚀 Live Demo & API Access
 
@@ -17,7 +17,7 @@ OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensembl
 
 ## Features
 
-- 🎯 **AI-Powered Predictions**: Ensemble ML models (Linear Regression, XGBoost, CatBoost)
+- 🎯 **AI-Powered Predictions**: Ensemble ML models (Ridge, XGBoost, CatBoost, MLP)
 - ⚽ **Interactive Web UI**: Beautiful pitch visualization with player cards
 - 📊 **Real-time Data**: Live fixture and match data integration
 - 🚀 **Fast Performance**: Async player predictions and caching
@@ -133,12 +133,27 @@ Features of the UI:
 
 | Model             | Version | Description                    |
 |-------------------|---------|--------------------------------|
-| Linear Regression | v4.0    | Baseline linear model          |
-| XGBoost           | v4.0    | Gradient boosting ensemble     |
-| CatBoost          | v3.0    | Categorical boosting model     |
+| Ridge Regression  | v5.0    | Regularized linear baseline    |
+| XGBoost           | v5.0    | Gradient boosting ensemble     |
+| CatBoost          | v5.0    | Categorical boosting model     |
+| MLP                | v1.0    | Neural-network regressor       |
+
+Training uses each player's previous five matches and expanding
+season-forward cross-validation, so a validation season is always later than
+its training seasons. To retrain all deployment models and record metrics:
+
+```bash
+uv run --group train python trainer-booster.py \
+  --data-dir data/external \
+  --output-dir models
+```
+
+The run writes each complete preprocessing/model pipeline plus
+`training_results.csv`, `cv_fold_results.csv`, `training_metadata.json`, and an
+append-only `training_history.jsonl`. Use `--quick` for a fast smoke test.
 
 - Ensemble predictions for accuracy
-- Feature importance analysis
+- Season-forward validation metrics
 - Optimized for FPL player performance
 
 ## API Integration
@@ -171,7 +186,7 @@ Integrates with Football Data API for:
 - **RESTful API**: FastAPI endpoints for team selection and predictions
 - **Rebranding**: Now OpenFPL-Scout-AI
 - **Refactored Code**: Improved modularity and maintainability
-- **AI-Powered Predictions**: Advanced ensemble models
+- **AI-Powered Predictions**: Advanced ensemble models, including an MLP
 - **Async Processing**: Fast parallel predictions
 - **Live Data**: Real-time match integration
 - **Docker Support**: Easy deployment

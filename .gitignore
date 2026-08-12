@@ -12,6 +12,8 @@ __pycache__/
 # Data and output files
 #*.json
 *.csv
+!models/training_results.csv
+!models/cv_fold_results.csv
 *.zip
 *info
 data/

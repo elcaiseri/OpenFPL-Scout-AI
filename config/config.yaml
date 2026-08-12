@@ -15,28 +15,27 @@ categorical_columns:
   - "gameweek"
 
 numerical_columns:
-  - "element_type"
   - "gameweek"
   - "minutes"
-  - "GC"
-  - "CS"
   - "now_cost"
   - "selected_by_percent"
-  - "shots"
-  - "SoT"
-  - "SiB"
-  - "xG"
-  - "npxG"
-  - "G"
-  - "npG"
-  - "key_passes"
-  - "xA"
-  - "A"
-  - "xGC"
-  - "xCS"
-  - "xGI"
-  - "npxGI"
-  - "xP"
+  - "total_shots"
+  - "shots_on_target"
+  - "shots_in_box"
+  - "expected_goals"
+  - "non_penalty_expected_goals"
+  - "goals"
+  - "non_penalty_goals"
+  - "chances_created"
+  - "expected_assists"
+  - "assists"
+  - "expected_goals_conceded"
+  - "goals_conceded"
+  - "expected_clean_sheet"
+  - "clean_sheet"
+  - "expected_goal_involvements"
+  - "non_penalty_expected_goal_involvements"
+  - "expected_points"
   - "PvsxP"
   - "carries_final_third"
   - "carries_penalty_area"
@@ -46,9 +45,7 @@ numerical_columns:
   - "recoveries"
   - "tackles"
   - "touches"
-  - "penalty_area_touches"
-  - "Att Pen"
-  - "pos_touches"
+  - "touches_opp_box"
   - "clearances_blocks_interceptions"
   - "defensive_contribution"
 
@@ -117,22 +114,28 @@ gw_team_name_mapping:
 # Model Information
 models:
   linear_regression:
-    version: "v4.0"
-    last_trained: "February 8, 2026"
+    version: "v5.0"
+    last_trained: "August 13, 2026"
     path: "models/linear_regression_reg.pkl"
-    year: 2025-2026
+    year: 2026-2027
 
   xgboost:
-    version: "v4.0"
-    last_trained: "February 8, 2026"
+    version: "v5.0"
+    last_trained: "August 13, 2026"
     path: "models/xgboost_reg.pkl"
-    year: 2025-2026
+    year: 2026-2027
 
   catboost:
-    version: "v3.0"
-    last_trained: "February 8, 2026"
+    version: "v5.0"
+    last_trained: "August 13, 2026"
     path: "models/catboost_reg.pkl"
-    year: 2025-2026
+    year: 2026-2027
+
+  mlp:
+    version: "v1.0"
+    last_trained: "August 13, 2026"
+    path: "models/mlp_reg.pkl"
+    year: 2026-2027
 
 
-version: "4.5.0"
+version: "5.0.0"

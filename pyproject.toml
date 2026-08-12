@@ -1,7 +1,7 @@
 [project]
 name = "OpenFPL-Scout-AI"
 version = "4.3.0"
-description = "An AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Linear Regression, XGBoost, CatBoost) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout."
+description = "An AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection."
 readme = "README.md"
 requires-python = ">=3.9"
 
