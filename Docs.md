@@ -35,6 +35,8 @@ Authorization: Bearer <API_TOKEN>
 ```
 
 Set comma-separated server tokens in `VALID_API_KEYS`.
+For local development, `.env` is loaded automatically without overriding any
+variables already supplied by the process or deployment environment.
 
 ## API tags and endpoints
 

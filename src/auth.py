@@ -3,13 +3,19 @@ import os
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
-VALID_API_KEYS = (
-    os.getenv("VALID_API_KEYS", "").split(",") if os.getenv("VALID_API_KEYS") else []
-)
+# Local development reads .env; existing process/container variables retain
+# precedence because python-dotenv does not override them by default.
+load_dotenv()
+VALID_API_KEYS = {
+    key.strip()
+    for key in os.getenv("VALID_API_KEYS", "").split(",")
+    if key.strip()
+}
 
 
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -25,7 +31,7 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
         )
 
     if credentials.credentials not in VALID_API_KEYS:
-        logger.warning(f"Invalid API key attempted: {credentials.credentials[:10]}...")
+        logger.warning("Invalid API key attempted")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",

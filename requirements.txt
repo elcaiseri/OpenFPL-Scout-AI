@@ -9,4 +9,5 @@ requests>=2.31.0
 uvicorn>=0.22.0
 fastapi>=0.103.1
 pydantic>=2.6.2
+python-dotenv>=1.0.0
 aiofiles>=23.1.0
