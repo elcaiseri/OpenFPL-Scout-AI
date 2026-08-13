@@ -1,8 +1,8 @@
 # OpenFPL-Scout-AI
 
-<img src="assets/openfpl-scout-preview.png" alt="OpenFPL Scout AI" width="400"/>
+<img src="assets/openfpl-icon-2026-512.png" alt="OpenFPL Scout AI neon scouting shield" width="180"/>
 
-*Image credits: Generated with GPT-4o*
+*OpenFPL 2026/27 icon generated with OpenAI image generation.*
 
 OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection. All runtime player, club, gameweek, and fixture data comes directly from the official Fantasy Premier League API.
 

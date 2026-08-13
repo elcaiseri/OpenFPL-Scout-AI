@@ -175,17 +175,19 @@ select {
     display: grid;
     width: 48px;
     height: 48px;
-    color: var(--ink-950);
+    overflow: hidden;
     place-items: center;
+    border: 1px solid rgba(200, 255, 50, 0.42);
     border-radius: 15px;
-    background: var(--lime);
+    background: var(--ink-950);
     box-shadow: 0 0 34px rgba(200, 255, 50, 0.24);
-    transform: rotate(-3deg);
 }
 
-.brand-mark svg {
-    width: 38px;
-    height: 38px;
+.brand-mark img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .brand-copy {
@@ -1051,11 +1053,6 @@ select {
         width: 42px;
         height: 42px;
         border-radius: 12px;
-    }
-
-    .brand-mark svg {
-        width: 33px;
-        height: 33px;
     }
 
     .season-chip {
