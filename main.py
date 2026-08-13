@@ -1,12 +1,13 @@
+"""OpenFPL Scout API backed exclusively by official FPL runtime data."""
+
+from __future__ import annotations
+
 import json
-import os
-import shutil
 from contextlib import asynccontextmanager
-from tempfile import NamedTemporaryFile
 from typing import Optional
 
 import aiofiles
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -14,231 +15,166 @@ from starlette.concurrency import run_in_threadpool
 from src.auth import verify_api_key
 from src.logger import get_logger
 from src.models import PlayerPointsModel, ResponseModel
-from src.scout import FPLScout
-from src.utils import load_config, save_scout_team_to_json
+from src.official_fpl import OfficialFPLAPIError
+from src.scout import FPLScout, InferenceError
+from src.utils import load_config
 
 logger = get_logger(__name__)
 
-config = {}
+config = load_config("config/config.yaml")
 scout: FPLScout
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global config, scout
-    logger.info("Initializing application")
-    config = load_config("config/config.yaml")
+    global scout
+    logger.info("Initializing application with official FPL data")
     scout = FPLScout(config)
-    logger.info("FPLScout initialized and ready.")
+    logger.info("FPLScout initialized and ready")
     yield
-    logger.info("Shutting down application.")
+    logger.info("Shutting down application")
 
 
-# Initialize FastAPI
 app = FastAPI(
     title="OpenFPL API",
-    description="AI-powered Fantasy Premier League Scout API",
+    description="AI-powered FPL Scout using official Fantasy Premier League data",
     version=config.get("version", "1.0.0"),
     lifespan=lifespan,
 )
 
-# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-app.mount(
-    "/data/internal/scout_team",
-    StaticFiles(directory="data/internal/scout_team"),
-    name="scout-team-data",
-)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
-    """Serve main UI."""
+    """Serve the OpenFPL web application."""
     try:
-        async with aiofiles.open("static/index.html", "r") as f:
-            content = await f.read()
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="static/index.html not found")
-    except Exception as e:
-        logger.error(f"Failed to read index.html: {e}")
-        raise HTTPException(status_code=500, detail="Failed to read index.html")
-
-    return HTMLResponse(content=content)
+        async with aiofiles.open("static/index.html", "r") as file:
+            return HTMLResponse(content=await file.read())
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="static/index.html not found") from error
+    except OSError as error:
+        logger.exception("Failed to read index.html")
+        raise HTTPException(status_code=500, detail="Failed to read index.html") from error
 
 
 @app.get("/api")
 async def get_api_info(api_key: str = Depends(verify_api_key)):
-    """Get API information."""
+    """Describe authenticated API endpoints."""
     return {
-        "message": "OpenFPL - AI Fantasy Premier League Scout",
+        "message": "OpenFPL — Official FPL data, AI squad projections",
         "version": config.get("version", "1.0.0"),
+        "source": "https://fantasy.premierleague.com/api/",
         "endpoints": {
-            "/api/scout": "POST - Generate scout team from uploaded CSV",
-            "/api/gw/scout": "GET - Get saved scout team for gameweek",
-            "/api/gw/playerpoints": "GET - Get player predictions for gameweek",
-            "/api/gameweeks": "GET - List all available gameweeks",
+            "/api/scout": "GET/POST - Generate a live official-data scout team",
+            "/api/gw/scout": "GET - Generate a scout team for a gameweek",
+            "/api/gw/playerpoints": "GET - Generate/filter player projections",
+            "/api/gameweeks": "GET - Official available gameweek state",
         },
     }
 
 
 @app.get("/api/health")
-async def check_health(api_key: str = Depends(verify_api_key)):
-    """Health check."""
-    return {"status": "healthy"}
+async def check_health():
+    """Return service and configured data-source status."""
+    return {
+        "status": "healthy",
+        "source": "official-fpl",
+        "models": len(scout.model_artifacts),
+    }
 
 
 @app.get("/api/gameweeks")
 async def get_available_gameweeks():
-    """Get list of available gameweeks."""
+    """Return gameweeks exposed by the official FPL event state."""
     try:
-        scout_data_dir = "data/internal/scout_team"
-        gameweeks = []
-
-        if os.path.exists(scout_data_dir):
-            for filename in os.listdir(scout_data_dir):
-                if filename.startswith("gw_") and filename.endswith(".json"):
-                    try:
-                        gw_num = int(filename.replace("gw_", "").replace(".json", ""))
-                        gameweeks.append(gw_num)
-                    except ValueError:
-                        continue
-
-        gameweeks.sort()
-        return {
-            "gameweeks": gameweeks,
-            "total": len(gameweeks),
-            "latest": max(gameweeks) if gameweeks else None,
-        }
-    except Exception as e:
-        logger.error(f"Failed to get gameweeks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return await run_in_threadpool(scout.official_client.available_gameweeks)
+    except OfficialFPLAPIError as error:
+        logger.exception("Failed to load official gameweeks")
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
-@app.post("/api/scout", response_model=ResponseModel)
-async def generate_scout_team(
-    file: UploadFile = File(...),
-    gameweek: Optional[int] = Query(None, ge=1, le=38),
-    api_key: str = Depends(verify_api_key),
-):
-    """Generate scout team from uploaded CSV."""
-    tmp_path = None
+async def _generate_scout_response(gameweek: Optional[int]) -> ResponseModel:
     try:
-        # Save uploaded file temporarily
-        with NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            shutil.copyfileobj(file.file, tmp)
-            tmp_path = tmp.name
-
-        # Get or generate predictions
         predictions = await run_in_threadpool(
-            scout.get_player_predictions, tmp_path, gameweek
+            scout.get_official_predictions, gameweek
         )
-
-        # Select team
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         prediction_gameweek = int(predictions.attrs["gameweek"])
-
-        # Build response
-        response = ResponseModel(
+        return ResponseModel(
             scout_team=json.loads(team.to_json(orient="records")),
             player_points=json.loads(predictions.to_json(orient="records")),
             gameweek=prediction_gameweek,
             version=config.get("version", "1.0.0"),
+            source="official-fpl",
         )
+    except OfficialFPLAPIError as error:
+        logger.exception("Official FPL data request failed")
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (InferenceError, ValueError) as error:
+        logger.exception("Scout inference failed")
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
-        save_scout_team_to_json(response, prediction_gameweek)
-        return response
 
-    except Exception as e:
-        logger.error(f"Failed to generate scout team: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+@app.get("/api/scout", response_model=ResponseModel)
+async def generate_public_scout_team(
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+):
+    """Generate the web app's scout team from live official FPL data."""
+    return await _generate_scout_response(gameweek)
+
+
+@app.post("/api/scout", response_model=ResponseModel)
+async def generate_authenticated_scout_team(
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+    api_key: str = Depends(verify_api_key),
+):
+    """Generate a scout team without accepting third-party file uploads."""
+    return await _generate_scout_response(gameweek)
 
 
 @app.get("/api/gw/scout", response_model=ResponseModel)
-async def get_scout_team(gameweek: int, api_key: str = Depends(verify_api_key)):
-    """Get saved scout team for gameweek."""
-
-    path = f"data/internal/scout_team/gw_{gameweek}.json"
-
-    try:
-        async with aiofiles.open(path, "r") as f:
-            content = await f.read()
-            payload = json.loads(content)
-
-        return ResponseModel(
-            scout_team=payload.get("scout_team", []),
-            player_points=[],
-            gameweek=gameweek,
-            version=payload.get("version", "1.0.0"),
-        )
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404, detail=f"Data not found for gameweek {gameweek}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to get scout team: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_scout_team(
+    gameweek: int = Query(..., ge=1, le=38),
+    api_key: str = Depends(verify_api_key),
+):
+    """Generate a gameweek squad directly from official FPL data."""
+    response = await _generate_scout_response(gameweek)
+    response.player_points = []
+    return response
 
 
 @app.get("/api/gw/playerpoints", response_model=ResponseModel)
 async def get_player_predictions(
-    params: PlayerPointsModel = Depends(), api_key: str = Depends(verify_api_key)
+    params: PlayerPointsModel = Depends(),
+    api_key: str = Depends(verify_api_key),
 ):
-    """Get player predictions for gameweek with optional filters."""
-    path = f"data/internal/scout_team/gw_{params.gameweek}.json"
+    """Generate official-data projections and apply optional player filters."""
+    response = await _generate_scout_response(params.gameweek)
+    filters = params.model_dump(exclude_unset=True)
+    filters.pop("gameweek", None)
 
-    try:
-        async with aiofiles.open(path, "r") as f:
-            content = await f.read()
-            payload = json.loads(content)
+    def matches(player):
+        for key, value in filters.items():
+            if value is None:
+                continue
+            candidate = player.get(key)
+            if key in {"web_name", "team_name"}:
+                if str(candidate or "").casefold() != str(value).casefold():
+                    return False
+            elif key == "was_home":
+                if bool(candidate) != value:
+                    return False
+            elif candidate != value:
+                return False
+        return True
 
-        players = payload.get("player_points", [])
-
-        # Apply filters
-        filters = params.dict(exclude_unset=True)
-        filters.pop("gameweek", None)
-
-        def matches(player):
-            for k, v in filters.items():
-                if k == "element_type":
-                    if v is not None and player.get("element_type") != v:
-                        return False
-                elif k == "web_name":
-                    if (
-                        v is not None
-                        and str(player.get("web_name", "")).lower() != str(v).lower()
-                    ):
-                        return False
-                elif k == "team_name":
-                    if (
-                        v is not None
-                        and str(player.get("team_name", "")).lower() != str(v).lower()
-                    ):
-                        return False
-                elif k == "was_home":
-                    if v is not None and bool(player.get("was_home")) != v:
-                        return False
-            return True
-
-        if filters:
-            players = [p for p in players if matches(p)]
-
-        return ResponseModel(
-            scout_team=[],
-            player_points=players,
-            gameweek=params.gameweek,
-            version=payload.get("version", "1.0.0"),
-        )
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404, detail=f"Data not found for gameweek {params.gameweek}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to get player predictions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    response.scout_team = []
+    response.player_points = [
+        player for player in response.player_points if matches(player)
+    ]
+    return response
 
 
 if __name__ == "__main__":

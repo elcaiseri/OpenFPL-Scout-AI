@@ -1,152 +1,98 @@
-# OpenFPL Scout API – Backend Documentation
+# OpenFPL Scout API
 
-Version: 2.3.1
+Version: 5.1.0
 
-Description: AI-powered Fantasy Premier League (FPL) Scout API providing optimal team selection, player projections, and gameweek analysis.
+OpenFPL Scout generates player projections and a positional 15-player squad.
+All runtime football data comes directly from the public official Fantasy
+Premier League API at `https://fantasy.premierleague.com/api/`.
 
----
+## Runtime data sources
+
+| Data | Official endpoint |
+|---|---|
+| Players, clubs, positions, event state | `/bootstrap-static/` |
+| Fixtures, kickoff times, home/away, difficulty | `/fixtures/` |
+| Per-player gameweek history | `/element-summary/{element_id}/` |
+
+No football-data.org key, RapidAPI data feed, or uploaded statistics file is
+required. Official responses are cached briefly in memory to reduce traffic.
+
+Before the first gameweek, official current-season match history is empty.
+OpenFPL therefore leaves form statistics unknown and lets each trained model's
+pipeline impute them. It does not substitute a third-party preseason feed.
 
 ## Authentication
 
-- Type: Bearer Token
-- Header example:
-    ```
-    Authorization: Bearer <API_TOKEN>
-    ```
-- Store <API_TOKEN> in environment variables or a secret manager (never hard-code).
+The web endpoints `GET /api/scout`, `GET /api/gameweeks`, and `GET /api/health`
+are public. Product/API endpoints retain bearer-token authentication:
 
----
+```http
+Authorization: Bearer <API_TOKEN>
+```
+
+Set comma-separated server tokens in `VALID_API_KEYS`.
 
 ## Endpoints
 
-### 1) Health Check
-- Method: GET
-- Path: `/api/health`
-- Purpose: Service availability check
-- Response (200): `"ok"`
+### `GET /api/health`
 
----
+Returns service, source, and model state.
 
-### 2) Get Scout Team
-- Method: POST
-- Path: `/api/scout`
-- Description: Upload FPL team data file to receive an AI-optimized scout team and player projections.
+### `GET /api/gameweeks`
 
-Request
-- Headers:
-    - `accept: application/json`
-    - `Authorization: Bearer <API_TOKEN>`
-    - `Content-Type: multipart/form-data`
-- Body:
-    - `file` (required): CSV or JSON containing FPL stats
+Returns completed events plus the official current/next gameweek.
 
----
+### `GET /api/scout?gameweek=1`
 
-## Responses
+Generates a fresh squad and all player projections using official FPL data.
+The gameweek is optional; when omitted, the official next/current event is used.
 
-### ✅ 200 OK
-```json
-{
-    "scout_team": [
-        {
-            "element_type": "Defender",
-            "web_name": "Calafiori",
-            "team_name": "Arsenal",
-            "opponent_team_name": "Liverpool",
-            "was_home": false,
-            "gameweek": 3,
-            "expected_points": 12.845314870228341,
-            "role": "captain"
-        }
-    ],
-    "player_points": [
-        {
-            "element_type": 1,
-            "web_name": "A.Becker",
-            "team_name": "Liverpool",
-            "opponent_team_name": "Arsenal",
-            "was_home": true,
-            "gameweek": 3,
-            "expected_points": 1.0170301728
-        }
-    ],
-    "gameweek": 3,
-    "version": "2.3.1",
-    "credits": "OpenFPL-Scout AI - Developed by Kassem@elcaiseri.com, @2025"
-}
-```
-
-### ❌ 422 Validation Error
-```json
-{
-    "detail": [
-        {
-            "loc": ["body", "file"],
-            "msg": "Invalid file format",
-            "type": "value_error"
-        }
-    ]
-}
-```
-
----
-
-## Schema
-
-### scout_team[]
-| Field               | Type    | Description                                              |
-|---------------------|---------|----------------------------------------------------------|
-| element_type        | string  | Player position (Goalkeeper, Defender, Midfielder, Forward) |
-| web_name            | string  | Short player name                                        |
-| team_name           | string  | Player’s club                                            |
-| opponent_team_name  | string  | Opponent club                                            |
-| was_home            | boolean | True if player is playing at home                        |
-| gameweek            | integer | Current gameweek                                         |
-| expected_points     | float   | Predicted points for this match                          |
-| role                | string  | Squad role (captain, vice, or empty)                     |
-
-### player_points[]
-| Field               | Type    | Description                                 |
-|---------------------|---------|---------------------------------------------|
-| element_type        | integer | Player type ID (1 = GK, 2 = DEF, 3 = MID, 4 = FWD) |
-| web_name            | string  | Short player name                           |
-| team_name           | string  | Player’s club                               |
-| opponent_team_name  | string  | Opponent club                               |
-| was_home            | boolean | True if home match                          |
-| gameweek            | integer | Gameweek number                             |
-| expected_points     | float   | Predicted points                            |
-
----
-
-## Example Requests
-
-cURL
 ```bash
-curl -X POST "https://openfpl-scout-ai-186049008266.europe-west1.run.app/api/scout" \
-    -H "accept: application/json" \
-    -H "Authorization: Bearer <API_TOKEN>" \
-    -H "Content-Type: multipart/form-data" \
-    -F "file=@fpl-data-stats.csv;type=text/csv"
+curl "http://localhost:8000/api/scout?gameweek=1"
 ```
 
-Python
-```python
-import requests
+### `POST /api/scout?gameweek=1`
 
-url = "https://openfpl-scout-ai-186049008266.europe-west1.run.app/api/scout"
-headers = {
-        "Authorization": "Bearer <API_TOKEN>",
-        "accept": "application/json"
+Authenticated equivalent of `GET /api/scout`. It no longer accepts a CSV or
+multipart upload.
+
+```bash
+curl -X POST "http://localhost:8000/api/scout?gameweek=1" \
+  -H "Authorization: Bearer <API_TOKEN>"
+```
+
+### `GET /api/gw/scout?gameweek=1`
+
+Authenticated squad-only response generated from official data.
+
+### `GET /api/gw/playerpoints?gameweek=1`
+
+Authenticated player projections. Optional filters are `element_type`,
+`web_name`, `team_name`, and `was_home`.
+
+## Response
+
+```json
+{
+  "scout_team": [],
+  "player_points": [],
+  "gameweek": 1,
+  "version": "5.1.0",
+  "source": "official-fpl",
+  "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 }
-files = {"file": open("fpl-data-stats.csv", "rb")}
-
-response = requests.post(url, headers=headers, files=files)
-print(response.json())
 ```
 
----
+## Historical model training
 
-## Security Notes
-- Always use a Bearer token from environment variables or a secret manager.
-- Rotate tokens regularly.
-- Enforce HTTPS for all requests.
+The official FPL API is an active-season service and does not expose a stable,
+versioned archive of every prior season. New active-season observations are
+fetched through the official client and can be archived for future retraining:
+
+```bash
+uv run python -m scripts.collect_official_fpl --gameweek 39
+```
+
+Official archives are written to `data/official`, the trainer's default input.
+Legacy `data/external` snapshots are not read by runtime inference or by the
+default retraining command.

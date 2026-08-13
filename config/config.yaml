@@ -60,62 +60,12 @@ inference:
   cache_fixtures: true
   clip_min: 0.0
 
-# API Configuration (Ensure the API key is handled securely)
-api_config:
-  url: "https://api.football-data.org/v4/competitions/PL/matches"
-  api_key: "your_api_key_here"  # Replace with a secure method to handle the API key
-
-# Mapping of team names from the API to standardized names
-team_name_mapping:
-  Arsenal FC: "Arsenal"
-  Fulham FC: "Fulham"
-  Aston Villa FC: "Aston Villa"
-  Southampton FC: "Southampton"
-  AFC Bournemouth: "Bournemouth"
-  Tottenham Hotspur FC: "Tottenham"
-  Brentford FC: "Brentford"
-  Brighton & Hove Albion FC: "Brighton"
-  Leicester City FC: "Leicester"
-  Chelsea FC: "Chelsea"
-  Crystal Palace FC: "Crystal Palace"
-  Everton FC: "Everton"
-  Ipswich Town FC: "Ipswich"
-  Liverpool FC: "Liverpool"
-  Manchester City FC: "Manchester City"
-  Manchester United FC: "Manchester United"
-  West Ham United FC: "West Ham"
-  Newcastle United FC: "Newcastle United"
-  Nottingham Forest FC: "Nottingham Forest"
-  Wolverhampton Wanderers FC: "Wolverhampton Wanderers"
-  Burnley FC: "Burnley"
-  Leeds United FC: "Leeds United"
-  Sheffield United FC: "Sheffield United"
-  Sunderland AFC: "Sunderland"
-  Watford FC: "Watford"
-
-# scout gw prediction
-gw_team_name_mapping:
-  'Arsenal': 'Arsenal'
-  'Aston Villa': 'Aston Villa'
-  'Bournemouth': 'Bournemouth'
-  'Brentford': 'Brentford'
-  'Brighton': 'Brighton'
-  'Chelsea': 'Chelsea'
-  'Crystal Palace': 'Crystal Palace'
-  'Everton': 'Everton'
-  'Fulham': 'Fulham'
-  'Ipswich': 'Ipswich'
-  'Leicester': 'Leicester'
-  'Liverpool': 'Liverpool'
-  'Man City': 'Manchester City'
-  'Man Utd': 'Manchester United'
-  'Newcastle': 'Newcastle United'
-  "Nott'm Forest": 'Nottingham Forest'
-  'Southampton': 'Southampton'
-  'Spurs': 'Tottenham'
-  'West Ham': 'West Ham'
-  'Wolves': 'Wolverhampton Wanderers'
-  'Leeds': 'Leeds United'
+official_fpl:
+  base_url: "https://fantasy.premierleague.com/api"
+  timeout_seconds: 20
+  cache_ttl_seconds: 300
+  history_cache_ttl_seconds: 900
+  max_workers: 8
 
 
 # Model Information
@@ -145,4 +95,4 @@ models:
     year: 2026-2027
 
 
-version: "5.0.0"
+version: "5.1.0"

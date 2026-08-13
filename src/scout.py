@@ -18,6 +18,7 @@ from src.features import (
     prepare_recent_player_features,
 )
 from src.logger import get_logger
+from src.official_fpl import OfficialFPLClient
 
 logger = get_logger(__name__)
 
@@ -54,12 +55,23 @@ class FPLScout:
             Callable[..., Mapping[Any, Mapping[str, Any]]]
         ] = None,
         model_loader: Callable[[str], Any] = joblib.load,
+        official_client: Optional[OfficialFPLClient] = None,
     ) -> None:
         self.config = dict(config)
+        official_config = self.config.get("official_fpl", {})
+        self.official_client = official_client or OfficialFPLClient(
+            base_url=official_config.get(
+                "base_url", "https://fantasy.premierleague.com/api"
+            ),
+            timeout=float(official_config.get("timeout_seconds", 20)),
+            cache_ttl=int(official_config.get("cache_ttl_seconds", 300)),
+            history_cache_ttl=int(
+                official_config.get("history_cache_ttl_seconds", 900)
+            ),
+            max_workers=int(official_config.get("max_workers", 8)),
+        )
         if fixture_provider is None:
-            from src.utils import fetch_gw_match_data
-
-            fixture_provider = fetch_gw_match_data
+            fixture_provider = self.official_client.fixtures_for_gameweek
         self.fixture_provider = fixture_provider
         self._fixture_cache: Dict[int, Mapping[Any, Mapping[str, Any]]] = {}
         self._fixture_cache_lock = RLock()
@@ -316,6 +328,20 @@ class FPLScout:
         logger.info("Loaded %d records", len(data))
         return self.predict_players(data, gameweek=gameweek)
 
+    def get_official_predictions(
+        self, gameweek: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Generate predictions using only official FPL player and fixture data."""
+        resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        logger.info(
+            "Loading official FPL history for gameweek %d", resolved_gameweek
+        )
+        history = self.official_client.player_history(resolved_gameweek)
+        logger.info("Loaded %d official FPL history rows", len(history))
+        result = self.predict_players(history, gameweek=resolved_gameweek)
+        result.attrs["source"] = "official-fpl"
+        return result
+
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
         """Select the highest-ranked 15-player positional squad."""
         required_columns = {"element_type", "web_name", "expected_points"}
@@ -364,7 +390,5 @@ if __name__ == "__main__":
 
     configuration = load_config("config/config.yaml")
     scout = FPLScout(configuration)
-    player_predictions = scout.get_player_predictions(
-        "data/external/fpl-data-stats-2026.csv", gameweek=1
-    )
+    player_predictions = scout.get_official_predictions(gameweek=1)
     print(scout.select_optimal_team(player_predictions))

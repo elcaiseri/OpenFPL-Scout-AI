@@ -5,12 +5,10 @@
 
 // Application Configuration
 const CONFIG = {
-    dataPath: 'data/internal/scout_team/',
-    filePrefix: 'gw_',
-    fileExtension: '.json',
-    defaultGameweek: 38,
+    defaultGameweek: 1,
     apiEndpoints: {
-        gameweeks: '/api/gameweeks'
+        gameweeks: '/api/gameweeks',
+        scout: '/api/scout'
     }
 };
 
@@ -23,7 +21,7 @@ const appState = {
     cache: {}, // Cache for storing gameweek data
     gameweeksCache: null, // Cache for available gameweeks list
     gameweeksCacheTimestamp: null, // Timestamp for gameweeks cache
-    gameweeksCacheExpiry: 7 * 24 * 60 * 60 * 1000 // 1 week cache expiry
+    gameweeksCacheExpiry: 5 * 60 * 1000 // Official event state: 5 minutes
 };
 
 // Utility Functions
@@ -369,7 +367,7 @@ const uiStateManager = {
 // Data Loading
 const dataLoader = {
     /**
-     * Load data from JSON file
+     * Generate a squad from official FPL data.
      */
     async loadDataFromFile(gameweek) {
         // Check if data is already in cache
@@ -378,14 +376,15 @@ const dataLoader = {
             return appState.cache[gameweek];
         }
 
-        const filePath = `${CONFIG.dataPath}${CONFIG.filePrefix}${gameweek}${CONFIG.fileExtension}`;
+        const endpoint = `${CONFIG.apiEndpoints.scout}?gameweek=${gameweek}`;
 
         try {
             uiStateManager.showLoading(`Loading Gameweek ${gameweek} data...`);
 
-            const response = await fetch(filePath);
+            const response = await fetch(endpoint);
             if (!response.ok) {
-                throw new Error(`Failed to load ${filePath}: ${response.status} ${response.statusText}`);
+                const errorPayload = await utils.safeJsonParse(response).catch(() => ({}));
+                throw new Error(errorPayload.detail || `Official FPL request failed: ${response.status}`);
             }
 
             const data = await utils.safeJsonParse(response);
@@ -401,7 +400,7 @@ const dataLoader = {
             return data;
 
         } catch (error) {
-            console.error('Error loading JSON data:', error);
+            console.error('Error loading official FPL scout data:', error);
             throw error;
         }
     },
@@ -439,46 +438,9 @@ const dataLoader = {
             return data.gameweeks;
 
         } catch (error) {
-            console.warn('API gameweeks discovery failed, falling back to file discovery:', error);
-
-            // Fallback to the old method if API fails
-            return await this.discoverGameweeksFallback();
+            console.error('Official FPL gameweek discovery failed:', error);
+            throw error;
         }
-    },
-
-    /**
-     * Fallback method: Discover available gameweeks by checking files
-     * Only used if API endpoint fails
-     */
-    async discoverGameweeksFallback() {
-        console.log('Using fallback gameweeks discovery method');
-        const gameweeks = [];
-        const maxCheck = 50; // Reasonable upper limit for gameweeks
-        const batchSize = 10; // Check in batches to avoid too many concurrent requests
-
-        for (let start = 1; start <= maxCheck; start += batchSize) {
-            const end = Math.min(start + batchSize - 1, maxCheck);
-            const promises = [];
-
-            for (let gw = start; gw <= end; gw++) {
-                const filePath = `${CONFIG.dataPath}${CONFIG.filePrefix}${gw}${CONFIG.fileExtension}`;
-                promises.push(
-                    fetch(filePath, { method: 'HEAD' })
-                        .then(response => response.ok ? gw : null)
-                        .catch(() => null)
-                );
-            }
-
-            const batchResults = await Promise.all(promises);
-            gameweeks.push(...batchResults.filter(gw => gw !== null));
-
-            // If we found no gameweeks in this batch, stop checking
-            if (batchResults.every(result => result === null)) {
-                break;
-            }
-        }
-
-        return gameweeks.sort((a, b) => a - b);
     }
 };
 
@@ -542,7 +504,7 @@ const gameweekManager = {
             const errorMessage = `
                 <strong>Error loading Gameweek ${gameweek} data</strong><br>
                 ${safeError}<br><br>
-                <small>Make sure the file <code>${CONFIG.dataPath}${CONFIG.filePrefix}${gameweek}${CONFIG.fileExtension}</code> exists and is accessible.</small>
+                <small>Official FPL may be updating. Try again in a moment.</small>
             `;
             uiStateManager.showError(errorMessage);
         } finally {
@@ -657,8 +619,7 @@ const app = {
             if (appState.availableGameweeks.length === 0) {
                 const errorMessage = `
                     <strong>No gameweek data found</strong><br>
-                    Please ensure JSON files exist in the <code>${CONFIG.dataPath}</code> directory<br>
-                    Expected format: <code>${CONFIG.filePrefix}1${CONFIG.fileExtension}</code>, <code>${CONFIG.filePrefix}2${CONFIG.fileExtension}</code>, etc.
+                    The official FPL API has not released an active gameweek yet.
                 `;
                 uiStateManager.showError(errorMessage);
                 return;

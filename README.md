@@ -4,7 +4,7 @@
 
 *Image credits: Generated with GPT-4o*
 
-OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensemble machine learning (Ridge, XGBoost, CatBoost, and MLP) to predict player points and optimize FPL team selection. It features a beautiful web interface for visualizing your optimal team in a football pitch layout.
+OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection. All runtime player, club, gameweek, and fixture data comes directly from the official Fantasy Premier League API.
 
 ## 🚀 Live Demo & API Access
 
@@ -19,7 +19,7 @@ OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses ensembl
 
 - 🎯 **AI-Powered Predictions**: Ensemble ML models (Ridge, XGBoost, CatBoost, MLP)
 - ⚽ **Interactive Web UI**: Beautiful pitch visualization with player cards
-- 📊 **Real-time Data**: Live fixture and match data integration
+- 📊 **Official FPL Data**: Live players, histories, fixtures, and event state
 - 🚀 **Fast Performance**: Async player predictions and caching
 - 🏆 **Smart Team Selection**: Automated optimal team selection by position
 - 👑 **Captain Assignment**: Intelligent captain/vice-captain selection
@@ -80,7 +80,8 @@ fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
 ### Main Endpoints
 
 - `GET /api/health` — Health check
-- `GET /api/gameweeks` — Available gameweeks with saved data
+- `GET /api/gameweeks` — Available gameweeks from official FPL event state
+- `GET /api/scout` — Generate a live official-data squad for the web app
 - `GET /api/gw/scout` — Get optimal FPL team for specific gameweek
 - `GET /api/gw/playerpoints` — Get filtered player point predictions
 - `GET /api` — API information and metadata
@@ -144,7 +145,7 @@ its training seasons. To retrain all deployment models and record metrics:
 
 ```bash
 uv run --group train python trainer-booster.py \
-  --data-dir data/external \
+  --data-dir data/official \
   --output-dir models
 ```
 
@@ -157,16 +158,34 @@ feature contract. Runtime inference uses player IDs, caches fixture lookups,
 supports per-model weights, and can continue when one model fails as long as
 `inference.minimum_successful_models` is satisfied.
 
+Runtime requests never read the local training CSVs. Before GW1, when official
+match history is empty, history features remain unknown and are handled by the
+imputers fitted inside each saved model pipeline.
+
 - Ensemble predictions for accuracy
 - Season-forward validation metrics
 - Optimized for FPL player performance
 
 ## API Integration
 
-Integrates with Football Data API for:
-- Live fixtures and matchups
-- Home/away status
-- Gameweek info
+Integrates directly with official FPL endpoints for:
+- Bootstrap players, teams, positions, and gameweek state
+- Player gameweek history and official FPL statistics
+- Fixtures, kickoff times, difficulty, and home/away status
+
+No football-data.org API key or uploaded statistics file is required. The
+official FPL API does not provide a stable versioned historical archive, so
+new official match history must be collected during each active season.
+
+Archive the active official season for future retraining with:
+
+```bash
+uv run python -m scripts.collect_official_fpl --gameweek 39
+```
+
+The collector writes to `data/official` by default, which is also the default
+source for the cross-validated trainer. Legacy files under `data/external` are
+not used by the runtime or by the default retraining command.
 
 **For RapidAPI Users:** All data is pre-processed and cached for optimal performance.
 
@@ -175,6 +194,7 @@ Integrates with Football Data API for:
 - `main.py`: FastAPI app and endpoints
 - `src/scout.py`: FPLScout class (predictions, team selection)
 - `src/features.py`: Shared training and inference feature contract
+- `src/official_fpl.py`: Official FPL API client and schema adapter
 - `src/models.py`: Pydantic response models
 - `src/utils.py`: Config and helpers
 - `src/logger.py`: Logging
@@ -187,7 +207,7 @@ Integrates with Football Data API for:
 - **🎨 Beautiful Web Interface**: Interactive team visualization with football pitch layout
 - **📸 Screenshot Feature**: Export your team lineup as high-quality PNG images
 - **📱 Mobile Responsive**: Perfect experience on all devices
-- **2024/2025 Season**: Models updated with latest data
+- **2026/2027 Season**: Models and UI updated for the new season
 - **CatBoost Integration**: Improved ML pipeline ([Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
 - **RESTful API**: FastAPI endpoints for team selection and predictions
 - **Rebranding**: Now OpenFPL-Scout-AI
