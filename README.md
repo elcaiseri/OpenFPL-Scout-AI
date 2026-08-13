@@ -79,11 +79,21 @@ fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
 
 ### Main Endpoints
 
-- `GET /api/health` — Health check
-- `GET /api/gameweeks` — Available gameweeks from official FPL event state
-- `GET /api/scout` — Generate a live official-data squad for the web app
-- `GET /api/gw/scout` — Get optimal FPL team for specific gameweek
-- `GET /api/gw/playerpoints` — Get filtered player point predictions
+OpenAPI documentation is available at `/docs`; `GET /api` returns the complete
+route catalog grouped by tag.
+
+| Tag | Endpoints |
+|---|---|
+| Service | `GET /api`, `GET /api/health` |
+| Official FPL · Gameweeks | `GET /api/gameweeks`, `GET /api/fpl/gameweeks` |
+| Official FPL · Teams | `GET /api/fpl/teams` |
+| Official FPL · Players | `GET /api/fpl/players`, `GET /api/fpl/players/{player_id}`, `GET /api/fpl/players/{player_id}/history` |
+| Official FPL · Fixtures | `GET /api/fpl/fixtures` |
+| Scout AI | `GET/POST /api/scout`, `GET /api/gw/scout`, `GET /api/gw/playerpoints` |
+
+Mapped player queries support `team_id`, `element_type`, and `selectable_only`;
+fixtures support `gameweek` and `team_id`. See [Docs.md](Docs.md) for the full
+authentication and response details.
 - `GET /api` — API information and metadata
 
 **Sample `/api/gw/scout` response:**

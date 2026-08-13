@@ -26,6 +26,10 @@ class OfficialFPLAPIError(RuntimeError):
     """Raised when official FPL data cannot be fetched or validated."""
 
 
+class OfficialFPLNotFoundError(OfficialFPLAPIError):
+    """Raised when an official FPL resource does not exist."""
+
+
 @dataclass
 class _CacheEntry:
     value: Any
@@ -110,14 +114,264 @@ class OfficialFPLClient:
         payload = self._get_json("bootstrap-static/")
         required = {"elements", "teams", "events", "element_types"}
         if not isinstance(payload, Mapping) or not required.issubset(payload):
-            raise OfficialFPLAPIError("Official bootstrap response has an invalid schema")
+            raise OfficialFPLAPIError(
+                "Official bootstrap response has an invalid schema"
+            )
         return payload
 
     def fixtures(self) -> List[Mapping[str, Any]]:
         payload = self._get_json("fixtures/")
         if not isinstance(payload, list):
-            raise OfficialFPLAPIError("Official fixtures response has an invalid schema")
+            raise OfficialFPLAPIError(
+                "Official fixtures response has an invalid schema"
+            )
         return payload
+
+    def player_summary(self, player_id: int) -> Mapping[str, Any]:
+        """Return one validated official element-summary response."""
+        self.mapped_player(player_id)
+        payload = self._get_json(
+            f"element-summary/{player_id}/", ttl=self.history_cache_ttl
+        )
+        required = {"fixtures", "history", "history_past"}
+        if not isinstance(payload, Mapping) or not required.issubset(payload):
+            raise OfficialFPLAPIError(
+                f"Official summary for player {player_id} has an invalid schema"
+            )
+        return payload
+
+    def mapped_gameweeks(self) -> List[Dict[str, Any]]:
+        """Map official event state to a stable public API schema."""
+        return [
+            {
+                "id": int(event["id"]),
+                "name": event.get("name"),
+                "deadline_time": event.get("deadline_time"),
+                "release_time": event.get("release_time"),
+                "finished": bool(event.get("finished")),
+                "data_checked": bool(event.get("data_checked")),
+                "is_previous": bool(event.get("is_previous")),
+                "is_current": bool(event.get("is_current")),
+                "is_next": bool(event.get("is_next")),
+                "average_entry_score": event.get("average_entry_score"),
+                "highest_score": event.get("highest_score"),
+                "chip_plays": event.get("chip_plays", []),
+            }
+            for event in self.bootstrap()["events"]
+        ]
+
+    def mapped_teams(self) -> List[Dict[str, Any]]:
+        """Map official teams and strength ratings."""
+        fields = (
+            "strength",
+            "strength_overall_home",
+            "strength_overall_away",
+            "strength_attack_home",
+            "strength_attack_away",
+            "strength_defence_home",
+            "strength_defence_away",
+        )
+        return [
+            {
+                "id": int(team["id"]),
+                "code": team.get("code"),
+                "name": _team_name(team.get("name")),
+                "official_name": team.get("name"),
+                "short_name": team.get("short_name"),
+                "pulse_id": team.get("pulse_id"),
+                **{field: team.get(field) for field in fields},
+            }
+            for team in self.bootstrap()["teams"]
+        ]
+
+    def mapped_players(
+        self,
+        team_id: Optional[int] = None,
+        element_type: Optional[int] = None,
+        selectable_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Map official player identities, availability, prices, and totals."""
+        bootstrap = self.bootstrap()
+        teams = {
+            int(team["id"]): _team_name(team["name"])
+            for team in bootstrap["teams"]
+        }
+        positions = {
+            int(position["id"]): position.get("singular_name")
+            for position in bootstrap["element_types"]
+        }
+        players = []
+        for player in bootstrap["elements"]:
+            selectable = bool(
+                player.get("can_select", not player.get("removed", False))
+            )
+            if team_id is not None and int(player["team"]) != team_id:
+                continue
+            if element_type is not None and int(player["element_type"]) != element_type:
+                continue
+            if selectable_only and not selectable:
+                continue
+            players.append(
+                self._mapped_player(player, teams, positions, selectable)
+            )
+        return players
+
+    def mapped_player(self, player_id: int) -> Dict[str, Any]:
+        """Map one official player or raise a typed not-found error."""
+        players = self.mapped_players()
+        player = next((item for item in players if item["id"] == player_id), None)
+        if player is None:
+            raise OfficialFPLNotFoundError(
+                f"Official FPL player {player_id} was not found"
+            )
+        return player
+
+    def mapped_fixtures(
+        self, gameweek: Optional[int] = None, team_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Map official fixtures with named home and away teams."""
+        teams = {team["id"]: team for team in self.mapped_teams()}
+        results = []
+        for fixture in self.fixtures():
+            home_id = int(fixture["team_h"])
+            away_id = int(fixture["team_a"])
+            if gameweek is not None and fixture.get("event") != gameweek:
+                continue
+            if team_id is not None and team_id not in {home_id, away_id}:
+                continue
+            results.append(
+                {
+                    "id": int(fixture["id"]),
+                    "gameweek": fixture.get("event"),
+                    "kickoff_time": fixture.get("kickoff_time"),
+                    "started": bool(fixture.get("started")),
+                    "finished": bool(fixture.get("finished")),
+                    "finished_provisional": bool(
+                        fixture.get("finished_provisional")
+                    ),
+                    "minutes": fixture.get("minutes"),
+                    "provisional_start_time": bool(
+                        fixture.get("provisional_start_time")
+                    ),
+                    "home_team": self._fixture_team(
+                        teams.get(home_id, {}),
+                        fixture.get("team_h_score"),
+                        fixture.get("team_h_difficulty"),
+                    ),
+                    "away_team": self._fixture_team(
+                        teams.get(away_id, {}),
+                        fixture.get("team_a_score"),
+                        fixture.get("team_a_difficulty"),
+                    ),
+                }
+            )
+        return results
+
+    def mapped_player_summary(self, player_id: int) -> Dict[str, Any]:
+        """Map official current-season history and upcoming player fixtures."""
+        bootstrap = self.bootstrap()
+        teams = {
+            int(team["id"]): _team_name(team["name"])
+            for team in bootstrap["teams"]
+        }
+        player = self.mapped_player(player_id)
+        payload = self.player_summary(player_id)
+        history = [
+            {
+                "gameweek": item.get("round"),
+                "fixture_id": item.get("fixture"),
+                "kickoff_time": item.get("kickoff_time"),
+                "opponent_team_id": item.get("opponent_team"),
+                "opponent_team_name": teams.get(item.get("opponent_team")),
+                "was_home": item.get("was_home"),
+                "price": self._api_cost(item.get("value")),
+                "selected": item.get("selected"),
+                "transfers_in": item.get("transfers_in"),
+                "transfers_out": item.get("transfers_out"),
+                "total_points": item.get("total_points"),
+                **self._api_stats(item),
+            }
+            for item in payload["history"]
+        ]
+        upcoming = [
+            {
+                "fixture_id": item.get("id"),
+                "gameweek": item.get("event"),
+                "kickoff_time": item.get("kickoff_time"),
+                "opponent_team_id": item.get("team_a")
+                if item.get("is_home")
+                else item.get("team_h"),
+                "opponent_team_name": teams.get(
+                    item.get("team_a") if item.get("is_home") else item.get("team_h")
+                ),
+                "was_home": item.get("is_home"),
+                "difficulty": item.get("difficulty"),
+            }
+            for item in payload["fixtures"]
+        ]
+        past_seasons = [
+            {
+                "season_name": item.get("season_name"),
+                "start_price": self._api_cost(item.get("start_cost")),
+                "end_price": self._api_cost(item.get("end_cost")),
+                "total_points": item.get("total_points"),
+                "minutes": item.get("minutes"),
+                "goals": item.get("goals_scored"),
+                "assists": item.get("assists"),
+                "clean_sheets": item.get("clean_sheets"),
+            }
+            for item in payload["history_past"]
+        ]
+        return {
+            "player": player,
+            "history": history,
+            "upcoming_fixtures": upcoming,
+            "past_seasons": past_seasons,
+        }
+
+    @staticmethod
+    def _mapped_player(
+        player: Mapping[str, Any],
+        teams: Mapping[int, str],
+        positions: Mapping[int, Any],
+        selectable: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "id": int(player["id"]),
+            "code": player.get("code"),
+            "web_name": player.get("web_name"),
+            "first_name": player.get("first_name"),
+            "second_name": player.get("second_name"),
+            "team_id": int(player["team"]),
+            "team_name": teams.get(int(player["team"])),
+            "element_type": int(player["element_type"]),
+            "position": positions.get(int(player["element_type"])),
+            "status": player.get("status"),
+            "can_select": selectable,
+            "removed": bool(player.get("removed")),
+            "news": player.get("news"),
+            "chance_of_playing_next_round": player.get(
+                "chance_of_playing_next_round"
+            ),
+            "price": OfficialFPLClient._api_cost(player.get("now_cost")),
+            "selected_by_percent": OfficialFPLClient._api_number(
+                player.get("selected_by_percent")
+            ),
+            "total_points": player.get("total_points"),
+            **OfficialFPLClient._api_stats(player),
+        }
+
+    @staticmethod
+    def _fixture_team(
+        team: Mapping[str, Any], score: Any, difficulty: Any
+    ) -> Dict[str, Any]:
+        return {
+            "id": team.get("id"),
+            "name": team.get("name"),
+            "short_name": team.get("short_name"),
+            "score": score,
+            "difficulty": difficulty,
+        }
 
     def available_gameweeks(self) -> Dict[str, Any]:
         """Return completed gameweeks plus the current/next playable event."""
@@ -156,8 +410,15 @@ class OfficialFPLClient:
             for team in bootstrap["teams"]
         }
         matches = sorted(
-            (fixture for fixture in self.fixtures() if fixture.get("event") == gameweek),
-            key=lambda fixture: (fixture.get("kickoff_time") or "", fixture.get("id", 0)),
+            (
+                fixture
+                for fixture in self.fixtures()
+                if fixture.get("event") == gameweek
+            ),
+            key=lambda fixture: (
+                fixture.get("kickoff_time") or "",
+                fixture.get("id", 0),
+            ),
         )
 
         by_team: Dict[str, List[Dict[str, Any]]] = {}
@@ -283,7 +544,11 @@ class OfficialFPLClient:
                     key, payload = future.result()
                     summaries[key] = payload
                 except OfficialFPLAPIError as error:
-                    logger.warning("Skipping official history for player %d: %s", player_id, error)
+                    logger.warning(
+                        "Skipping official history for player %d: %s",
+                        player_id,
+                        error,
+                    )
 
         if not summaries:
             raise OfficialFPLAPIError("No official player histories could be fetched")
@@ -375,6 +640,24 @@ class OfficialFPLClient:
                 values.get("defensive_contribution")
             ),
         }
+
+    @staticmethod
+    def _api_stats(values: Mapping[str, Any]) -> Dict[str, Any]:
+        """Return JSON-safe versions of the model's mapped official stats."""
+        return {
+            key: None if not np.isfinite(value) else value
+            for key, value in OfficialFPLClient._official_stats(values).items()
+        }
+
+    @staticmethod
+    def _api_number(value: Any) -> Optional[float]:
+        numeric = OfficialFPLClient._number(value)
+        return numeric if np.isfinite(numeric) else None
+
+    @staticmethod
+    def _api_cost(value: Any) -> Optional[float]:
+        numeric = OfficialFPLClient._cost(value)
+        return numeric if np.isfinite(numeric) else None
 
     @staticmethod
     def _number(value: Any) -> float:

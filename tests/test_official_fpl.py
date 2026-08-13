@@ -3,7 +3,11 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from src.official_fpl import OfficialFPLAPIError, OfficialFPLClient
+from src.official_fpl import (
+    OfficialFPLAPIError,
+    OfficialFPLClient,
+    OfficialFPLNotFoundError,
+)
 
 
 class FakeResponse:
@@ -221,6 +225,105 @@ class OfficialFPLClientTests(unittest.TestCase):
         self.assertEqual(result["gameweeks"], [1, 2])
         self.assertEqual(result["latest"], 2)
         self.assertEqual(result["source"], "official-fpl")
+
+    def test_maps_public_player_and_team_resources(self):
+        session = FakeSession({"bootstrap-static/": bootstrap()})
+        client = OfficialFPLClient(session=session)
+
+        teams = client.mapped_teams()
+        players = client.mapped_players(team_id=2, element_type=3)
+
+        self.assertEqual(teams[1]["name"], "Manchester United")
+        self.assertEqual(players[0]["position"], "Midfielder")
+        self.assertEqual(players[0]["price"], 7.5)
+        self.assertEqual(players[0]["selected_by_percent"], 12.5)
+        self.assertIsNone(players[0]["recoveries"])
+
+    def test_maps_public_fixtures_with_named_teams(self):
+        fixtures = [
+            {
+                "id": 20,
+                "event": 1,
+                "team_h": 1,
+                "team_a": 2,
+                "team_h_score": None,
+                "team_a_score": None,
+                "team_h_difficulty": 2,
+                "team_a_difficulty": 4,
+                "kickoff_time": "2026-08-21T19:00:00Z",
+                "started": False,
+                "finished": False,
+            }
+        ]
+        client = OfficialFPLClient(
+            session=FakeSession(
+                {"bootstrap-static/": bootstrap(), "fixtures/": fixtures}
+            )
+        )
+
+        result = client.mapped_fixtures(gameweek=1, team_id=2)
+
+        self.assertEqual(result[0]["home_team"]["name"], "Arsenal")
+        self.assertEqual(result[0]["away_team"]["name"], "Manchester United")
+        self.assertEqual(result[0]["away_team"]["difficulty"], 4)
+
+    def test_maps_public_player_summary(self):
+        summary = {
+            "history": [
+                {
+                    "round": 1,
+                    "fixture": 20,
+                    "opponent_team": 1,
+                    "was_home": False,
+                    "value": 76,
+                    "total_points": 8,
+                    "minutes": 90,
+                }
+            ],
+            "fixtures": [
+                {
+                    "id": 30,
+                    "event": 2,
+                    "team_h": 2,
+                    "team_a": 1,
+                    "is_home": True,
+                    "difficulty": 2,
+                }
+            ],
+            "history_past": [
+                {
+                    "season_name": "2025/26",
+                    "start_cost": 70,
+                    "end_cost": 75,
+                    "total_points": 120,
+                }
+            ],
+        }
+        client = OfficialFPLClient(
+            session=FakeSession(
+                {
+                    "bootstrap-static/": bootstrap(),
+                    "element-summary/10/": summary,
+                }
+            )
+        )
+
+        result = client.mapped_player_summary(10)
+
+        self.assertEqual(result["history"][0]["opponent_team_name"], "Arsenal")
+        self.assertEqual(result["history"][0]["price"], 7.6)
+        self.assertEqual(
+            result["upcoming_fixtures"][0]["opponent_team_name"], "Arsenal"
+        )
+        self.assertEqual(result["past_seasons"][0]["start_price"], 7.0)
+
+    def test_public_player_mapping_raises_not_found(self):
+        client = OfficialFPLClient(
+            session=FakeSession({"bootstrap-static/": bootstrap()})
+        )
+
+        with self.assertRaises(OfficialFPLNotFoundError):
+            client.mapped_player(999)
 
     def test_rejects_invalid_bootstrap_schema(self):
         client = OfficialFPLClient(

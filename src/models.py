@@ -5,13 +5,52 @@ from pydantic import BaseModel, Field
 
 class ResponseModel(BaseModel):
     scout_team: List[Dict[str, Any]]
-    player_points: List[Dict[str, Any]] = []
+    player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
-    version: str = "1.1.0"
+    version: str = "5.2.0"
     source: str = "official-fpl"
     credits: str = (
         "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
     )
+
+
+class OfficialFPLCollectionModel(BaseModel):
+    """A normalized collection sourced from one official FPL endpoint."""
+
+    source: str = "official-fpl"
+    official_endpoint: str
+    count: int
+    results: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class OfficialFPLItemModel(BaseModel):
+    """A normalized resource sourced from one official FPL endpoint."""
+
+    source: str = "official-fpl"
+    official_endpoint: str
+    data: Dict[str, Any]
+
+
+class APIEndpointModel(BaseModel):
+    methods: List[str]
+    path: str
+    summary: str
+    authentication: str
+    source: str
+
+
+class APITagModel(BaseModel):
+    name: str
+    description: str
+    endpoints: List[APIEndpointModel]
+
+
+class APICatalogModel(BaseModel):
+    message: str
+    version: str
+    source: str
+    documentation: Dict[str, str]
+    tags: List[APITagModel]
 
 
 class PlayerPointsModel(BaseModel):

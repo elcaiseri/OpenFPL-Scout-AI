@@ -1,6 +1,6 @@
 # OpenFPL Scout API
 
-Version: 5.1.0
+Version: 5.2.0
 
 OpenFPL Scout generates player projections and a positional 15-player squad.
 All runtime football data comes directly from the public official Fantasy
@@ -21,10 +21,14 @@ Before the first gameweek, official current-season match history is empty.
 OpenFPL therefore leaves form statistics unknown and lets each trained model's
 pipeline impute them. It does not substitute a third-party preseason feed.
 
-## Authentication
+## Discovery and authentication
 
-The web endpoints `GET /api/scout`, `GET /api/gameweeks`, and `GET /api/health`
-are public. Product/API endpoints retain bearer-token authentication:
+The complete live catalog is available at `GET /api`. Interactive OpenAPI
+documentation is organized by resource at `/docs`, with ReDoc at `/redoc` and
+the machine-readable schema at `/openapi.json`.
+
+Service discovery, mapped official FPL resources, and the web scout endpoint
+are public. Authenticated squad and projection routes require a bearer token:
 
 ```http
 Authorization: Bearer <API_TOKEN>
@@ -32,43 +36,61 @@ Authorization: Bearer <API_TOKEN>
 
 Set comma-separated server tokens in `VALID_API_KEYS`.
 
-## Endpoints
+## API tags and endpoints
 
-### `GET /api/health`
+### Service
 
-Returns service, source, and model state.
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api` | Public | Full API catalog grouped by tag |
+| GET | `/api/health` | Public | Service, model, and source health |
 
-### `GET /api/gameweeks`
+### Official FPL · Gameweeks
 
-Returns completed events plus the official current/next gameweek.
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/gameweeks` | Public | Completed plus current/next playable events |
+| GET | `/api/fpl/gameweeks` | Public | All mapped official event records |
 
-### `GET /api/scout?gameweek=1`
+### Official FPL · Teams
 
-Generates a fresh squad and all player projections using official FPL data.
-The gameweek is optional; when omitted, the official next/current event is used.
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/teams` | Public | Clubs, normalized names, IDs, and strength ratings |
+
+### Official FPL · Players
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/players` | Public | Players, prices, availability, and official totals |
+| GET | `/api/fpl/players/{player_id}` | Public | One mapped player |
+| GET | `/api/fpl/players/{player_id}/history` | Public | Match history, upcoming fixtures, and past-season totals |
+
+`/api/fpl/players` accepts `team_id`, `element_type`, and `selectable_only`
+filters. Position values are GK=1, DEF=2, MID=3, and FWD=4.
+
+### Official FPL · Fixtures
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/fixtures` | Public | Named home/away fixtures, scores, kickoff, and difficulty |
+
+Fixtures can be filtered by `gameweek` and official `team_id`.
+
+### Scout AI
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/scout` | Public | Live squad plus all player projections |
+| POST | `/api/scout` | Bearer | Authenticated equivalent of the public scout |
+| GET | `/api/gw/scout` | Bearer | Squad-only gameweek response |
+| GET | `/api/gw/playerpoints` | Bearer | Filtered player projections |
 
 ```bash
+curl "http://localhost:8000/api/fpl/fixtures?gameweek=1"
+curl "http://localhost:8000/api/fpl/players?team_id=1&selectable_only=true"
 curl "http://localhost:8000/api/scout?gameweek=1"
 ```
-
-### `POST /api/scout?gameweek=1`
-
-Authenticated equivalent of `GET /api/scout`. It no longer accepts a CSV or
-multipart upload.
-
-```bash
-curl -X POST "http://localhost:8000/api/scout?gameweek=1" \
-  -H "Authorization: Bearer <API_TOKEN>"
-```
-
-### `GET /api/gw/scout?gameweek=1`
-
-Authenticated squad-only response generated from official data.
-
-### `GET /api/gw/playerpoints?gameweek=1`
-
-Authenticated player projections. Optional filters are `element_type`,
-`web_name`, `team_name`, and `was_home`.
 
 ## Response
 
@@ -77,7 +99,7 @@ Authenticated player projections. Optional filters are `element_type`,
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "5.1.0",
+  "version": "5.2.0",
   "source": "official-fpl",
   "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 }
