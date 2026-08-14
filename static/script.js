@@ -15,6 +15,7 @@ const CONFIG = {
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
     events: [],
+    visibleEvents: [],
     currentData: null,
     isLoading: false,
     activeView: 'pitch',
@@ -149,6 +150,7 @@ const dom = new Proxy({}, {
     get(_target, property) {
         const ids = {
             pitch: 'pitch', gameweekInfo: 'gameweek-info', gameweekSelect: 'gameweek-select',
+            gameweekWindow: 'gameweek-window',
             refreshButton: 'refresh-button', sourceState: 'source-state',
             deadlineCountdown: 'deadline-countdown', deadlineDate: 'deadline-date',
             eventState: 'event-state', pulseDeadline: 'pulse-deadline',
@@ -482,9 +484,21 @@ const dashboardRenderer = {
 };
 
 const gameweekManager = {
+    planningWindow(events) {
+        const anchor = events.find(event => event.is_current)
+            || events.find(event => event.is_next)
+            || events.find(event => !event.finished)
+            || events.at(-1);
+        if (!anchor) return [];
+        const anchorIndex = events.findIndex(event => Number(event.id) === Number(anchor.id));
+        return events.slice(Math.max(anchorIndex, 0), Math.max(anchorIndex, 0) + 3);
+    },
+
     populate(events) {
+        const visibleEvents = this.planningWindow(events);
+        appState.visibleEvents = visibleEvents;
         dom.gameweekSelect.innerHTML = '';
-        events.forEach(event => {
+        visibleEvents.forEach(event => {
             const option = document.createElement('option');
             option.value = event.id;
             const state = event.finished ? 'Final' : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Upcoming';
@@ -492,17 +506,38 @@ const gameweekManager = {
             option.selected = Number(event.id) === Number(appState.currentGameweek);
             dom.gameweekSelect.appendChild(option);
         });
+        dom.gameweekWindow.innerHTML = visibleEvents.map(event => {
+            const active = Number(event.id) === Number(appState.currentGameweek);
+            const state = event.finished ? 'Final'
+                : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Plan';
+            return `
+                <button class="gameweek-option${active ? ' active' : ''}" type="button"
+                    data-gameweek="${Number(event.id)}" aria-pressed="${active}">
+                    <span>GW</span><strong>${Number(event.id)}</strong><small>${state}</small>
+                </button>`;
+        }).join('');
+    },
+
+    setActive(gameweek) {
+        dom.gameweekSelect.value = String(gameweek);
+        document.querySelectorAll('.gameweek-option').forEach(button => {
+            const active = Number(button.dataset.gameweek) === Number(gameweek);
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
     },
 
     async load(gameweek, force = false) {
         if (appState.isLoading) return;
         appState.isLoading = true;
         dom.gameweekSelect.disabled = true;
+        document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = true; });
         dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             const data = await dataLoader.loadDashboard(gameweek, force);
             appState.currentData = data;
             appState.currentGameweek = Number(gameweek);
+            this.setActive(gameweek);
             dashboardRenderer.render(data);
         } catch (error) {
             console.error('Dashboard load failed:', error);
@@ -510,6 +545,7 @@ const gameweekManager = {
         } finally {
             appState.isLoading = false;
             dom.gameweekSelect.disabled = false;
+            document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
         }
     }
 };
@@ -575,6 +611,12 @@ const interactions = {
             const gameweek = Number(event.target.value);
             if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
         }, 180));
+        dom.gameweekWindow.addEventListener('click', event => {
+            const button = event.target.closest('.gameweek-option');
+            if (!button || button.disabled) return;
+            const gameweek = Number(button.dataset.gameweek);
+            if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
+        });
         dom.refreshButton.addEventListener('click', () => this.refresh());
         document.querySelectorAll('.view-button').forEach(button => {
             button.addEventListener('click', () => this.switchView(button.dataset.view));

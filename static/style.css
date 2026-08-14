@@ -354,6 +354,91 @@ select {
     font-size: 0.72rem;
 }
 
+.gameweek-window {
+    display: grid;
+    width: min(276px, 100%);
+    grid-template-columns: repeat(3, minmax(64px, 1fr));
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.gameweek-option {
+    display: grid;
+    min-width: 0;
+    min-height: 46px;
+    grid-template-columns: auto auto;
+    align-content: center;
+    justify-content: center;
+    column-gap: 3px;
+    padding: 6px 8px;
+    cursor: pointer;
+    color: var(--muted);
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    transition: color var(--ease), background var(--ease), transform var(--ease);
+    touch-action: manipulation;
+}
+
+.gameweek-option > span,
+.gameweek-option > strong {
+    align-self: baseline;
+    line-height: 1;
+}
+
+.gameweek-option > span {
+    font-size: 0.52rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+}
+
+.gameweek-option > strong {
+    color: var(--paper);
+    font-size: 0.86rem;
+}
+
+.gameweek-option > small {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 0.48rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.gameweek-option:hover:not(:disabled),
+.gameweek-option:focus-visible {
+    outline: none;
+    color: var(--paper);
+    background: rgba(255, 255, 255, 0.075);
+}
+
+.gameweek-option.active {
+    color: rgba(11, 4, 16, 0.7);
+    background: var(--lime);
+    box-shadow: 0 8px 22px rgba(200, 255, 50, 0.12);
+}
+
+.gameweek-option.active > strong {
+    color: var(--ink-950);
+}
+
+.gameweek-option:disabled {
+    cursor: wait;
+    opacity: 0.62;
+}
+
+.gameweek-window-loading {
+    grid-column: 1 / -1;
+    padding: 12px;
+    color: var(--muted);
+    font-size: 0.65rem;
+    text-align: center;
+}
+
 .gameweek-selector select {
     min-width: 190px;
     padding: 13px 44px 13px 16px;
@@ -1934,6 +2019,17 @@ select {
         width: 100%;
     }
 
+    .gameweek-window {
+        width: 100%;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .gameweek-option {
+        min-height: 44px;
+        padding-right: 4px;
+        padding-left: 4px;
+    }
+
     .refresh-button {
         justify-content: center;
         min-height: 44px;
@@ -2158,6 +2254,16 @@ select {
     .player-card {
         padding-right: 2px;
         padding-left: 2px;
+    }
+
+    .refresh-button {
+        width: 44px;
+        min-width: 44px;
+        padding: 0;
+    }
+
+    .refresh-button span {
+        display: none;
     }
 
     .team-name,

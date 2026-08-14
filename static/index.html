@@ -118,17 +118,20 @@
                     <span class="section-index">01</span>
                     <div>
                         <label for="gameweek-select">Gameweek control</label>
-                        <p>Move across every official 2026/27 event.</p>
+                        <p>Plan the active event and the next two gameweeks.</p>
                     </div>
                 </div>
 
                 <div class="control-actions">
-                    <div class="gameweek-selector">
+                    <div class="gameweek-window" id="gameweek-window" role="group" aria-label="Gameweek planning window">
+                        <span class="gameweek-window-loading">Loading events…</span>
+                    </div>
+                    <div class="gameweek-selector" hidden>
                         <select id="gameweek-select" aria-label="Select gameweek to view">
                             <option value="">Loading official events…</option>
                         </select>
                     </div>
-                    <button class="refresh-button" id="refresh-button" type="button">
+                    <button class="refresh-button" id="refresh-button" type="button" aria-label="Refresh official FPL data">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.6-2.6L20 9M4 15l2.3 2.6A7 7 0 0 0 18 15" />
                         </svg>
