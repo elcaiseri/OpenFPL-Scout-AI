@@ -131,12 +131,12 @@ const utils = {
     },
 
     eventLabel(event) {
-        if (!event) return 'Awaiting event';
-        if (event.finished) return 'Final';
-        if (event.is_current) return 'Live event';
+        if (!event) return 'Awaiting Gameweek';
+        if (event.finished) return 'Full-time';
+        if (event.is_current) return 'Live';
         if (event.is_next) return 'Next deadline';
-        if (new Date(event.deadline_time).getTime() < Date.now()) return 'Processing';
-        return 'Upcoming';
+        if (new Date(event.deadline_time).getTime() < Date.now()) return 'Updating';
+        return 'Scheduled';
     },
 
     clearCache() {
@@ -338,8 +338,8 @@ const dashboardRenderer = {
         this.statistics(data.scout_team);
         this.fixtures(data.fixtures);
         this.squad(data.scout_team);
-        dom.signalState.textContent = 'Signals ready';
-        dom.sourceState.textContent = 'Official sync';
+        dom.signalState.textContent = 'Verdict ready';
+        dom.sourceState.textContent = 'Official data';
         if (data.credits) dom.credits.textContent = data.credits;
     },
 
@@ -367,12 +367,12 @@ const dashboardRenderer = {
             : 'TBC';
         dom.pulseDeadlineSub.textContent = event?.deadline_time
             ? utils.formatDate(event.deadline_time, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
-            : 'Official event time';
+            : 'Official deadline time';
         dom.fixtureCount.textContent = String(data.fixtures.length);
         dom.dataState.textContent = event?.data_checked ? 'Checked' : utils.eventLabel(event);
         dom.dataStateSub.textContent = event?.finished
-            ? 'Official scores finalized'
-            : event?.data_checked ? 'Official data verified' : 'Live changes possible';
+            ? 'Official scores finalised'
+            : event?.data_checked ? 'Official data checked' : 'Live changes possible';
         dom.lastSync.textContent = utils.formatDate(data.syncedAt, {
             hour: '2-digit', minute: '2-digit', second: '2-digit'
         });
@@ -398,7 +398,7 @@ const dashboardRenderer = {
 
     fixtures(fixtures) {
         if (!fixtures.length) {
-            dom.fixtureRail.innerHTML = '<div class="rail-loading">No official fixtures published for this event.</div>';
+            dom.fixtureRail.innerHTML = '<div class="rail-loading">No official fixtures have been published for this Gameweek.</div>';
             return;
         }
         dom.fixtureRail.innerHTML = fixtures.map(fixture => {
@@ -415,7 +415,7 @@ const dashboardRenderer = {
                         <span><strong>${utils.escapeHtml(home.short_name || home.name)}</strong><small>${utils.escapeHtml(home.name)}</small></span>
                         <span class="fdr fdr-${home.difficulty || 0}">FDR ${home.difficulty || '—'}</span>
                     </div>
-                    <div class="fixture-score">${hasScore ? `${home.score ?? 0} — ${away.score ?? 0}` : 'VS'}</div>
+                    <div class="fixture-score">${hasScore ? `${home.score ?? 0} — ${away.score ?? 0}` : 'v'}</div>
                     <div class="fixture-team">
                         <span><strong>${utils.escapeHtml(away.short_name || away.name)}</strong><small>${utils.escapeHtml(away.name)}</small></span>
                         <span class="fdr fdr-${away.difficulty || 0}">FDR ${away.difficulty || '—'}</span>
@@ -456,7 +456,7 @@ const dashboardRenderer = {
             playerRenderer.tableRow(player, index)
         ).join('');
         dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
-        dom.squadSubtitle.textContent = `${players.length} official-player identities · tap any pick for its dossier`;
+        dom.squadSubtitle.textContent = `${players.length} official players · select any pick for the full briefing`;
     },
 
     loading(message = 'Running local AI inference…') {
@@ -473,9 +473,9 @@ const dashboardRenderer = {
     error(message) {
         dom.pitch.innerHTML = `
             <div class="error" role="alert">
-                <strong>Dashboard unavailable</strong>
+                <strong>Scout temporarily unavailable</strong>
                 <span>${utils.escapeHtml(message)}</span>
-                <small>Official FPL may be updating. Refresh in a moment.</small>
+                <small>Official FPL may be updating. Please try again shortly.</small>
             </div>`;
         dom.fixtureRail.innerHTML = '<div class="rail-loading error-inline">Fixture sync paused.</div>';
         dom.signalState.textContent = 'Retry needed';
@@ -501,14 +501,14 @@ const gameweekManager = {
         visibleEvents.forEach(event => {
             const option = document.createElement('option');
             option.value = event.id;
-            const state = event.finished ? 'Final' : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Upcoming';
+            const state = event.finished ? 'FT' : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Plan';
             option.textContent = `GW ${event.id} · ${state}`;
             option.selected = Number(event.id) === Number(appState.currentGameweek);
             dom.gameweekSelect.appendChild(option);
         });
         dom.gameweekWindow.innerHTML = visibleEvents.map(event => {
             const active = Number(event.id) === Number(appState.currentGameweek);
-            const state = event.finished ? 'Final'
+            const state = event.finished ? 'FT'
                 : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Plan';
             return `
                 <button class="gameweek-option${active ? ' active' : ''}" type="button"
@@ -556,7 +556,7 @@ const interactions = {
         try {
             player = JSON.parse(target.dataset.player);
         } catch (error) {
-            console.error('Could not parse player dossier:', error);
+            console.error('Could not parse player briefing:', error);
             return;
         }
         const status = utils.statusInfo(player.status, player.can_select !== false);
@@ -643,7 +643,7 @@ const interactions = {
 const app = {
     async init() {
         interactions.init();
-        dashboardRenderer.loading('Discovering the official season…');
+        dashboardRenderer.loading('Checking the official FPL season…');
         try {
             const reference = await dataLoader.loadReferenceData();
             appState.events = reference.events;
