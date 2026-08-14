@@ -1,6 +1,6 @@
 # OpenFPL Scout API
 
-Version: 5.2.0
+Version: 5.3.0
 
 OpenFPL Scout generates player projections and a positional 15-player squad.
 All runtime football data comes directly from the public official Fantasy
@@ -13,6 +13,10 @@ Premier League API at `https://fantasy.premierleague.com/api/`.
 | Players, clubs, positions, event state | `/bootstrap-static/` |
 | Fixtures, kickoff times, home/away, difficulty | `/fixtures/` |
 | Per-player gameweek history | `/element-summary/{element_id}/` |
+| Live scores, bonus processing, dream teams | `/event-status/`, `/event/{event}/live/`, `/dream-team/` |
+| Public managers, transfers, and picks | `/entry/{entry_id}/...` |
+| Public league standings and cups | `/leagues-classic/...`, `/leagues-h2h/...`, `/league/...` |
+| Regions, set pieces, rankings, and winners | `/regions/`, `/team/set-piece-notes/`, `/stats/...`, `/winners/...` |
 
 No football-data.org key, RapidAPI data feed, or uploaded statistics file is
 required. Official responses are cached briefly in memory to reduce traffic.
@@ -26,6 +30,10 @@ pipeline impute them. It does not substitute a third-party preseason feed.
 The complete live catalog is available at `GET /api`. Interactive OpenAPI
 documentation is organized by resource at `/docs`, with ReDoc at `/redoc` and
 the machine-readable schema at `/openapi.json`.
+
+See [Official-FPL-API-Kit.md](Official-FPL-API-Kit.md) for the complete audited
+upstream-to-OpenFPL route map, every query option, publication behavior, and the
+official account or mutation resources that are intentionally not proxied.
 
 Service discovery, mapped official FPL resources, and the web scout endpoint
 are public. Authenticated squad and projection routes require a bearer token:
@@ -53,6 +61,10 @@ variables already supplied by the process or deployment environment.
 |---|---|---|---|
 | GET | `/api/gameweeks` | Public | Completed plus current/next playable events |
 | GET | `/api/fpl/gameweeks` | Public | All mapped official event records |
+| GET | `/api/fpl/gameweeks/status` | Public | Bonus processing and league update state |
+| GET | `/api/fpl/gameweeks/{gameweek}/live` | Public | Live points enriched with player identity |
+| GET | `/api/fpl/dream-team` | Public | Official season dream team when published |
+| GET | `/api/fpl/gameweeks/{gameweek}/dream-team` | Public | Official event dream team when published |
 
 ### Official FPL · Teams
 
@@ -68,16 +80,50 @@ variables already supplied by the process or deployment environment.
 | GET | `/api/fpl/players/{player_id}` | Public | One mapped player |
 | GET | `/api/fpl/players/{player_id}/history` | Public | Match history, upcoming fixtures, and past-season totals |
 
-`/api/fpl/players` accepts `team_id`, `element_type`, and `selectable_only`
-filters. Position values are GK=1, DEF=2, MID=3, and FWD=4.
+`/api/fpl/players` accepts `team_id`, `element_type`, `selectable_only`,
+`status`, `search`, `min_price`, `max_price`, `order_by`, `descending`,
+`offset`, and `limit`. Position values are GK=1, DEF=2, MID=3, and FWD=4;
+prices are expressed in millions.
 
 ### Official FPL · Fixtures
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/fpl/fixtures` | Public | Named home/away fixtures, scores, kickoff, and difficulty |
+| GET | `/api/fpl/fixtures/{fixture_id}/stats` | Public | Official per-player fixture statistics |
 
-Fixtures can be filtered by `gameweek` and official `team_id`.
+Fixtures accept `gameweek`, official `team_id`, `future_only`, and `finished`.
+
+### Official FPL · Managers
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/managers/{entry_id}` | Public | Public manager profile and favorite club |
+| GET | `/api/fpl/managers/{entry_id}/history` | Public | Current, chip, and past-season history |
+| GET | `/api/fpl/managers/{entry_id}/transfers` | Public | Transfers with mapped incoming/outgoing players |
+| GET | `/api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks` | Public | Event picks after official publication |
+
+Transfers accept `gameweek`, `offset`, and `limit`.
+
+### Official FPL · Leagues & Cups
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/leagues/classic/{league_id}/standings` | Public | Classic standings with official pages and phase |
+| GET | `/api/fpl/leagues/h2h/{league_id}/standings` | Public | Head-to-head standings |
+| GET | `/api/fpl/leagues/h2h/{league_id}/matches` | Public | Head-to-head matches by entry or event |
+| GET | `/api/fpl/leagues/{league_id}/cup-status` | Public | League cup qualification state |
+
+### Official FPL · Reference & Rankings
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---|---|
+| GET | `/api/fpl/regions` | Public | Manager country and region reference data |
+| GET | `/api/fpl/set-piece-notes` | Public | Club set-piece notes enriched with team data |
+| GET | `/api/fpl/rankings/best-private-leagues` | Public | Best classic private leagues |
+| GET | `/api/fpl/rankings/most-valuable-teams` | Public | Most valuable teams |
+| GET | `/api/fpl/gameweeks/{gameweek}/winners` | Public | Event winners when published |
+| GET | `/api/fpl/phases/{phase_id}/winners` | Public | Phase winners when published |
 
 ### Scout AI
 
@@ -101,7 +147,7 @@ curl "http://localhost:8000/api/scout?gameweek=1"
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "5.2.0",
+  "version": "5.3.0",
   "source": "official-fpl",
   "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 }

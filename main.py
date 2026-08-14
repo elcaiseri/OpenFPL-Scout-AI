@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 import aiofiles
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
@@ -55,6 +55,18 @@ OPENAPI_TAGS = [
     {
         "name": "Official FPL · Fixtures",
         "description": "Mapped fixtures, opponents, scores, and difficulty ratings.",
+    },
+    {
+        "name": "Official FPL · Managers",
+        "description": "Public manager profiles, season history, picks, and transfers.",
+    },
+    {
+        "name": "Official FPL · Leagues & Cups",
+        "description": "Classic and head-to-head standings, matches, and cup state.",
+    },
+    {
+        "name": "Official FPL · Reference & Rankings",
+        "description": "Regions, set-piece notes, winners, and official rankings.",
     },
 ]
 
@@ -202,12 +214,19 @@ async def _official_call(function: Callable[..., Any], *args, **kwargs) -> Any:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
 
-def _official_collection(endpoint: str, results) -> OfficialFPLCollectionModel:
+def _official_collection(
+    endpoint: str, results, total: Optional[int] = None
+) -> OfficialFPLCollectionModel:
     return OfficialFPLCollectionModel(
         official_endpoint=endpoint,
         count=len(results),
+        total=len(results) if total is None else total,
         results=results,
     )
+
+
+def _official_item(endpoint: str, data: dict) -> OfficialFPLItemModel:
+    return OfficialFPLItemModel(official_endpoint=endpoint, data=data)
 
 
 @app.get(
@@ -249,6 +268,20 @@ async def get_official_fpl_players(
     selectable_only: bool = Query(
         False, description="Return only players currently selectable in FPL"
     ),
+    status: Optional[str] = Query(
+        None, min_length=1, max_length=1, description="Official availability code"
+    ),
+    search: Optional[str] = Query(
+        None, min_length=1, description="Case-insensitive player name search"
+    ),
+    min_price: Optional[float] = Query(None, ge=0),
+    max_price: Optional[float] = Query(None, ge=0),
+    order_by: Literal[
+        "id", "web_name", "price", "total_points", "selected_by_percent"
+    ] = Query("id"),
+    descending: bool = Query(False),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
 ):
     results = await _official_call(
         scout.official_client.mapped_players,
@@ -256,7 +289,49 @@ async def get_official_fpl_players(
         element_type,
         selectable_only,
     )
-    return _official_collection("/bootstrap-static/", results)
+    if status is not None:
+        results = [
+            player
+            for player in results
+            if str(player.get("status") or "").casefold() == status.casefold()
+        ]
+    if search is not None:
+        needle = search.casefold()
+        results = [
+            player
+            for player in results
+            if needle
+            in " ".join(
+                str(player.get(field) or "")
+                for field in ("web_name", "first_name", "second_name")
+            ).casefold()
+        ]
+    if min_price is not None:
+        results = [
+            player
+            for player in results
+            if player.get("price") is not None and player["price"] >= min_price
+        ]
+    if max_price is not None:
+        results = [
+            player
+            for player in results
+            if player.get("price") is not None and player["price"] <= max_price
+        ]
+
+    populated = [player for player in results if player.get(order_by) is not None]
+    missing = [player for player in results if player.get(order_by) is None]
+    populated.sort(
+        key=lambda player: str(player[order_by]).casefold()
+        if order_by == "web_name"
+        else player[order_by],
+        reverse=descending,
+    )
+    results = populated + missing
+    total = len(results)
+    return _official_collection(
+        "/bootstrap-static/", results[offset : offset + limit], total=total
+    )
 
 
 @app.get(
@@ -270,7 +345,7 @@ async def get_official_fpl_player(
     player_id: int,
 ):
     result = await _official_call(scout.official_client.mapped_player, player_id)
-    return OfficialFPLItemModel(official_endpoint="/bootstrap-static/", data=result)
+    return _official_item("/bootstrap-static/", result)
 
 
 @app.get(
@@ -286,9 +361,7 @@ async def get_official_fpl_player_history(
     result = await _official_call(
         scout.official_client.mapped_player_summary, player_id
     )
-    return OfficialFPLItemModel(
-        official_endpoint=f"/element-summary/{player_id}/", data=result
-    )
+    return _official_item(f"/element-summary/{player_id}/", result)
 
 
 @app.get(
@@ -301,11 +374,331 @@ async def get_official_fpl_player_history(
 async def get_official_fpl_fixtures(
     gameweek: Optional[int] = Query(None, ge=1, le=38),
     team_id: Optional[int] = Query(None, ge=1, description="Official FPL team ID"),
+    future_only: bool = Query(False, description="Return only unstarted fixtures"),
+    finished: Optional[bool] = Query(
+        None, description="Filter by official finished state"
+    ),
 ):
     results = await _official_call(
-        scout.official_client.mapped_fixtures, gameweek, team_id
+        scout.official_client.mapped_fixtures,
+        gameweek,
+        team_id,
+        future_only,
+        finished,
     )
     return _official_collection("/fixtures/", results)
+
+
+@app.get(
+    "/api/fpl/gameweeks/status",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Gameweeks"],
+    summary="Get official event processing status",
+    operation_id="get_official_fpl_event_status",
+)
+async def get_official_fpl_event_status():
+    result = await _official_call(scout.official_client.event_status)
+    return _official_item("/event-status/", dict(result))
+
+
+@app.get(
+    "/api/fpl/gameweeks/{gameweek}/live",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Gameweeks"],
+    summary="Get mapped live gameweek scoring",
+    operation_id="get_official_fpl_live_gameweek",
+)
+async def get_official_fpl_live_gameweek(
+    gameweek: int = Path(..., ge=1, le=38),
+):
+    result = await _official_call(
+        scout.official_client.mapped_event_live, gameweek
+    )
+    return _official_item(f"/event/{gameweek}/live/", result)
+
+
+@app.get(
+    "/api/fpl/dream-team",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Gameweeks"],
+    summary="Get the official season dream team",
+    operation_id="get_official_fpl_season_dream_team",
+)
+async def get_official_fpl_season_dream_team():
+    result = await _official_call(scout.official_client.mapped_dream_team)
+    return _official_item("/dream-team/", result)
+
+
+@app.get(
+    "/api/fpl/gameweeks/{gameweek}/dream-team",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Gameweeks"],
+    summary="Get an official gameweek dream team",
+    operation_id="get_official_fpl_gameweek_dream_team",
+)
+async def get_official_fpl_gameweek_dream_team(
+    gameweek: int = Path(..., ge=1, le=38),
+):
+    result = await _official_call(
+        scout.official_client.mapped_dream_team, gameweek
+    )
+    return _official_item(f"/dream-team/{gameweek}/", result)
+
+
+@app.get(
+    "/api/fpl/fixtures/{fixture_id}/stats",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Fixtures"],
+    summary="Get mapped official fixture statistics",
+    operation_id="get_official_fpl_fixture_stats",
+)
+async def get_official_fpl_fixture_stats(
+    fixture_id: int = Path(..., ge=1),
+):
+    result = await _official_call(
+        scout.official_client.mapped_fixture_stats, fixture_id
+    )
+    return _official_item(f"/fixture/{fixture_id}/stats/", result)
+
+
+@app.get(
+    "/api/fpl/managers/{entry_id}",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Managers"],
+    summary="Get a mapped public manager profile",
+    operation_id="get_official_fpl_manager",
+)
+async def get_official_fpl_manager(entry_id: int = Path(..., ge=1)):
+    result = await _official_call(scout.official_client.mapped_manager, entry_id)
+    return _official_item(f"/entry/{entry_id}/", result)
+
+
+@app.get(
+    "/api/fpl/managers/{entry_id}/history",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Managers"],
+    summary="Get a manager's official season history",
+    operation_id="get_official_fpl_manager_history",
+)
+async def get_official_fpl_manager_history(entry_id: int = Path(..., ge=1)):
+    result = await _official_call(scout.official_client.manager_history, entry_id)
+    return _official_item(f"/entry/{entry_id}/history/", result)
+
+
+@app.get(
+    "/api/fpl/managers/{entry_id}/transfers",
+    response_model=OfficialFPLCollectionModel,
+    tags=["Official FPL · Managers"],
+    summary="Get a manager's public official transfers",
+    operation_id="get_official_fpl_manager_transfers",
+)
+async def get_official_fpl_manager_transfers(
+    entry_id: int = Path(..., ge=1),
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    results = await _official_call(
+        scout.official_client.mapped_manager_transfers, entry_id
+    )
+    if gameweek is not None:
+        results = [item for item in results if item.get("event") == gameweek]
+    total = len(results)
+    return _official_collection(
+        f"/entry/{entry_id}/transfers/",
+        results[offset : offset + limit],
+        total=total,
+    )
+
+
+@app.get(
+    "/api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Managers"],
+    summary="Get a manager's official gameweek picks",
+    operation_id="get_official_fpl_manager_picks",
+)
+async def get_official_fpl_manager_picks(
+    entry_id: int = Path(..., ge=1),
+    gameweek: int = Path(..., ge=1, le=38),
+):
+    result = await _official_call(
+        scout.official_client.mapped_manager_picks, entry_id, gameweek
+    )
+    return _official_item(
+        f"/entry/{entry_id}/event/{gameweek}/picks/", result
+    )
+
+
+@app.get(
+    "/api/fpl/leagues/classic/{league_id}/standings",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Leagues & Cups"],
+    summary="Get paginated classic-league standings",
+    operation_id="get_official_fpl_classic_league_standings",
+)
+async def get_official_fpl_classic_league_standings(
+    league_id: int = Path(..., ge=1),
+    page_standings: int = Query(1, ge=1),
+    page_new_entries: int = Query(1, ge=1),
+    phase: int = Query(1, ge=1),
+):
+    result = await _official_call(
+        scout.official_client.classic_league_standings,
+        league_id,
+        page_standings,
+        page_new_entries,
+        phase,
+    )
+    endpoint = (
+        f"/leagues-classic/{league_id}/standings/"
+        f"?page_new_entries={page_new_entries}"
+        f"&page_standings={page_standings}&phase={phase}"
+    )
+    return _official_item(endpoint, result)
+
+
+@app.get(
+    "/api/fpl/leagues/h2h/{league_id}/standings",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Leagues & Cups"],
+    summary="Get paginated head-to-head standings",
+    operation_id="get_official_fpl_h2h_league_standings",
+)
+async def get_official_fpl_h2h_league_standings(
+    league_id: int = Path(..., ge=1),
+    page_standings: int = Query(1, ge=1),
+    page_new_entries: int = Query(1, ge=1),
+):
+    result = await _official_call(
+        scout.official_client.h2h_league_standings,
+        league_id,
+        page_standings,
+        page_new_entries,
+    )
+    endpoint = (
+        f"/leagues-h2h/{league_id}/standings/"
+        f"?page_new_entries={page_new_entries}"
+        f"&page_standings={page_standings}"
+    )
+    return _official_item(endpoint, result)
+
+
+@app.get(
+    "/api/fpl/leagues/h2h/{league_id}/matches",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Leagues & Cups"],
+    summary="Get paginated head-to-head matches",
+    operation_id="get_official_fpl_h2h_league_matches",
+)
+async def get_official_fpl_h2h_league_matches(
+    league_id: int = Path(..., ge=1),
+    page: int = Query(1, ge=1),
+    entry_id: Optional[int] = Query(None, ge=1),
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+):
+    result = await _official_call(
+        scout.official_client.h2h_league_matches,
+        league_id,
+        page,
+        entry_id,
+        gameweek,
+    )
+    return _official_item(
+        f"/leagues-h2h-matches/league/{league_id}/", result
+    )
+
+
+@app.get(
+    "/api/fpl/leagues/{league_id}/cup-status",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Leagues & Cups"],
+    summary="Get official league cup status",
+    operation_id="get_official_fpl_league_cup_status",
+)
+async def get_official_fpl_league_cup_status(
+    league_id: int = Path(..., ge=1),
+):
+    result = await _official_call(
+        scout.official_client.league_cup_status, league_id
+    )
+    return _official_item(f"/league/{league_id}/cup-status/", result)
+
+
+@app.get(
+    "/api/fpl/regions",
+    response_model=OfficialFPLCollectionModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="List official FPL manager regions",
+    operation_id="get_official_fpl_regions",
+)
+async def get_official_fpl_regions():
+    results = await _official_call(scout.official_client.regions)
+    return _official_collection("/regions/", results)
+
+
+@app.get(
+    "/api/fpl/set-piece-notes",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="Get mapped official set-piece notes",
+    operation_id="get_official_fpl_set_piece_notes",
+)
+async def get_official_fpl_set_piece_notes():
+    result = await _official_call(scout.official_client.mapped_set_piece_notes)
+    return _official_item("/team/set-piece-notes/", result)
+
+
+@app.get(
+    "/api/fpl/rankings/best-private-leagues",
+    response_model=OfficialFPLCollectionModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="Get official best private leagues",
+    operation_id="get_official_fpl_best_private_leagues",
+)
+async def get_official_fpl_best_private_leagues():
+    results = await _official_call(scout.official_client.best_private_leagues)
+    return _official_collection("/stats/best-classic-private-leagues/", results)
+
+
+@app.get(
+    "/api/fpl/rankings/most-valuable-teams",
+    response_model=OfficialFPLCollectionModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="Get official most valuable teams",
+    operation_id="get_official_fpl_most_valuable_teams",
+)
+async def get_official_fpl_most_valuable_teams():
+    results = await _official_call(scout.official_client.most_valuable_teams)
+    return _official_collection("/stats/most-valuable-teams/", results)
+
+
+@app.get(
+    "/api/fpl/gameweeks/{gameweek}/winners",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="Get official gameweek winners",
+    operation_id="get_official_fpl_event_winners",
+)
+async def get_official_fpl_event_winners(
+    gameweek: int = Path(..., ge=1, le=38),
+):
+    result = await _official_call(scout.official_client.event_winners, gameweek)
+    return _official_item(f"/winners/event/{gameweek}/", result)
+
+
+@app.get(
+    "/api/fpl/phases/{phase_id}/winners",
+    response_model=OfficialFPLItemModel,
+    tags=["Official FPL · Reference & Rankings"],
+    summary="Get official phase winners",
+    operation_id="get_official_fpl_phase_winners",
+)
+async def get_official_fpl_phase_winners(
+    phase_id: int = Path(..., ge=1),
+):
+    result = await _official_call(scout.official_client.phase_winners, phase_id)
+    return _official_item(f"/winners/phase/{phase_id}/", result)
 
 
 async def _generate_scout_response(

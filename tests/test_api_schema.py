@@ -19,6 +19,25 @@ class APISchemaTests(unittest.TestCase):
             "/api/fpl/players/{player_id}",
             "/api/fpl/players/{player_id}/history",
             "/api/fpl/fixtures",
+            "/api/fpl/gameweeks/status",
+            "/api/fpl/gameweeks/{gameweek}/live",
+            "/api/fpl/dream-team",
+            "/api/fpl/gameweeks/{gameweek}/dream-team",
+            "/api/fpl/fixtures/{fixture_id}/stats",
+            "/api/fpl/managers/{entry_id}",
+            "/api/fpl/managers/{entry_id}/history",
+            "/api/fpl/managers/{entry_id}/transfers",
+            "/api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks",
+            "/api/fpl/leagues/classic/{league_id}/standings",
+            "/api/fpl/leagues/h2h/{league_id}/standings",
+            "/api/fpl/leagues/h2h/{league_id}/matches",
+            "/api/fpl/leagues/{league_id}/cup-status",
+            "/api/fpl/regions",
+            "/api/fpl/set-piece-notes",
+            "/api/fpl/rankings/best-private-leagues",
+            "/api/fpl/rankings/most-valuable-teams",
+            "/api/fpl/gameweeks/{gameweek}/winners",
+            "/api/fpl/phases/{phase_id}/winners",
         }
 
         self.assertEqual(set(schema["paths"]), expected_paths)
@@ -31,6 +50,9 @@ class APISchemaTests(unittest.TestCase):
                 "Official FPL · Teams",
                 "Official FPL · Players",
                 "Official FPL · Fixtures",
+                "Official FPL · Managers",
+                "Official FPL · Leagues & Cups",
+                "Official FPL · Reference & Rankings",
             ],
         )
         for methods in schema["paths"].values():

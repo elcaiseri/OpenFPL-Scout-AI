@@ -7,7 +7,7 @@ class ResponseModel(BaseModel):
     scout_team: List[Dict[str, Any]]
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
-    version: str = "5.2.0"
+    version: str = "5.3.0"
     source: str = "official-fpl"
     credits: str = "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 
@@ -18,6 +18,7 @@ class OfficialFPLCollectionModel(BaseModel):
     source: str = "official-fpl"
     official_endpoint: str
     count: int
+    total: Optional[int] = None
     results: List[Dict[str, Any]] = Field(default_factory=list)
 
 

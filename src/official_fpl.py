@@ -96,6 +96,16 @@ class OfficialFPLClient:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
             value = response.json()
+        except requests.HTTPError as error:
+            status_code = getattr(error.response, "status_code", None)
+            if status_code == 404:
+                raise OfficialFPLNotFoundError(
+                    f"Official FPL resource was not found: /{cache_key}"
+                ) from error
+            raise OfficialFPLAPIError(
+                f"Official FPL returned HTTP {status_code or 'error'} for "
+                f"/{cache_key}"
+            ) from error
         except (requests.RequestException, ValueError) as error:
             raise OfficialFPLAPIError(f"Official FPL request failed: {url}") from error
 
@@ -139,6 +149,234 @@ class OfficialFPLClient:
                 f"Official summary for player {player_id} has an invalid schema"
             )
         return payload
+
+    def event_status(self) -> Mapping[str, Any]:
+        """Return the official bonus-processing and league update state."""
+        return self._mapping_resource("event-status/")
+
+    def mapped_event_live(self, gameweek: int) -> Dict[str, Any]:
+        """Map live official player scoring for a gameweek."""
+        payload = self._mapping_resource(f"event/{gameweek}/live/")
+        players = {player["id"]: player for player in self.mapped_players()}
+        elements = []
+        for element in payload.get("elements", []):
+            element_id = int(element["id"])
+            player = players.get(element_id, {})
+            elements.append(
+                {
+                    "element_id": element_id,
+                    "web_name": player.get("web_name"),
+                    "team_id": player.get("team_id"),
+                    "team_name": player.get("team_name"),
+                    "position": player.get("position"),
+                    "stats": element.get("stats", {}),
+                    "explain": element.get("explain", []),
+                    "modified": bool(element.get("modified")),
+                }
+            )
+        return {"gameweek": gameweek, "elements": elements}
+
+    def mapped_dream_team(self, gameweek: Optional[int] = None) -> Dict[str, Any]:
+        """Map the overall or gameweek official dream team when available."""
+        path = f"dream-team/{gameweek}/" if gameweek is not None else "dream-team/"
+        payload = self._mapping_resource(path)
+        return self._enrich_player_references(payload)
+
+    def mapped_fixture_stats(self, fixture_id: int) -> Dict[str, Any]:
+        """Map official per-player fixture statistics."""
+        payload = self._mapping_resource(f"fixture/{fixture_id}/stats/")
+        return {
+            "fixture_id": fixture_id,
+            **self._enrich_player_references(payload),
+        }
+
+    def mapped_manager(self, entry_id: int) -> Dict[str, Any]:
+        """Map one public FPL manager entry."""
+        payload = self._mapping_resource(f"entry/{entry_id}/")
+        teams = {team["id"]: team for team in self.mapped_teams()}
+        favourite_team_id = payload.get("favourite_team")
+        return {
+            **payload,
+            "favourite_team_id": favourite_team_id,
+            "favourite_team": teams.get(favourite_team_id),
+            "last_deadline_value": self._api_cost(
+                payload.get("last_deadline_value")
+            ),
+            "last_deadline_bank": self._api_cost(payload.get("last_deadline_bank")),
+        }
+
+    def manager_history(self, entry_id: int) -> Dict[str, Any]:
+        """Return a manager's official current, chip, and past-season history."""
+        payload = self._mapping_resource(f"entry/{entry_id}/history/")
+        return {"entry_id": entry_id, **payload}
+
+    def mapped_manager_transfers(self, entry_id: int) -> List[Dict[str, Any]]:
+        """Map public transfers, subject to the official deadline visibility rules."""
+        payload = self._list_resource(f"entry/{entry_id}/transfers/")
+        players = {player["id"]: player for player in self.mapped_players()}
+        return [
+            {
+                **transfer,
+                "element_in_id": transfer.get("element_in"),
+                "element_out_id": transfer.get("element_out"),
+                "player_in": players.get(transfer.get("element_in")),
+                "player_out": players.get(transfer.get("element_out")),
+                "element_in_cost": self._api_cost(
+                    transfer.get("element_in_cost")
+                ),
+                "element_out_cost": self._api_cost(
+                    transfer.get("element_out_cost")
+                ),
+            }
+            for transfer in payload
+        ]
+
+    def mapped_manager_picks(self, entry_id: int, gameweek: int) -> Dict[str, Any]:
+        """Map a manager's official gameweek picks after they become public."""
+        payload = self._mapping_resource(
+            f"entry/{entry_id}/event/{gameweek}/picks/"
+        )
+        players = {player["id"]: player for player in self.mapped_players()}
+        picks = [
+            {
+                **pick,
+                "player": players.get(pick.get("element")),
+            }
+            for pick in payload.get("picks", [])
+        ]
+        return {
+            "entry_id": entry_id,
+            "gameweek": gameweek,
+            **payload,
+            "picks": picks,
+        }
+
+    def classic_league_standings(
+        self,
+        league_id: int,
+        page_standings: int = 1,
+        page_new_entries: int = 1,
+        phase: int = 1,
+    ) -> Dict[str, Any]:
+        """Return paginated official classic-league standings."""
+        path = (
+            f"leagues-classic/{league_id}/standings/"
+            f"?page_new_entries={page_new_entries}"
+            f"&page_standings={page_standings}&phase={phase}"
+        )
+        return self._mapping_resource(path)
+
+    def h2h_league_standings(
+        self,
+        league_id: int,
+        page_standings: int = 1,
+        page_new_entries: int = 1,
+    ) -> Dict[str, Any]:
+        """Return paginated official head-to-head standings."""
+        path = (
+            f"leagues-h2h/{league_id}/standings/"
+            f"?page_new_entries={page_new_entries}"
+            f"&page_standings={page_standings}"
+        )
+        return self._mapping_resource(path)
+
+    def h2h_league_matches(
+        self,
+        league_id: int,
+        page: int = 1,
+        entry_id: Optional[int] = None,
+        gameweek: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return official head-to-head matches with optional entry/event filters."""
+        path = f"leagues-h2h-matches/league/{league_id}/?page={page}"
+        if entry_id is not None:
+            path += f"&entry={entry_id}"
+        if gameweek is not None:
+            path += f"&event={gameweek}"
+        return self._mapping_resource(path)
+
+    def league_cup_status(self, league_id: int) -> Dict[str, Any]:
+        """Return official cup qualification state for a league."""
+        return self._mapping_resource(f"league/{league_id}/cup-status/")
+
+    def regions(self) -> List[Dict[str, Any]]:
+        """Return official manager regions and ISO codes."""
+        return self._list_resource("regions/")
+
+    def mapped_set_piece_notes(self) -> Dict[str, Any]:
+        """Map official set-piece notes to named teams."""
+        payload = self._mapping_resource("team/set-piece-notes/")
+        teams = {team["id"]: team for team in self.mapped_teams()}
+        return {
+            "last_updated": payload.get("last_updated"),
+            "teams": [
+                {
+                    **team_notes,
+                    "team": teams.get(team_notes.get("id")),
+                }
+                for team_notes in payload.get("teams", [])
+            ],
+        }
+
+    def best_private_leagues(self) -> List[Dict[str, Any]]:
+        """Return the official best classic private league table."""
+        return self._list_resource("stats/best-classic-private-leagues/")
+
+    def most_valuable_teams(self) -> List[Dict[str, Any]]:
+        """Return the official most valuable manager teams table."""
+        return self._list_resource("stats/most-valuable-teams/")
+
+    def event_winners(self, gameweek: int) -> Any:
+        """Return official gameweek winner data when published."""
+        return {
+            "gameweek": gameweek,
+            "winners": self._get_json(f"winners/event/{gameweek}/"),
+        }
+
+    def phase_winners(self, phase_id: int) -> Any:
+        """Return official phase winner data when published."""
+        return {
+            "phase_id": phase_id,
+            "winners": self._get_json(f"winners/phase/{phase_id}/"),
+        }
+
+    def _mapping_resource(self, path: str) -> Mapping[str, Any]:
+        payload = self._get_json(path)
+        if not isinstance(payload, Mapping):
+            raise OfficialFPLAPIError(
+                f"Official FPL resource has an invalid object schema: /{path}"
+            )
+        return payload
+
+    def _list_resource(self, path: str) -> List[Dict[str, Any]]:
+        payload = self._get_json(path)
+        if not isinstance(payload, list):
+            raise OfficialFPLAPIError(
+                f"Official FPL resource has an invalid list schema: /{path}"
+            )
+        return payload
+
+    def _enrich_player_references(self, payload: Any) -> Any:
+        players = {player["id"]: player for player in self.mapped_players()}
+
+        def enrich(value: Any) -> Any:
+            if isinstance(value, list):
+                return [enrich(item) for item in value]
+            if not isinstance(value, Mapping):
+                return value
+            result = {key: enrich(item) for key, item in value.items()}
+            for key in ("element", "element_in", "element_out"):
+                player_id = value.get(key)
+                if isinstance(player_id, int):
+                    label = (
+                        "player"
+                        if key == "element"
+                        else key.replace("element", "player")
+                    )
+                    result[label] = players.get(player_id)
+            return result
+
+        return enrich(payload)
 
     def mapped_gameweeks(self) -> List[Dict[str, Any]]:
         """Map official event state to a stable public API schema."""
@@ -224,7 +462,11 @@ class OfficialFPLClient:
         return player
 
     def mapped_fixtures(
-        self, gameweek: Optional[int] = None, team_id: Optional[int] = None
+        self,
+        gameweek: Optional[int] = None,
+        team_id: Optional[int] = None,
+        future_only: bool = False,
+        finished: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """Map official fixtures with named home and away teams."""
         teams = {team["id"]: team for team in self.mapped_teams()}
@@ -235,6 +477,10 @@ class OfficialFPLClient:
             if gameweek is not None and fixture.get("event") != gameweek:
                 continue
             if team_id is not None and team_id not in {home_id, away_id}:
+                continue
+            if future_only and (fixture.get("started") or fixture.get("finished")):
+                continue
+            if finished is not None and bool(fixture.get("finished")) != finished:
                 continue
             results.append(
                 {

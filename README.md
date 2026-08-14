@@ -85,15 +85,19 @@ route catalog grouped by tag.
 | Tag | Endpoints |
 |---|---|
 | Service | `GET /api`, `GET /api/health` |
-| Official FPL · Gameweeks | `GET /api/gameweeks`, `GET /api/fpl/gameweeks` |
+| Official FPL · Gameweeks | Events, status, live scoring, and dream teams |
 | Official FPL · Teams | `GET /api/fpl/teams` |
-| Official FPL · Players | `GET /api/fpl/players`, `GET /api/fpl/players/{player_id}`, `GET /api/fpl/players/{player_id}/history` |
-| Official FPL · Fixtures | `GET /api/fpl/fixtures` |
+| Official FPL · Players | Player collection, details, and history |
+| Official FPL · Fixtures | Fixture collection and per-fixture statistics |
+| Official FPL · Managers | Public profiles, history, transfers, and picks |
+| Official FPL · Leagues & Cups | Classic/H2H standings, H2H matches, and cup state |
+| Official FPL · Reference & Rankings | Regions, set pieces, rankings, and winners |
 | Scout AI | `GET/POST /api/scout`, `GET /api/gw/scout`, `GET /api/gw/playerpoints` |
 
-Mapped player queries support `team_id`, `element_type`, and `selectable_only`;
-fixtures support `gameweek` and `team_id`. See [Docs.md](Docs.md) for the full
-authentication and response details.
+Mapped player queries include availability, name, price, sorting, and pagination
+options. Fixtures include gameweek, club, future, and finished filters. See the
+[Official FPL API Kit](Official-FPL-API-Kit.md) for the full audited route map
+and every option, or [Docs.md](Docs.md) for authentication and response details.
 - `GET /api` — API information and metadata
 
 **Sample `/api/gw/scout` response:**
@@ -120,8 +124,9 @@ authentication and response details.
     }
   ],
   "gameweek": 7,
-  "version": "4.0.0",
-  "credits": "OpenFPL-Scout AI - Team Predictions | Developed by Kassem @elcaiseri, 2025"
+  "version": "5.3.0",
+  "source": "official-fpl",
+  "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 }
 ```
 
@@ -182,6 +187,8 @@ Integrates directly with official FPL endpoints for:
 - Bootstrap players, teams, positions, and gameweek state
 - Player gameweek history and official FPL statistics
 - Fixtures, kickoff times, difficulty, and home/away status
+- Live scoring, manager history, public picks, transfers, leagues, and cups
+- Regions, set-piece notes, rankings, event winners, and phase winners
 
 No football-data.org API key or uploaded statistics file is required. The
 official FPL API does not provide a stable versioned historical archive, so

@@ -2,6 +2,7 @@ import unittest
 from urllib.parse import urlparse
 
 import numpy as np
+import requests
 
 from src.official_fpl import (
     OfficialFPLAPIError,
@@ -17,7 +18,9 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+            raise requests.HTTPError(
+                f"HTTP {self.status_code}", response=self
+            )
 
     def json(self):
         return self.payload
@@ -29,7 +32,10 @@ class FakeSession:
         self.calls = []
 
     def get(self, url, timeout):
-        path = urlparse(url).path.removeprefix("/api/")
+        parsed = urlparse(url)
+        path = parsed.path.removeprefix("/api/")
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
         self.calls.append((path, timeout))
         return FakeResponse(self.responses[path])
 
@@ -322,6 +328,91 @@ class OfficialFPLClientTests(unittest.TestCase):
 
         with self.assertRaises(OfficialFPLNotFoundError):
             client.mapped_player(999)
+
+    def test_maps_live_gameweek_with_player_identity(self):
+        live = {
+            "elements": [
+                {
+                    "id": 10,
+                    "stats": {"total_points": 6},
+                    "explain": [],
+                    "modified": False,
+                }
+            ]
+        }
+        client = OfficialFPLClient(
+            session=FakeSession(
+                {"bootstrap-static/": bootstrap(), "event/1/live/": live}
+            )
+        )
+
+        result = client.mapped_event_live(1)
+
+        self.assertEqual(result["gameweek"], 1)
+        self.assertEqual(result["elements"][0]["web_name"], "Player")
+        self.assertEqual(result["elements"][0]["team_name"], "Manchester United")
+        self.assertEqual(result["elements"][0]["stats"]["total_points"], 6)
+
+    def test_maps_manager_profile_and_transfers(self):
+        manager = {
+            "id": 123,
+            "name": "Test XI",
+            "favourite_team": 2,
+            "last_deadline_value": 1015,
+            "last_deadline_bank": 7,
+        }
+        transfers = [
+            {
+                "event": 2,
+                "element_in": 10,
+                "element_out": 11,
+                "element_in_cost": 75,
+                "element_out_cost": 55,
+            }
+        ]
+        payload = add_player(bootstrap(), player_id=11, web_name="Outgoing")
+        client = OfficialFPLClient(
+            session=FakeSession(
+                {
+                    "bootstrap-static/": payload,
+                    "entry/123/": manager,
+                    "entry/123/transfers/": transfers,
+                }
+            )
+        )
+
+        profile = client.mapped_manager(123)
+        mapped_transfers = client.mapped_manager_transfers(123)
+
+        self.assertEqual(profile["favourite_team"]["name"], "Manchester United")
+        self.assertEqual(profile["last_deadline_value"], 101.5)
+        self.assertEqual(mapped_transfers[0]["player_in"]["web_name"], "Player")
+        self.assertEqual(mapped_transfers[0]["element_out_cost"], 5.5)
+
+    def test_classic_standings_preserve_full_pagination_options(self):
+        path = (
+            "leagues-classic/314/standings/"
+            "?page_new_entries=3&page_standings=2&phase=4"
+        )
+        session = FakeSession({path: {"league": {"id": 314}, "standings": {}}})
+        client = OfficialFPLClient(session=session)
+
+        result = client.classic_league_standings(
+            314, page_standings=2, page_new_entries=3, phase=4
+        )
+
+        self.assertEqual(result["league"]["id"], 314)
+        self.assertEqual(session.calls[0][0], path)
+
+    def test_upstream_404_becomes_typed_not_found(self):
+        client = OfficialFPLClient(
+            session=FakeSession({"regions/": []})
+        )
+        client.session.responses["regions/"] = []
+        client.session.get = lambda url, timeout: FakeResponse({}, status_code=404)
+
+        with self.assertRaises(OfficialFPLNotFoundError):
+            client.regions()
 
     def test_rejects_invalid_bootstrap_schema(self):
         client = OfficialFPLClient(
