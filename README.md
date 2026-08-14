@@ -1,6 +1,6 @@
 # OpenFPL-Scout-AI
 
-<img src="assets/openfpl-predictive-lion-2026-512.png" alt="OpenFPL Scout AI Predictive Lion logo combining football, Premier League and neural-data signals" width="180"/>
+<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI frameless Predictive Lion logo combining football, Premier League and neural-data signals" width="180"/>
 
 *OpenFPL 2026/27 icon generated with OpenAI image generation.*
 
