@@ -219,6 +219,7 @@ class OfficialFPLClientTests(unittest.TestCase):
             "Arsenal / Arsenal",
         )
         self.assertEqual(len(result["Arsenal"]["fixtures"]), 2)
+        self.assertEqual(result["Arsenal"]["difficulty"], 2.5)
 
     def test_available_gameweeks_follow_official_event_state(self):
         session = FakeSession({"bootstrap-static/": bootstrap(finished=True)})

@@ -48,6 +48,23 @@ numerical_columns:
   - "touches_opp_box"
   - "clearances_blocks_interceptions"
   - "defensive_contribution"
+  - "points_last"
+  - "points_mean_3"
+  - "points_mean_5"
+  - "points_mean_10"
+  - "points_std_5"
+  - "points_trend_3_10"
+  - "minutes_last"
+  - "minutes_mean_3"
+  - "minutes_mean_10"
+  - "minutes_std_5"
+  - "appearance_probability_5"
+  - "start_probability_5"
+  - "expected_goal_involvements_mean_3"
+  - "expected_goal_involvements_mean_10"
+  - "expected_points_last"
+  - "fixture_difficulty"
+  - "fixture_count"
 
 # Target column for model training
 target_column:
@@ -71,27 +88,31 @@ official_fpl:
 # Model Information
 models:
   linear_regression:
-    version: "v5.0"
+    version: "v6.0"
     last_trained: "August 14, 2026"
     path: "models/linear_regression_reg.pkl"
+    weight: 0.17144892586501903
     year: 2026-2027
 
   xgboost:
-    version: "v5.0"
+    version: "v6.0"
     last_trained: "August 14, 2026"
     path: "models/xgboost_reg.pkl"
+    weight: 0.22543569969141847
     year: 2026-2027
 
   catboost:
-    version: "v5.0"
+    version: "v6.0"
     last_trained: "August 14, 2026"
     path: "models/catboost_reg.pkl"
+    weight: 0.519796858425605
     year: 2026-2027
 
   mlp:
-    version: "v1.0"
+    version: "v2.0"
     last_trained: "August 14, 2026"
     path: "models/mlp_reg.pkl"
+    weight: 0.08331851601795742
     year: 2026-2027
 
 

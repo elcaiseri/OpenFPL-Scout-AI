@@ -149,26 +149,31 @@ Features of the UI:
 
 | Model             | Version | Description                    |
 |-------------------|---------|--------------------------------|
-| Ridge Regression  | v5.0    | Regularized linear baseline    |
-| XGBoost           | v5.0    | Gradient boosting ensemble     |
-| CatBoost          | v5.0    | Categorical boosting model     |
-| MLP                | v1.0    | Neural-network regressor       |
+| Ridge Regression  | v6.0    | Regularized linear baseline    |
+| XGBoost           | v6.0    | Gradient boosting ensemble     |
+| CatBoost          | v6.0    | Categorical boosting model     |
+| MLP                | v2.0    | Neural-network regressor       |
 
-Training uses each player's previous five matches and expanding
-season-forward cross-validation, so a validation season is always later than
-its training seasons. To retrain all deployment models and record metrics:
+Training uses leakage-safe 3/5/10-match form, volatility, recent minutes,
+appearance/start probabilities, and fixture context. Player names are retained
+for API output but are not model inputs. Tuning uses expanding chronological
+folds on development seasons, followed by one evaluation on the untouched
+latest season. To retrain all deployment models and record metrics:
 
 ```bash
 uv run --group train python trainer-booster.py \
   --data-dir data/official \
-  --output-dir models
+  --output-dir models \
+  --folds 5 \
+  --tune
 ```
 
-The run writes each complete preprocessing/model pipeline plus
-`training_results.csv`, `cv_fold_results.csv`, `training_metadata.json`, and an
-append-only `training_history.jsonl`. Pass `--folds 5 --tune` to tune every
-model with five expanding, chronological season/gameweek folds; the candidate
-scores are saved to `tuning_results.csv`. Use `--quick` for a fast smoke test.
+The run writes each complete preprocessing/model pipeline plus CV and tuning
+summaries, baseline comparisons, row-level OOF predictions, untouched-holdout
+results and predictions, optimized ensemble weights, metadata, and an
+append-only training history. The latest archived season is the holdout by
+default; use `--holdout-season YEAR` to state it explicitly and `--quick` for a
+fast smoke test.
 
 At startup, the inference engine validates each saved model against the shared
 feature contract. Runtime inference uses player IDs, caches fixture lookups,

@@ -676,6 +676,13 @@ class OfficialFPLClient:
             primary = dict(team_matches[0])
             primary["fixture_count"] = len(team_matches)
             primary["fixtures"] = team_matches
+            difficulties = [
+                float(match["difficulty"])
+                for match in team_matches
+                if match.get("difficulty") is not None
+            ]
+            if difficulties:
+                primary["difficulty"] = float(np.mean(difficulties))
             if len(team_matches) > 1:
                 primary["opponent_team_name"] = " / ".join(
                     str(match["opponent_team_name"]) for match in team_matches
