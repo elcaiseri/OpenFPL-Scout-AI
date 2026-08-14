@@ -1,6 +1,6 @@
 # OpenFPL-Scout-AI
 
-<img src="assets/openfpl-icon-2026-512.png" alt="OpenFPL Scout AI neon scouting shield" width="180"/>
+<img src="assets/openfpl-icon-insight-lion-balanced-2026-512.png" alt="OpenFPL Scout AI neon shield with a balanced spotlight revealing the Premier League lion" width="180"/>
 
 *OpenFPL 2026/27 icon generated with OpenAI image generation.*
 
