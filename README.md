@@ -166,7 +166,9 @@ uv run --group train python trainer-booster.py \
 
 The run writes each complete preprocessing/model pipeline plus
 `training_results.csv`, `cv_fold_results.csv`, `training_metadata.json`, and an
-append-only `training_history.jsonl`. Use `--quick` for a fast smoke test.
+append-only `training_history.jsonl`. Pass `--folds 5 --tune` to tune every
+model with five expanding, chronological season/gameweek folds; the candidate
+scores are saved to `tuning_results.csv`. Use `--quick` for a fast smoke test.
 
 At startup, the inference engine validates each saved model against the shared
 feature contract. Runtime inference uses player IDs, caches fixture lookups,

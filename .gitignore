@@ -14,6 +14,7 @@ __pycache__/
 *.csv
 !models/training_results.csv
 !models/cv_fold_results.csv
+!models/tuning_results.csv
 *.zip
 *info
 data/

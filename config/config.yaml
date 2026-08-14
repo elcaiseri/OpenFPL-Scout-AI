@@ -72,25 +72,25 @@ official_fpl:
 models:
   linear_regression:
     version: "v5.0"
-    last_trained: "August 13, 2026"
+    last_trained: "August 14, 2026"
     path: "models/linear_regression_reg.pkl"
     year: 2026-2027
 
   xgboost:
     version: "v5.0"
-    last_trained: "August 13, 2026"
+    last_trained: "August 14, 2026"
     path: "models/xgboost_reg.pkl"
     year: 2026-2027
 
   catboost:
     version: "v5.0"
-    last_trained: "August 13, 2026"
+    last_trained: "August 14, 2026"
     path: "models/catboost_reg.pkl"
     year: 2026-2027
 
   mlp:
     version: "v1.0"
-    last_trained: "August 13, 2026"
+    last_trained: "August 14, 2026"
     path: "models/mlp_reg.pkl"
     year: 2026-2027
 
