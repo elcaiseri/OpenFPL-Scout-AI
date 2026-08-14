@@ -1416,7 +1416,7 @@ select {
     max-width: var(--squad-card-width);
     height: var(--squad-card-height);
     min-height: var(--squad-card-height);
-    padding: 12px 10px 10px;
+    padding: 12px 10px 38px;
     font-family: var(--font-body);
     touch-action: manipulation;
 }
@@ -1447,13 +1447,29 @@ select {
 }
 
 .card-bottom {
+    position: absolute;
+    right: 10px;
+    bottom: 9px;
+    left: 10px;
+    width: auto;
+    min-width: 0;
     align-items: flex-end;
+    gap: 4px;
 }
 
 .card-price {
+    min-width: 0;
+    overflow: hidden;
     color: #635969;
     font-size: 0.54rem;
     font-weight: 850;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-bottom .expected-points {
+    flex: 0 0 auto;
+    max-width: 100%;
 }
 
 .card-alert {
@@ -1800,6 +1816,36 @@ select {
         --squad-card-width: calc(20% - 2.4px);
         --squad-card-height: 104px;
     }
+
+    .player-card {
+        padding: 8px 5px 34px;
+    }
+
+    .card-position {
+        display: none;
+    }
+
+    .fixture {
+        margin-top: 3px;
+        margin-bottom: 4px;
+    }
+
+    .card-bottom {
+        right: 5px;
+        bottom: 7px;
+        left: 5px;
+    }
+
+    .card-price {
+        font-size: 0.48rem;
+    }
+
+    .expected-points {
+        min-width: 42px;
+        padding-right: 4px;
+        padding-left: 4px;
+        font-size: 0.65rem;
+    }
 }
 
 /* Mobile */
@@ -2017,7 +2063,7 @@ select {
         max-width: var(--squad-card-width);
         height: var(--squad-card-height);
         min-height: var(--squad-card-height);
-        padding: 8px 4px 7px;
+        padding: 8px 4px 31px;
         border-radius: 11px;
     }
 
@@ -2050,6 +2096,13 @@ select {
 
     .expected-points::after {
         display: none;
+    }
+
+    .card-bottom {
+        right: 4px;
+        bottom: 6px;
+        left: 4px;
+        justify-content: center;
     }
 
     .role-badge {
