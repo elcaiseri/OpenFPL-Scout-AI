@@ -174,14 +174,12 @@ select {
 
 .brand-mark {
     display: grid;
-    width: 48px;
-    height: 48px;
-    overflow: hidden;
+    width: 52px;
+    height: 52px;
+    overflow: visible;
     place-items: center;
-    border: 1px solid rgba(200, 255, 50, 0.42);
-    border-radius: 15px;
-    background: var(--ink-950);
-    box-shadow: 0 0 34px rgba(200, 255, 50, 0.24);
+    border: 0;
+    background: transparent;
 }
 
 .brand-mark img {
@@ -1961,9 +1959,8 @@ select {
     }
 
     .brand-mark {
-        width: 42px;
-        height: 42px;
-        border-radius: 12px;
+        width: 46px;
+        height: 46px;
     }
 
     .season-chip {
