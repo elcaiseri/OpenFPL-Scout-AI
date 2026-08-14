@@ -32,6 +32,7 @@
 
 html {
     scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -265,6 +266,7 @@ select {
     line-height: 0.79;
     letter-spacing: -0.035em;
     text-transform: uppercase;
+    text-wrap: balance;
 }
 
 .hero-copy h1 span {
@@ -278,6 +280,7 @@ select {
     color: #d2c8da;
     font-size: 1rem;
     line-height: 1.6;
+    text-wrap: pretty;
 }
 
 .gameweek-panel {
@@ -367,6 +370,7 @@ select {
         linear-gradient(135deg, var(--lime) 50%, transparent 50%) calc(100% - 13px) 54% / 6px 6px no-repeat,
         rgba(255, 255, 255, 0.06);
     transition: border-color var(--ease), transform var(--ease), background-color var(--ease);
+    touch-action: manipulation;
 }
 
 .gameweek-selector select:hover,
@@ -832,7 +836,9 @@ select {
 .player-dialog {
     width: min(430px, calc(100% - 28px));
     margin: auto;
-    overflow: visible;
+    max-height: calc(100dvh - 28px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 30px;
     color: var(--paper);
     border: 1px solid rgba(200, 255, 50, 0.25);
@@ -1117,6 +1123,7 @@ select {
     border-radius: var(--radius-sm);
     background: var(--lime);
     transition: transform var(--ease), box-shadow var(--ease), opacity var(--ease);
+    touch-action: manipulation;
 }
 
 .refresh-button:hover:not(:disabled),
@@ -1366,6 +1373,7 @@ select {
 }
 
 .view-button {
+    min-height: 36px;
     padding: 7px 10px;
     cursor: pointer;
     color: var(--muted);
@@ -1374,6 +1382,7 @@ select {
     border: 0;
     border-radius: 7px;
     background: transparent;
+    touch-action: manipulation;
 }
 
 .view-button.active {
@@ -1391,12 +1400,25 @@ select {
 
 .pitch {
     min-height: 700px;
+    --squad-card-gap: clamp(7px, 1.4vw, 16px);
+    --squad-card-width: 152px;
+    --squad-card-height: 112px;
+}
+
+.formation-line {
+    gap: var(--squad-card-gap);
 }
 
 .player-card {
-    min-height: 112px;
+    flex: 0 0 var(--squad-card-width);
+    width: var(--squad-card-width);
+    min-width: var(--squad-card-width);
+    max-width: var(--squad-card-width);
+    height: var(--squad-card-height);
+    min-height: var(--squad-card-height);
     padding: 12px 10px 10px;
     font-family: var(--font-body);
+    touch-action: manipulation;
 }
 
 .card-position {
@@ -1455,6 +1477,7 @@ select {
     border: 1px solid var(--line);
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.025);
+    overscroll-behavior-inline: contain;
 }
 
 .squad-table {
@@ -1671,11 +1694,14 @@ select {
     .pitch {
         min-height: 620px;
         padding: 28px 20px;
+        --squad-card-gap: 7px;
+        --squad-card-width: min(124px, calc(20% - 5.6px));
+        --squad-card-height: 112px;
     }
 
     .formation-line {
-        min-height: 103px;
-        gap: 7px;
+        min-height: var(--squad-card-height);
+        gap: var(--squad-card-gap);
     }
 
     .player-card {
@@ -1707,15 +1733,72 @@ select {
     }
 
     .stats-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .stat-primary {
-        grid-column: span 2;
+        grid-column: auto;
     }
 
     .engine-card {
         grid-column: span 2;
+    }
+
+    .squad-table th:first-child,
+    .squad-table td:first-child {
+        position: sticky;
+        left: 0;
+    }
+
+    .squad-table th:first-child {
+        z-index: 3;
+        background: #160b1e;
+    }
+
+    .squad-table td:first-child {
+        z-index: 2;
+        background: #120818;
+    }
+}
+
+/* Small tablet */
+@media (max-width: 680px) {
+    .topbar-actions > a {
+        display: none;
+    }
+
+    .header {
+        min-height: auto;
+    }
+
+    .hero-grid {
+        grid-template-columns: 1fr;
+        gap: 26px;
+    }
+
+    .hero-copy h1 {
+        max-width: 590px;
+    }
+
+    .gameweek-panel {
+        width: min(100%, 420px);
+        min-height: 210px;
+    }
+
+    .control-deck {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .control-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .pitch {
+        --squad-card-gap: 3px;
+        --squad-card-width: calc(20% - 2.4px);
+        --squad-card-height: 104px;
     }
 }
 
@@ -1794,14 +1877,23 @@ select {
         width: 100%;
     }
 
+    .gameweek-selector,
+    .gameweek-selector select {
+        min-width: 0;
+    }
+
     .control-actions {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: minmax(0, 1fr) auto;
         width: 100%;
     }
 
     .refresh-button {
         justify-content: center;
+        min-height: 44px;
+        padding-right: 12px;
+        padding-left: 12px;
+        white-space: nowrap;
     }
 
     .official-pulse {
@@ -1893,6 +1985,9 @@ select {
         min-height: 555px;
         padding: 25px 8px;
         border-radius: 20px;
+        --squad-card-gap: 3px;
+        --squad-card-width: calc(20% - 2.4px);
+        --squad-card-height: clamp(86px, 24vw, 100px);
         background:
             linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)) 50% 50% / 100% 2px no-repeat,
             radial-gradient(circle at 50% 50%, transparent 0 47px, rgba(255, 255, 255, 0.22) 48px 49px, transparent 50px),
@@ -1910,14 +2005,18 @@ select {
     }
 
     .formation-line {
-        min-height: 91px;
-        gap: 4px;
+        min-height: var(--squad-card-height);
+        gap: var(--squad-card-gap);
         margin-bottom: 10px;
     }
 
     .player-card {
-        max-width: 82px;
-        min-height: 100px;
+        flex-basis: var(--squad-card-width);
+        width: var(--squad-card-width);
+        min-width: var(--squad-card-width);
+        max-width: var(--squad-card-width);
+        height: var(--squad-card-height);
+        min-height: var(--squad-card-height);
         padding: 8px 4px 7px;
         border-radius: 11px;
     }
@@ -2006,6 +2105,15 @@ select {
     .player-card {
         padding-right: 2px;
         padding-left: 2px;
+    }
+
+    .team-name,
+    .fixture span {
+        display: none;
+    }
+
+    .fixture {
+        justify-content: center;
     }
 }
 

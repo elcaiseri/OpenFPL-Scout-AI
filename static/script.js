@@ -439,9 +439,10 @@ const dashboardRenderer = {
         dom.pitch.innerHTML = positionOrder.map(position => {
             const group = grouped[position];
             if (!group.length) return '';
+            const positionClass = position.toLowerCase();
             return `
-                <div class="position-label">${position}</div>
-                <div class="formation-line">${group.map(player => playerRenderer.card(player)).join('')}</div>`;
+                <div class="position-label position-${positionClass}">${position}</div>
+                <div class="formation-line formation-${positionClass}">${group.map(player => playerRenderer.card(player)).join('')}</div>`;
         }).join('');
         dom.pitch.classList.remove('fade-in');
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
