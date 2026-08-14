@@ -190,9 +190,9 @@ def add_rolling_history(
     history = prepared[HISTORY_FEATURES].apply(pd.to_numeric, errors="coerce")
     prepared[HISTORY_FEATURES] = history.astype(float)
     shifted = history.groupby(group_keys, sort=False).shift(shift)
-    rolling = shifted.groupby(group_keys, sort=False).rolling(
-        window, min_periods=1
-    ).mean()
+    rolling = (
+        shifted.groupby(group_keys, sort=False).rolling(window, min_periods=1).mean()
+    )
     rolling.index = rolling.index.droplevel([0, 1])
 
     # A double gameweek has two target rows but both forecasts are made before

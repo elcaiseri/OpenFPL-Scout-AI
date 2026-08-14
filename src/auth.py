@@ -12,9 +12,7 @@ security = HTTPBearer()
 # precedence because python-dotenv does not override them by default.
 load_dotenv()
 VALID_API_KEYS = {
-    key.strip()
-    for key in os.getenv("VALID_API_KEYS", "").split(",")
-    if key.strip()
+    key.strip() for key in os.getenv("VALID_API_KEYS", "").split(",") if key.strip()
 }
 
 

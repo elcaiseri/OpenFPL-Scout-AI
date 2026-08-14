@@ -9,9 +9,7 @@ class ResponseModel(BaseModel):
     gameweek: int
     version: str = "5.2.0"
     source: str = "official-fpl"
-    credits: str = (
-        "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
-    )
+    credits: str = "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
 
 
 class OfficialFPLCollectionModel(BaseModel):

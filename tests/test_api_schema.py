@@ -39,20 +39,12 @@ class APISchemaTests(unittest.TestCase):
 
     def test_generated_catalog_reports_authentication(self):
         groups = _api_catalog()
-        endpoints = [
-            endpoint
-            for group in groups
-            for endpoint in group["endpoints"]
-        ]
+        endpoints = [endpoint for group in groups for endpoint in group["endpoints"]]
         public_players = next(
-            endpoint
-            for endpoint in endpoints
-            if endpoint["path"] == "/api/fpl/players"
+            endpoint for endpoint in endpoints if endpoint["path"] == "/api/fpl/players"
         )
         protected_scout = next(
-            endpoint
-            for endpoint in endpoints
-            if endpoint["path"] == "/api/gw/scout"
+            endpoint for endpoint in endpoints if endpoint["path"] == "/api/gw/scout"
         )
 
         self.assertEqual(public_players["authentication"], "public")

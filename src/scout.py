@@ -108,9 +108,7 @@ class FPLScout:
             self.minimum_successful_models,
         )
 
-    def _load_models(
-        self, model_loader: Callable[[str], Any]
-    ) -> List[ModelArtifact]:
+    def _load_models(self, model_loader: Callable[[str], Any]) -> List[ModelArtifact]:
         model_config = self.config.get("models")
         if not isinstance(model_config, Mapping) or not model_config:
             raise ValueError("At least one model must be configured")
@@ -207,9 +205,9 @@ class FPLScout:
         if missing_count:
             missing_teams = sorted(
                 str(team)
-                for team in result.loc[
-                    result["opponent_team_name"].isna(), "team_name"
-                ].dropna().unique()
+                for team in result.loc[result["opponent_team_name"].isna(), "team_name"]
+                .dropna()
+                .unique()
             )
             logger.warning(
                 "Missing fixture context for %d players across teams: %s",
@@ -328,14 +326,10 @@ class FPLScout:
         logger.info("Loaded %d records", len(data))
         return self.predict_players(data, gameweek=gameweek)
 
-    def get_official_predictions(
-        self, gameweek: Optional[int] = None
-    ) -> pd.DataFrame:
+    def get_official_predictions(self, gameweek: Optional[int] = None) -> pd.DataFrame:
         """Generate predictions using only official FPL player and fixture data."""
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
-        logger.info(
-            "Loading official FPL history for gameweek %d", resolved_gameweek
-        )
+        logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         history = self.official_client.player_history(resolved_gameweek)
         logger.info("Loaded %d official FPL history rows", len(history))
         result = self.predict_players(history, gameweek=resolved_gameweek)

@@ -193,8 +193,7 @@ class OfficialFPLClient:
         """Map official player identities, availability, prices, and totals."""
         bootstrap = self.bootstrap()
         teams = {
-            int(team["id"]): _team_name(team["name"])
-            for team in bootstrap["teams"]
+            int(team["id"]): _team_name(team["name"]) for team in bootstrap["teams"]
         }
         positions = {
             int(position["id"]): position.get("singular_name")
@@ -211,9 +210,7 @@ class OfficialFPLClient:
                 continue
             if selectable_only and not selectable:
                 continue
-            players.append(
-                self._mapped_player(player, teams, positions, selectable)
-            )
+            players.append(self._mapped_player(player, teams, positions, selectable))
         return players
 
     def mapped_player(self, player_id: int) -> Dict[str, Any]:
@@ -246,9 +243,7 @@ class OfficialFPLClient:
                     "kickoff_time": fixture.get("kickoff_time"),
                     "started": bool(fixture.get("started")),
                     "finished": bool(fixture.get("finished")),
-                    "finished_provisional": bool(
-                        fixture.get("finished_provisional")
-                    ),
+                    "finished_provisional": bool(fixture.get("finished_provisional")),
                     "minutes": fixture.get("minutes"),
                     "provisional_start_time": bool(
                         fixture.get("provisional_start_time")
@@ -271,8 +266,7 @@ class OfficialFPLClient:
         """Map official current-season history and upcoming player fixtures."""
         bootstrap = self.bootstrap()
         teams = {
-            int(team["id"]): _team_name(team["name"])
-            for team in bootstrap["teams"]
+            int(team["id"]): _team_name(team["name"]) for team in bootstrap["teams"]
         }
         player = self.mapped_player(player_id)
         payload = self.player_summary(player_id)
@@ -350,9 +344,7 @@ class OfficialFPLClient:
             "can_select": selectable,
             "removed": bool(player.get("removed")),
             "news": player.get("news"),
-            "chance_of_playing_next_round": player.get(
-                "chance_of_playing_next_round"
-            ),
+            "chance_of_playing_next_round": player.get("chance_of_playing_next_round"),
             "price": OfficialFPLClient._api_cost(player.get("now_cost")),
             "selected_by_percent": OfficialFPLClient._api_number(
                 player.get("selected_by_percent")
@@ -406,8 +398,7 @@ class OfficialFPLClient:
         """Map official team names to their event fixture context."""
         bootstrap = self.bootstrap()
         team_names = {
-            int(team["id"]): _team_name(team["name"])
-            for team in bootstrap["teams"]
+            int(team["id"]): _team_name(team["name"]) for team in bootstrap["teams"]
         }
         matches = sorted(
             (
@@ -475,8 +466,7 @@ class OfficialFPLClient:
                 if player.get("can_select", not player.get("removed", False))
             ]
         teams = {
-            int(team["id"]): _team_name(team["name"])
-            for team in bootstrap["teams"]
+            int(team["id"]): _team_name(team["name"]) for team in bootstrap["teams"]
         }
 
         has_prior_event = any(
@@ -582,22 +572,17 @@ class OfficialFPLClient:
         history: Mapping[str, Any],
         teams: Mapping[int, str],
     ) -> Dict[str, Any]:
-        return (
-            OfficialFPLClient._common_player_values(player, teams)
-            | {
-                "gameweek": int(history["round"]),
-                "was_home": bool(history.get("was_home")),
-                "opponent_team_name": teams.get(int(history["opponent_team"])),
-                "now_cost": OfficialFPLClient._cost(history.get("value")),
-                "selected_by_percent": OfficialFPLClient._number(
-                    player.get("selected_by_percent")
-                ),
-                "total_points": OfficialFPLClient._number(
-                    history.get("total_points")
-                ),
-                **OfficialFPLClient._official_stats(history),
-            }
-        )
+        return OfficialFPLClient._common_player_values(player, teams) | {
+            "gameweek": int(history["round"]),
+            "was_home": bool(history.get("was_home")),
+            "opponent_team_name": teams.get(int(history["opponent_team"])),
+            "now_cost": OfficialFPLClient._cost(history.get("value")),
+            "selected_by_percent": OfficialFPLClient._number(
+                player.get("selected_by_percent")
+            ),
+            "total_points": OfficialFPLClient._number(history.get("total_points")),
+            **OfficialFPLClient._official_stats(history),
+        }
 
     @staticmethod
     def _common_player_values(
@@ -627,9 +612,7 @@ class OfficialFPLClient:
             "expected_goals_conceded": OfficialFPLClient._number(
                 values.get("expected_goals_conceded")
             ),
-            "goals_conceded": OfficialFPLClient._number(
-                values.get("goals_conceded")
-            ),
+            "goals_conceded": OfficialFPLClient._number(values.get("goals_conceded")),
             "clean_sheet": clean_sheets,
             "clearances_blocks_interceptions": OfficialFPLClient._number(
                 values.get("clearances_blocks_interceptions")

@@ -114,9 +114,7 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertTrue(np.allclose(first.expected_points, 2.6))
         self.assertEqual(first.attrs["gameweek"], 3)
         self.assertEqual(first.attrs["inference"]["failed_models"], {})
-        expected_columns = scout_config()["categorical_columns"] + [
-            "expected_points"
-        ]
+        expected_columns = scout_config()["categorical_columns"] + ["expected_points"]
         self.assertEqual(list(first.columns), expected_columns)
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))

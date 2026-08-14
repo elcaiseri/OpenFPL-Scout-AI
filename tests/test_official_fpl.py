@@ -202,9 +202,7 @@ class OfficialFPLClientTests(unittest.TestCase):
                 "team_a_difficulty": 3,
             },
         ]
-        session = FakeSession(
-            {"bootstrap-static/": bootstrap(), "fixtures/": fixtures}
-        )
+        session = FakeSession({"bootstrap-static/": bootstrap(), "fixtures/": fixtures})
         client = OfficialFPLClient(session=session)
 
         result = client.fixtures_for_gameweek(2)
