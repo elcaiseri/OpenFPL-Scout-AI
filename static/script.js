@@ -1,36 +1,32 @@
-/**
- * FPL Scout Team Application
- * Main JavaScript file for handling team data display and interactions
- */
+/** OpenFPL Scout — official-data prediction dashboard. */
 
-// Application Configuration
 const CONFIG = {
     defaultGameweek: 1,
-    apiEndpoints: {
-        gameweeks: '/api/gameweeks',
-        scout: '/api/scout'
+    cacheExpiry: 5 * 60 * 1000,
+    endpoints: {
+        scout: '/api/scout',
+        events: '/api/fpl/gameweeks',
+        players: '/api/fpl/players?limit=1000',
+        eventStatus: '/api/fpl/gameweeks/status',
+        fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
     }
 };
 
-// Application State
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
-    availableGameweeks: [],
+    events: [],
     currentData: null,
     isLoading: false,
-    cache: {}, // Cache for storing gameweek data
-    gameweeksCache: null, // Cache for available gameweeks list
-    gameweeksCacheTimestamp: null, // Timestamp for gameweeks cache
-    gameweeksCacheExpiry: 5 * 60 * 1000 // Official event state: 5 minutes
+    activeView: 'pitch',
+    dashboardCache: new Map(),
+    referenceCache: null,
+    referenceTimestamp: 0,
+    countdownTimer: null
 };
 
-// Utility Functions
 const utils = {
-    /**
-     * Escape untrusted player/API values before inserting template HTML.
-     */
     escapeHtml(value) {
-        return String(value)
+        return String(value ?? '')
             .replaceAll('&', '&amp;')
             .replaceAll('<', '&lt;')
             .replaceAll('>', '&gt;')
@@ -38,633 +34,598 @@ const utils = {
             .replaceAll("'", '&#039;');
     },
 
-    /**
-     * Debounce function to limit rapid function calls
-     */
-    debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
+    number(value, fallback = null) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    },
+
+    money(value) {
+        const number = this.number(value);
+        return number === null ? '—' : `£${number.toFixed(1)}m`;
+    },
+
+    percentage(value) {
+        const number = this.number(value);
+        return number === null ? '—' : `${number.toFixed(1)}%`;
+    },
+
+    positionCode(player) {
+        const value = player.position || player.element_type;
+        const positions = {
+            1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD',
+            Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Forward: 'FWD'
+        };
+        return positions[value] || '—';
+    },
+
+    statusInfo(status, canSelect = true) {
+        const states = {
+            a: ['Available', 'available'],
+            d: ['Doubtful', 'doubtful'],
+            i: ['Injured', 'unavailable'],
+            s: ['Suspended', 'unavailable'],
+            u: ['Unavailable', 'unavailable'],
+            n: ['Unavailable', 'unavailable']
+        };
+        if (!canSelect) return { label: 'Unavailable', className: 'unavailable' };
+        const [label, className] = states[String(status || 'a').toLowerCase()] || states.a;
+        return { label, className };
+    },
+
+    formatDate(value, options = {}) {
+        if (!value) return 'TBC';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'TBC';
+        return new Intl.DateTimeFormat('en-GB', options).format(date);
+    },
+
+    deadline(value) {
+        return this.formatDate(value, {
+            weekday: 'short', day: 'numeric', month: 'short',
+            hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+        });
+    },
+
+    kickoff(value) {
+        return this.formatDate(value, {
+            weekday: 'short', hour: '2-digit', minute: '2-digit'
+        });
+    },
+
+    countdown(value) {
+        if (!value) return 'Deadline TBC';
+        const distance = new Date(value).getTime() - Date.now();
+        if (!Number.isFinite(distance)) return 'Deadline TBC';
+        if (distance <= 0) return 'Deadline passed';
+
+        const totalMinutes = Math.floor(distance / 60000);
+        const days = Math.floor(totalMinutes / 1440);
+        const hours = Math.floor((totalMinutes % 1440) / 60);
+        const minutes = totalMinutes % 60;
+        if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        return `${minutes}m`;
+    },
+
+    debounce(callback, wait) {
+        let timer;
+        return (...args) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => callback(...args), wait);
         };
     },
 
-    /**
-     * Safely parse JSON with error handling
-     */
-    async safeJsonParse(response) {
+    async fetchJson(url) {
+        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        let payload = {};
         try {
-            return await response.json();
-        } catch (error) {
-            throw new Error('Invalid JSON response');
+            payload = await response.json();
+        } catch (_error) {
+            throw new Error(`Invalid response from ${url}`);
         }
+        if (!response.ok) {
+            throw new Error(payload.detail || `Request failed (${response.status})`);
+        }
+        return payload;
     },
 
-    /**
-     * Clear application caches
-     */
+    eventLabel(event) {
+        if (!event) return 'Awaiting event';
+        if (event.finished) return 'Final';
+        if (event.is_current) return 'Live event';
+        if (event.is_next) return 'Next deadline';
+        if (new Date(event.deadline_time).getTime() < Date.now()) return 'Processing';
+        return 'Upcoming';
+    },
+
     clearCache() {
-        appState.cache = {};
-        appState.gameweeksCache = null;
-        appState.gameweeksCacheTimestamp = null;
-        console.log('Application cache cleared');
-    },
+        appState.dashboardCache.clear();
+        appState.referenceCache = null;
+        appState.referenceTimestamp = 0;
+    }
+};
 
-    /**
-     * Get cache status information
-     */
-    getCacheStatus() {
-        const now = Date.now();
-        const gameweeksCacheAge = appState.gameweeksCacheTimestamp ?
-            Math.round((now - appState.gameweeksCacheTimestamp) / 1000) : null;
-
-        return {
-            gameweekDataCached: Object.keys(appState.cache).length,
-            gameweeksCached: Boolean(appState.gameweeksCache),
-            gameweeksCacheAge: gameweeksCacheAge,
-            gameweeksCacheExpired: gameweeksCacheAge ?
-                gameweeksCacheAge > (appState.gameweeksCacheExpiry / 1000) : true
+const dom = new Proxy({}, {
+    get(_target, property) {
+        const ids = {
+            pitch: 'pitch', gameweekInfo: 'gameweek-info', gameweekSelect: 'gameweek-select',
+            refreshButton: 'refresh-button', sourceState: 'source-state',
+            deadlineCountdown: 'deadline-countdown', deadlineDate: 'deadline-date',
+            eventState: 'event-state', pulseDeadline: 'pulse-deadline',
+            pulseDeadlineSub: 'pulse-deadline-sub', fixtureCount: 'fixture-count',
+            dataState: 'data-state', dataStateSub: 'data-state-sub', lastSync: 'last-sync',
+            signalState: 'signal-state', totalPoints: 'total-points', captainName: 'captain-name',
+            captainPoints: 'captain-points', squadValue: 'squad-value',
+            differentialCount: 'differential-count', fixtureRail: 'fixture-rail',
+            squadSubtitle: 'squad-subtitle', formationChip: 'formation-chip',
+            pitchView: 'pitch-view', tableView: 'table-view', tableBody: 'squad-table-body',
+            credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
+            dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
+            dialogTeam: 'dialog-team', dialogPoints: 'dialog-points',
+            dialogFixture: 'dialog-fixture', dialogVenue: 'dialog-venue',
+            dialogPrice: 'dialog-price', dialogOwnership: 'dialog-ownership',
+            dialogTotalPoints: 'dialog-total-points', dialogRole: 'dialog-role',
+            dialogNews: 'dialog-news'
         };
+        return document.getElementById(ids[property] || property);
+    }
+});
+
+const dataLoader = {
+    async loadReferenceData(force = false) {
+        const fresh = appState.referenceCache
+            && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
+        if (fresh && !force) return appState.referenceCache;
+
+        const [eventsPayload, playersPayload, statusPayload] = await Promise.all([
+            utils.fetchJson(CONFIG.endpoints.events),
+            utils.fetchJson(CONFIG.endpoints.players),
+            utils.fetchJson(CONFIG.endpoints.eventStatus)
+        ]);
+        const reference = {
+            events: eventsPayload.results || [],
+            players: playersPayload.results || [],
+            eventStatus: statusPayload.data || {}
+        };
+        appState.referenceCache = reference;
+        appState.referenceTimestamp = Date.now();
+        return reference;
     },
 
-    /**
-     * Format player data for display
-     */
-    formatPlayerData(player) {
+    async loadDashboard(gameweek, force = false) {
+        if (appState.dashboardCache.has(gameweek) && !force) {
+            return appState.dashboardCache.get(gameweek);
+        }
+
+        const [scout, reference, fixturePayload] = await Promise.all([
+            utils.fetchJson(`${CONFIG.endpoints.scout}?gameweek=${gameweek}`),
+            this.loadReferenceData(force),
+            utils.fetchJson(CONFIG.endpoints.fixtures(gameweek))
+        ]);
+
+        const byId = new Map(reference.players.map(player => [Number(player.id), player]));
+        const byIdentity = new Map(reference.players.map(player => [
+            `${player.web_name}|${player.team_name}`.toLowerCase(), player
+        ]));
+
+        const players = (scout.scout_team || []).map(player => {
+            const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
+            const official = byId.get(Number(player.id)) || byIdentity.get(identity) || {};
+            const fixture = this.playerFixture(official, fixturePayload.results || []);
+            return {
+                ...official,
+                ...player,
+                position: official.position || player.element_type,
+                official_element_type: official.element_type,
+                fixture_id: fixture?.id || null,
+                difficulty: fixture?.difficulty || null,
+                kickoff_time: fixture?.kickoff_time || null
+            };
+        });
+
+        const dashboard = {
+            ...scout,
+            scout_team: players,
+            event: reference.events.find(event => Number(event.id) === Number(gameweek)) || null,
+            events: reference.events,
+            eventStatus: reference.eventStatus,
+            fixtures: fixturePayload.results || [],
+            syncedAt: new Date()
+        };
+        appState.dashboardCache.set(gameweek, dashboard);
+        return dashboard;
+    },
+
+    playerFixture(player, fixtures) {
+        const teamId = Number(player.team_id);
+        const fixture = fixtures.find(item =>
+            Number(item.home_team?.id) === teamId || Number(item.away_team?.id) === teamId
+        );
+        if (!fixture) return null;
+        const home = Number(fixture.home_team?.id) === teamId;
+        return {
+            id: fixture.id,
+            kickoff_time: fixture.kickoff_time,
+            difficulty: home ? fixture.home_team?.difficulty : fixture.away_team?.difficulty
+        };
+    }
+};
+
+const playerRenderer = {
+    format(player) {
         return {
             ...player,
-            expected_points: parseFloat(player.expected_points) || 0,
+            expected_points: utils.number(player.expected_points, 0),
             web_name: player.web_name || 'Unknown',
             team_name: player.team_name || 'Unknown',
-            opponent_team_name: player.opponent_team_name || 'Unknown',
-            element_type: player.element_type || 'Unknown',
-            role: player.role || null,
-            was_home: Boolean(player.was_home)
+            opponent_team_name: player.opponent_team_name || 'TBC',
+            was_home: Boolean(player.was_home),
+            role: player.role || '',
+            position_code: utils.positionCode(player),
+            status_info: utils.statusInfo(player.status, player.can_select !== false)
         };
-    }
-};
+    },
 
-// DOM Elements Cache
-const domElements = {
-    get pitch() { return document.getElementById('pitch'); },
-    get gameweekInfo() { return document.getElementById('gameweek-info'); },
-    get gameweekSelect() { return document.getElementById('gameweek-select'); },
-    get totalPoints() { return document.getElementById('total-points'); },
-    get playerCount() { return document.getElementById('player-count'); },
-    get captainName() { return document.getElementById('captain-name'); },
-    get credits() { return document.getElementById('credits'); },
-    get container() { return document.querySelector('.container'); },
-    get playerDialog() { return document.getElementById('player-dialog'); },
-    get dialogClose() { return document.getElementById('dialog-close'); },
-    get dialogPlayerName() { return document.getElementById('dialog-player-name'); },
-    get dialogTeam() { return document.getElementById('dialog-team'); },
-    get dialogPoints() { return document.getElementById('dialog-points'); },
-    get dialogPosition() { return document.getElementById('dialog-position'); },
-    get dialogFixture() { return document.getElementById('dialog-fixture'); },
-    get dialogVenue() { return document.getElementById('dialog-venue'); },
-    get dialogRole() { return document.getElementById('dialog-role'); }
-};
+    dataAttribute(player) {
+        return utils.escapeHtml(JSON.stringify(this.format(player)));
+    },
 
-// Player Card Creation
-const playerCardRenderer = {
-    /**
-     * Create HTML for a player card
-     */
-    createPlayerCard(player) {
-        const formattedPlayer = utils.formatPlayerData(player);
-        const roleClass = this.getRoleClass(formattedPlayer.role);
-        const roleBadge = this.createRoleBadge(formattedPlayer.role);
-        const homeIndicator = formattedPlayer.was_home ? 'home' : 'away';
-        const playerJson = utils.escapeHtml(JSON.stringify(formattedPlayer));
-        const playerName = utils.escapeHtml(formattedPlayer.web_name);
-        const teamName = utils.escapeHtml(formattedPlayer.team_name);
-        const opponentName = utils.escapeHtml(formattedPlayer.opponent_team_name);
+    roleBadge(player) {
+        if (player.role === 'captain') return '<span class="role-badge captain" aria-label="Captain">C</span>';
+        if (player.role === 'vice') return '<span class="role-badge vice" aria-label="Vice captain">VC</span>';
+        return '';
+    },
+
+    card(rawPlayer) {
+        const player = this.format(rawPlayer);
+        const name = utils.escapeHtml(player.web_name);
+        const team = utils.escapeHtml(player.team_name);
+        const opponent = utils.escapeHtml(player.opponent_team_name);
+        const roleClass = player.role ? ` ${utils.escapeHtml(player.role)}` : '';
+        const availability = player.status_info.className !== 'available'
+            ? `<span class="card-alert ${player.status_info.className}" title="${player.status_info.label}">!</span>`
+            : '';
 
         return `
-            <div class="player-card ${roleClass}"
-                 data-player="${playerJson}"
-                 tabindex="0"
-                 role="button"
-                 aria-label="Player: ${playerName}, Expected points: ${formattedPlayer.expected_points.toFixed(2)}">
-                ${roleBadge}
-                <div class="player-name">${playerName}</div>
-                <div class="team-name">${teamName}</div>
+            <button class="player-card${roleClass}" type="button"
+                data-player="${this.dataAttribute(player)}"
+                aria-label="${name}, ${player.expected_points.toFixed(2)} expected points">
+                ${this.roleBadge(player)}${availability}
+                <div class="card-position">${player.position_code}</div>
+                <div class="player-name">${name}</div>
+                <div class="team-name">${team}</div>
                 <div class="fixture">
-                    vs ${opponentName}
-                    <span class="home-indicator ${homeIndicator}"
-                          aria-label="${formattedPlayer.was_home ? 'Home' : 'Away'} game"></span>
+                    <b>${player.was_home ? 'H' : 'A'}</b>
+                    <span>${opponent}</span>
                 </div>
-                <div class="expected-points">${formattedPlayer.expected_points.toFixed(2)}</div>
-            </div>
-        `;
+                <div class="card-bottom">
+                    <span class="card-price">${utils.money(player.price)}</span>
+                    <span class="expected-points">${player.expected_points.toFixed(2)}</span>
+                </div>
+            </button>`;
     },
 
-    /**
-     * Get CSS class for player role
-     */
-    getRoleClass(role) {
-        switch (role) {
-            case 'captain': return 'captain';
-            case 'vice': return 'vice';
-            default: return '';
-        }
-    },
-
-    /**
-     * Create role badge HTML
-     */
-    createRoleBadge(role) {
-        switch (role) {
-            case 'captain':
-                return '<div class="role-badge captain" aria-label="Captain">C</div>';
-            case 'vice':
-                return '<div class="role-badge vice" aria-label="Vice Captain">VC</div>';
-            default:
-                return '';
-        }
+    tableRow(rawPlayer, index) {
+        const player = this.format(rawPlayer);
+        const status = player.status_info;
+        const role = player.role
+            ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
+            : '';
+        return `
+            <tr class="squad-row" tabindex="0" data-player="${this.dataAttribute(player)}">
+                <td>
+                    <div class="table-player">
+                        <span class="table-rank">${String(index + 1).padStart(2, '0')}</span>
+                        <span><strong>${utils.escapeHtml(player.web_name)} ${role}</strong><small>${utils.escapeHtml(player.team_name)}</small></span>
+                    </div>
+                </td>
+                <td><span class="position-pill">${player.position_code}</span></td>
+                <td><strong>${player.was_home ? 'H' : 'A'}</strong> · ${utils.escapeHtml(player.opponent_team_name)}</td>
+                <td>${utils.money(player.price)}</td>
+                <td>${utils.percentage(player.selected_by_percent)}</td>
+                <td><span class="status-pill ${status.className}"><i></i>${status.label}</span></td>
+                <td><strong class="table-xpts">${player.expected_points.toFixed(2)}</strong></td>
+            </tr>`;
     }
 };
 
-// Team Rendering
-const teamRenderer = {
-    /**
-     * Render the complete team formation
-     */
-    renderTeam(data) {
-        if (!data || !data.scout_team || !Array.isArray(data.scout_team)) {
-            throw new Error('Invalid team data structure');
+const dashboardRenderer = {
+    render(data) {
+        this.header(data);
+        this.pulse(data);
+        this.statistics(data.scout_team);
+        this.fixtures(data.fixtures);
+        this.squad(data.scout_team);
+        dom.signalState.textContent = 'Signals ready';
+        dom.sourceState.textContent = 'Official sync';
+        if (data.credits) dom.credits.textContent = data.credits;
+    },
+
+    header(data) {
+        const event = data.event;
+        dom.gameweekInfo.textContent = `Gameweek ${data.gameweek}`;
+        dom.deadlineDate.textContent = event?.deadline_time
+            ? utils.deadline(event.deadline_time)
+            : 'Official deadline TBC';
+        dom.eventState.textContent = utils.eventLabel(event);
+        this.startCountdown(event?.deadline_time);
+    },
+
+    startCountdown(deadline) {
+        clearInterval(appState.countdownTimer);
+        const update = () => { dom.deadlineCountdown.textContent = utils.countdown(deadline); };
+        update();
+        appState.countdownTimer = setInterval(update, 30000);
+    },
+
+    pulse(data) {
+        const event = data.event;
+        dom.pulseDeadline.textContent = event?.deadline_time
+            ? utils.formatDate(event.deadline_time, { day: '2-digit', month: 'short' })
+            : 'TBC';
+        dom.pulseDeadlineSub.textContent = event?.deadline_time
+            ? utils.formatDate(event.deadline_time, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+            : 'Official event time';
+        dom.fixtureCount.textContent = String(data.fixtures.length);
+        dom.dataState.textContent = event?.data_checked ? 'Checked' : utils.eventLabel(event);
+        dom.dataStateSub.textContent = event?.finished
+            ? 'Official scores finalized'
+            : event?.data_checked ? 'Official data verified' : 'Live changes possible';
+        dom.lastSync.textContent = utils.formatDate(data.syncedAt, {
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+    },
+
+    statistics(players) {
+        const total = players.reduce((sum, player) => sum + utils.number(player.expected_points, 0), 0);
+        const value = players.reduce((sum, player) => sum + utils.number(player.price, 0), 0);
+        const captain = players.find(player => player.role === 'captain');
+        const differentialCount = players.filter(player => {
+            const ownership = utils.number(player.selected_by_percent);
+            return ownership !== null && ownership < 10;
+        }).length;
+
+        dom.totalPoints.textContent = total.toFixed(2);
+        dom.captainName.textContent = captain?.web_name || '—';
+        dom.captainPoints.textContent = captain
+            ? `${utils.number(captain.expected_points, 0).toFixed(2)} xP`
+            : '— xP';
+        dom.squadValue.textContent = value ? `£${value.toFixed(1)}m` : '—';
+        dom.differentialCount.textContent = String(differentialCount);
+    },
+
+    fixtures(fixtures) {
+        if (!fixtures.length) {
+            dom.fixtureRail.innerHTML = '<div class="rail-loading">No official fixtures published for this event.</div>';
+            return;
         }
-
-        const positions = this.groupPlayersByPosition(data.scout_team);
-        const pitchHTML = this.createFormationHTML(positions);
-
-        domElements.pitch.innerHTML = pitchHTML;
-        domElements.pitch.classList.add('fade-in');
-    },
-
-    /**
-     * Group players by their positions
-     */
-    groupPlayersByPosition(players) {
-        const positions = {
-            'Goalkeeper': [],
-            'Defender': [],
-            'Midfielder': [],
-            'Forward': []
-        };
-
-        players.forEach(player => {
-            const formattedPlayer = utils.formatPlayerData(player);
-            if (positions[formattedPlayer.element_type]) {
-                positions[formattedPlayer.element_type].push(formattedPlayer);
-            }
-        });
-
-        // Sort each position by expected points (descending)
-        Object.keys(positions).forEach(position => {
-            positions[position].sort((a, b) => b.expected_points - a.expected_points);
-        });
-
-        return positions;
-    },
-
-    /**
-     * Create HTML for the formation layout
-     */
-    createFormationHTML(positions) {
-        const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
-
-        return positionOrder.map(position => {
-            const players = positions[position];
-            if (!players || players.length === 0) return '';
-
-            const positionClass = position.toLowerCase();
-            const positionName = this.getPluralPositionName(position);
-
+        dom.fixtureRail.innerHTML = fixtures.map(fixture => {
+            const home = fixture.home_team || {};
+            const away = fixture.away_team || {};
+            const hasScore = fixture.started || fixture.finished;
             return `
-                <div class="position-label ${positionClass}">${positionName}</div>
-                <div class="formation-line">
-                    ${players.map(player => playerCardRenderer.createPlayerCard(player)).join('')}
-                </div>
-            `;
+                <article class="fixture-card">
+                    <div class="fixture-card-top">
+                        <span>${utils.kickoff(fixture.kickoff_time)}</span>
+                        <span>${fixture.finished ? 'FT' : fixture.started ? `${fixture.minutes || 0}′` : `GW${fixture.gameweek}`}</span>
+                    </div>
+                    <div class="fixture-team">
+                        <span><strong>${utils.escapeHtml(home.short_name || home.name)}</strong><small>${utils.escapeHtml(home.name)}</small></span>
+                        <span class="fdr fdr-${home.difficulty || 0}">FDR ${home.difficulty || '—'}</span>
+                    </div>
+                    <div class="fixture-score">${hasScore ? `${home.score ?? 0} — ${away.score ?? 0}` : 'VS'}</div>
+                    <div class="fixture-team">
+                        <span><strong>${utils.escapeHtml(away.short_name || away.name)}</strong><small>${utils.escapeHtml(away.name)}</small></span>
+                        <span class="fdr fdr-${away.difficulty || 0}">FDR ${away.difficulty || '—'}</span>
+                    </div>
+                </article>`;
         }).join('');
     },
 
-    /**
-     * Get plural form of position names
-     */
-    getPluralPositionName(position) {
-        const pluralMap = {
-            'Goalkeeper': 'Goalkeepers',
-            'Defender': 'Defenders',
-            'Midfielder': 'Midfielders',
-            'Forward': 'Forwards'
-        };
-        return pluralMap[position] || position;
-    }
-};
+    squad(players) {
+        if (!Array.isArray(players) || !players.length) {
+            throw new Error('The AI engine returned no squad players');
+        }
+        const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
+        const grouped = Object.fromEntries(positionOrder.map(position => [position, []]));
+        players.forEach(player => {
+            const position = player.position || player.element_type;
+            if (grouped[position]) grouped[position].push(player);
+        });
+        Object.values(grouped).forEach(group => group.sort(
+            (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
+        ));
 
-// Statistics Management
-const statisticsManager = {
-    /**
-     * Update team statistics display
-     */
-    updateStatistics(data) {
-        if (!data || !data.scout_team) return;
+        dom.pitch.innerHTML = positionOrder.map(position => {
+            const group = grouped[position];
+            if (!group.length) return '';
+            return `
+                <div class="position-label">${position}</div>
+                <div class="formation-line">${group.map(player => playerRenderer.card(player)).join('')}</div>`;
+        }).join('');
+        dom.pitch.classList.remove('fade-in');
+        requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
 
-        const stats = this.calculateStatistics(data.scout_team);
-        this.displayStatistics(stats);
+        const ranked = [...players].sort(
+            (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
+        );
+        dom.tableBody.innerHTML = ranked.map((player, index) =>
+            playerRenderer.tableRow(player, index)
+        ).join('');
+        dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
+        dom.squadSubtitle.textContent = `${players.length} official-player identities · tap any pick for its dossier`;
     },
 
-    /**
-     * Calculate team statistics
-     */
-    calculateStatistics(players) {
-        const totalPoints = players.reduce((sum, player) => {
-            return sum + (parseFloat(player.expected_points) || 0);
-        }, 0);
-
-        const captain = players.find(p => p.role === "captain");
-        const vice = players.find(p => p.role === "vice");
-
-        return {
-            totalPoints: totalPoints.toFixed(2),
-            playerCount: players.length,
-            captainName: captain ? captain.web_name : '—',
-            captainPoints: captain ? parseFloat(captain.expected_points).toFixed(2) : '-',
-            vicePoints: vice ? parseFloat(vice.expected_points).toFixed(2) : '-'
-        };
-    },
-
-    /**
-     * Display calculated statistics
-     */
-    displayStatistics(stats) {
-        if (domElements.totalPoints) {
-            domElements.totalPoints.textContent = stats.totalPoints;
-        }
-        if (domElements.playerCount) {
-            domElements.playerCount.textContent = stats.playerCount;
-        }
-        if (domElements.captainName) {
-            domElements.captainName.textContent = stats.captainName;
-        }
-    }
-};
-
-// UI State Management
-const uiStateManager = {
-    /**
-     * Show loading state
-     */
-    showLoading(message = 'Loading team data...') {
-        domElements.pitch.innerHTML = `
+    loading(message = 'Running local AI inference…') {
+        dom.pitch.innerHTML = `
             <div class="loading" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
                 ${utils.escapeHtml(message)}
-            </div>
-        `;
+            </div>`;
+        dom.fixtureRail.innerHTML = '<div class="rail-loading">Syncing official fixtures…</div>';
+        dom.signalState.textContent = 'Computing';
+        dom.sourceState.textContent = 'Syncing';
     },
 
-    /**
-     * Show error state
-     */
-    showError(message) {
-        domElements.pitch.innerHTML = `<div class="error" role="alert">${message}</div>`;
-    },
-
-    /**
-     * Update header information
-     */
-    updateHeaderAndCredits(data) {
-        if (domElements.gameweekInfo && data.gameweek && data.version) {
-            domElements.gameweekInfo.textContent = `Gameweek ${data.gameweek} • ${data.version}`;
-        }
-        if (domElements.credits && data.credits) {
-            domElements.credits.textContent = data.credits;
-        }
-    },
-
-    /**
-     * Set loading state for buttons
-     */
-    setButtonLoading(button, isLoading, loadingText = 'Loading...', originalText = '') {
-        if (isLoading) {
-            button.disabled = true;
-            button.dataset.originalText = button.textContent;
-            button.textContent = loadingText;
-        } else {
-            button.disabled = false;
-            button.textContent = originalText || button.dataset.originalText || 'Complete';
-        }
+    error(message) {
+        dom.pitch.innerHTML = `
+            <div class="error" role="alert">
+                <strong>Dashboard unavailable</strong>
+                <span>${utils.escapeHtml(message)}</span>
+                <small>Official FPL may be updating. Refresh in a moment.</small>
+            </div>`;
+        dom.fixtureRail.innerHTML = '<div class="rail-loading error-inline">Fixture sync paused.</div>';
+        dom.signalState.textContent = 'Retry needed';
+        dom.sourceState.textContent = 'Sync paused';
     }
 };
 
-// Data Loading
-const dataLoader = {
-    /**
-     * Generate a squad from official FPL data.
-     */
-    async loadDataFromFile(gameweek) {
-        // Check if data is already in cache
-        if (appState.cache[gameweek]) {
-            console.log(`Using cached data for Gameweek ${gameweek}`);
-            return appState.cache[gameweek];
-        }
-
-        const endpoint = `${CONFIG.apiEndpoints.scout}?gameweek=${gameweek}`;
-
-        try {
-            uiStateManager.showLoading(`Loading Gameweek ${gameweek} data...`);
-
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-                const errorPayload = await utils.safeJsonParse(response).catch(() => ({}));
-                throw new Error(errorPayload.detail || `Official FPL request failed: ${response.status}`);
-            }
-
-            const data = await utils.safeJsonParse(response);
-
-            // Validate data structure
-            if (!data.scout_team || !Array.isArray(data.scout_team)) {
-                throw new Error('Invalid data format: missing scout_team array');
-            }
-
-            // Store in cache
-            appState.cache[gameweek] = data;
-
-            return data;
-
-        } catch (error) {
-            console.error('Error loading official FPL scout data:', error);
-            throw error;
-        }
-    },
-
-    /**
-     * Discover available gameweeks using API endpoint
-     */
-    async discoverGameweeks() {
-        // Check if we have cached gameweeks data and it's still valid
-        const now = Date.now();
-        if (appState.gameweeksCache &&
-            appState.gameweeksCacheTimestamp &&
-            (now - appState.gameweeksCacheTimestamp) < appState.gameweeksCacheExpiry) {
-            console.log('Using cached gameweeks list');
-            return appState.gameweeksCache;
-        }
-
-        try {
-            const response = await fetch(CONFIG.apiEndpoints.gameweeks);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch gameweeks: ${response.status} ${response.statusText}`);
-            }
-
-            const data = await utils.safeJsonParse(response);
-
-            if (!data.gameweeks || !Array.isArray(data.gameweeks)) {
-                throw new Error('Invalid gameweeks data format');
-            }
-
-            // Cache the result
-            appState.gameweeksCache = data.gameweeks;
-            appState.gameweeksCacheTimestamp = now;
-
-            console.log(`Discovered ${data.total} gameweeks:`, data.gameweeks);
-            return data.gameweeks;
-
-        } catch (error) {
-            console.error('Official FPL gameweek discovery failed:', error);
-            throw error;
-        }
-    }
-};
-
-// Gameweek Management
 const gameweekManager = {
-    /**
-     * Populate gameweek selector dropdown
-     */
-    populateGameweekSelector(gameweeks) {
-        const selector = domElements.gameweekSelect;
-        if (!selector) return;
-
-        selector.innerHTML = '';
-
-        if (gameweeks.length === 0) {
-            selector.innerHTML = '<option value="">No gameweeks available</option>';
-            return;
-        }
-
-        gameweeks.forEach(gw => {
+    populate(events) {
+        dom.gameweekSelect.innerHTML = '';
+        events.forEach(event => {
             const option = document.createElement('option');
-            option.value = gw;
-            option.textContent = `Gameweek ${gw}`;
-            if (gw === appState.currentGameweek) {
-                option.selected = true;
-            }
-            selector.appendChild(option);
+            option.value = event.id;
+            const state = event.finished ? 'Final' : event.is_current ? 'Live' : event.is_next ? 'Next' : 'Upcoming';
+            option.textContent = `GW ${event.id} · ${state}`;
+            option.selected = Number(event.id) === Number(appState.currentGameweek);
+            dom.gameweekSelect.appendChild(option);
         });
     },
 
-    /**
-     * Handle gameweek selection change
-     */
-    async handleGameweekChange(gameweek) {
-        const newGameweek = parseInt(gameweek);
-        if (!newGameweek || newGameweek === appState.currentGameweek || appState.isLoading) {
-            return;
-        }
-
-        appState.currentGameweek = newGameweek;
-        await this.loadAndDisplayData(newGameweek);
-    },
-
-    /**
-     * Load and display data for specific gameweek
-     */
-    async loadAndDisplayData(gameweek) {
+    async load(gameweek, force = false) {
         if (appState.isLoading) return;
-
+        appState.isLoading = true;
+        dom.gameweekSelect.disabled = true;
+        dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
-            appState.isLoading = true;
-            const data = await dataLoader.loadDataFromFile(gameweek);
-
+            const data = await dataLoader.loadDashboard(gameweek, force);
             appState.currentData = data;
-            teamRenderer.renderTeam(data);
-            statisticsManager.updateStatistics(data);
-            uiStateManager.updateHeaderAndCredits(data);
-
+            appState.currentGameweek = Number(gameweek);
+            dashboardRenderer.render(data);
         } catch (error) {
-            const safeError = utils.escapeHtml(error.message);
-            const errorMessage = `
-                <strong>Error loading Gameweek ${gameweek} data</strong><br>
-                ${safeError}<br><br>
-                <small>Official FPL may be updating. Try again in a moment.</small>
-            `;
-            uiStateManager.showError(errorMessage);
+            console.error('Dashboard load failed:', error);
+            dashboardRenderer.error(error.message);
         } finally {
             appState.isLoading = false;
+            dom.gameweekSelect.disabled = false;
         }
     }
 };
 
-// Event Handlers
-const eventHandlers = {
-    /**
-     * Handle player card clicks/interactions
-     */
-    handlePlayerCardClick(event) {
-        const playerCard = event.target.closest('.player-card');
-        if (!playerCard) return;
-
+const interactions = {
+    showPlayer(target) {
+        let player;
         try {
-            const playerData = JSON.parse(playerCard.dataset.player);
-            this.showPlayerInfo(playerData);
+            player = JSON.parse(target.dataset.player);
         } catch (error) {
-            console.error('Error parsing player data:', error);
+            console.error('Could not parse player dossier:', error);
+            return;
+        }
+        const status = utils.statusInfo(player.status, player.can_select !== false);
+        const role = player.role === 'captain' ? 'Captain'
+            : player.role === 'vice' ? 'Vice captain' : 'Squad';
+
+        dom.dialogPositionBadge.textContent = utils.positionCode(player);
+        dom.dialogPlayerName.textContent = player.web_name;
+        dom.dialogTeam.textContent = `${player.team_name} · ${status.label}`;
+        dom.dialogPoints.textContent = utils.number(player.expected_points, 0).toFixed(2);
+        dom.dialogFixture.textContent = `${player.was_home ? 'H' : 'A'} · ${player.opponent_team_name}`;
+        dom.dialogVenue.textContent = player.was_home ? 'Home' : 'Away';
+        dom.dialogPrice.textContent = utils.money(player.price);
+        dom.dialogOwnership.textContent = utils.percentage(player.selected_by_percent);
+        dom.dialogTotalPoints.textContent = player.total_points ?? '—';
+        dom.dialogRole.textContent = role;
+        dom.dialogNews.hidden = !player.news;
+        dom.dialogNews.textContent = player.news || '';
+        if (typeof dom.playerDialog.showModal === 'function') dom.playerDialog.showModal();
+    },
+
+    switchView(view) {
+        appState.activeView = view;
+        const pitchActive = view === 'pitch';
+        dom.pitchView.hidden = !pitchActive;
+        dom.tableView.hidden = pitchActive;
+        dom.pitchView.classList.toggle('active', pitchActive);
+        dom.tableView.classList.toggle('active', !pitchActive);
+        document.querySelectorAll('.view-button').forEach(button => {
+            const active = button.dataset.view === view;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+    },
+
+    async refresh() {
+        if (appState.isLoading) return;
+        dom.refreshButton.classList.add('refreshing');
+        dom.refreshButton.disabled = true;
+        appState.dashboardCache.delete(appState.currentGameweek);
+        appState.referenceCache = null;
+        try {
+            await gameweekManager.load(appState.currentGameweek, true);
+        } finally {
+            dom.refreshButton.classList.remove('refreshing');
+            dom.refreshButton.disabled = false;
         }
     },
 
-    /**
-     * Handle keyboard navigation for player cards
-     */
-    handlePlayerCardKeydown(event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            this.handlePlayerCardClick(event);
-        }
-    },
-
-    /**
-     * Show player information in the projection dialog.
-     */
-    showPlayerInfo(playerData) {
-        const dialog = domElements.playerDialog;
-        const role = playerData.role
-            ? playerData.role.charAt(0).toUpperCase() + playerData.role.slice(1)
-            : 'Squad';
-
-        domElements.dialogPlayerName.textContent = playerData.web_name;
-        domElements.dialogTeam.textContent = playerData.team_name;
-        domElements.dialogPoints.textContent = playerData.expected_points.toFixed(2);
-        domElements.dialogPosition.textContent = playerData.element_type;
-        domElements.dialogFixture.textContent = `vs ${playerData.opponent_team_name}`;
-        domElements.dialogVenue.textContent = playerData.was_home ? 'Home' : 'Away';
-        domElements.dialogRole.textContent = role;
-
-        if (typeof dialog.showModal === 'function') {
-            dialog.showModal();
-        }
-    },
-
-    /**
-     * Handle gameweek selector change
-     */
-    handleGameweekChange: utils.debounce(async (event) => {
-        await gameweekManager.handleGameweekChange(event.target.value);
-    }, 300)
-};
-
-// Event Listeners Setup
-const eventListeners = {
-    /**
-     * Initialize all event listeners
-     */
     init() {
-        // Player card interactions
-        document.addEventListener('click', eventHandlers.handlePlayerCardClick);
-        document.addEventListener('keydown', eventHandlers.handlePlayerCardKeydown);
+        dom.gameweekSelect.addEventListener('change', utils.debounce(event => {
+            const gameweek = Number(event.target.value);
+            if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
+        }, 180));
+        dom.refreshButton.addEventListener('click', () => this.refresh());
+        document.querySelectorAll('.view-button').forEach(button => {
+            button.addEventListener('click', () => this.switchView(button.dataset.view));
+        });
+        document.addEventListener('click', event => {
+            const target = event.target.closest('[data-player]');
+            if (target) this.showPlayer(target);
+        });
+        document.addEventListener('keydown', event => {
+            const target = event.target.closest('.squad-row');
+            if (target && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                this.showPlayer(target);
+            }
+            if (event.key === 'Escape' && dom.playerDialog.open) dom.playerDialog.close();
+        });
+        dom.dialogClose.addEventListener('click', () => dom.playerDialog.close());
+        dom.playerDialog.addEventListener('click', event => {
+            if (event.target === dom.playerDialog) dom.playerDialog.close();
+        });
+    }
+};
 
-        // Gameweek selector
-        const gameweekSelect = domElements.gameweekSelect;
-        if (gameweekSelect) {
-            gameweekSelect.addEventListener('change', eventHandlers.handleGameweekChange);
-        }
-
-        if (domElements.dialogClose) {
-            domElements.dialogClose.addEventListener('click', () => {
-                domElements.playerDialog.close();
-            });
-        }
-
-        if (domElements.playerDialog) {
-            domElements.playerDialog.addEventListener('click', (event) => {
-                if (event.target === domElements.playerDialog) {
-                    domElements.playerDialog.close();
-                }
-            });
+const app = {
+    async init() {
+        interactions.init();
+        dashboardRenderer.loading('Discovering the official season…');
+        try {
+            const reference = await dataLoader.loadReferenceData();
+            appState.events = reference.events;
+            if (!appState.events.length) throw new Error('No official gameweeks are published yet');
+            const active = appState.events.find(event => event.is_current)
+                || appState.events.find(event => event.is_next)
+                || appState.events[0];
+            appState.currentGameweek = Number(active.id);
+            gameweekManager.populate(appState.events);
+            await gameweekManager.load(appState.currentGameweek);
+        } catch (error) {
+            console.error('Application initialization failed:', error);
+            dashboardRenderer.error(error.message);
         }
     }
 };
 
-// Application Initialization
-const app = {
-    /**
-     * Initialize the application
-     */
-    async init() {
-        try {
-            // Set up event listeners
-            eventListeners.init();
+document.addEventListener('DOMContentLoaded', () => app.init());
 
-            // Discover available gameweeks
-            uiStateManager.showLoading('Discovering available gameweeks...');
-            appState.availableGameweeks = await dataLoader.discoverGameweeks();
-
-            if (appState.availableGameweeks.length === 0) {
-                const errorMessage = `
-                    <strong>No gameweek data found</strong><br>
-                    The official FPL API has not released an active gameweek yet.
-                `;
-                uiStateManager.showError(errorMessage);
-                return;
-            }
-
-            // Set current gameweek to latest available if default is not available
-            if (!appState.availableGameweeks.includes(appState.currentGameweek)) {
-                appState.currentGameweek = Math.max(...appState.availableGameweeks);
-            }
-
-            // Populate gameweek selector
-            gameweekManager.populateGameweekSelector(appState.availableGameweeks);
-
-            // Load and display data for current gameweek
-            await gameweekManager.loadAndDisplayData(appState.currentGameweek);
-
-        } catch (error) {
-            console.error('Error initializing application:', error);
-            const safeError = utils.escapeHtml(error.message);
-            const errorMessage = `
-                <strong>Failed to initialize application</strong><br>
-                ${safeError}<br><br>
-                <small>Please check the console for more details.</small>
-            `;
-            uiStateManager.showError(errorMessage);
-        }
-    },
-
-};
-
-// Start the application when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    app.init();
-});
-
-// Export for potential testing or external access
 window.FPLScoutApp = {
     app,
     appState,
     CONFIG,
     utils,
-    teamRenderer,
-    gameweekManager,
     dataLoader,
-    // Utility functions for debugging and cache management
-    clearCache: utils.clearCache,
-    getCacheStatus: utils.getCacheStatus
+    gameweekManager,
+    clearCache: utils.clearCache
 };
