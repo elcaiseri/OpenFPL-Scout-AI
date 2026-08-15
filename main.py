@@ -68,6 +68,7 @@ def _documentation_links(is_production: bool) -> dict[str, str]:
 
 
 IS_PRODUCTION = _is_production_environment()
+AUTHENTICATION_REQUIRED = [Depends(verify_api_key)]
 
 OPENAPI_TAGS = [
     {
@@ -214,6 +215,7 @@ async def get_api_info():
     tags=["Service"],
     summary="Check service health",
     operation_id="get_service_health",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def check_health():
     """Return service and configured data-source status."""
@@ -229,6 +231,7 @@ async def check_health():
     tags=["Official FPL · Gameweeks"],
     summary="List playable gameweeks",
     operation_id="get_available_gameweeks",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_available_gameweeks():
     """Return gameweeks exposed by the official FPL event state."""
@@ -282,6 +285,7 @@ async def get_official_fpl_gameweeks():
     tags=["Official FPL · Teams"],
     summary="Map all official FPL teams",
     operation_id="get_official_fpl_teams",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_teams():
     results = await _official_call(scout.official_client.mapped_teams)
@@ -375,6 +379,7 @@ async def get_official_fpl_players(
     tags=["Official FPL · Players"],
     summary="Map one official FPL player",
     operation_id="get_official_fpl_player",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_player(
     player_id: int,
@@ -389,6 +394,7 @@ async def get_official_fpl_player(
     tags=["Official FPL · Players"],
     summary="Map a player's official history and fixtures",
     operation_id="get_official_fpl_player_history",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_player_history(
     player_id: int,
@@ -442,6 +448,7 @@ async def get_official_fpl_event_status():
     tags=["Official FPL · Gameweeks"],
     summary="Get mapped live gameweek scoring",
     operation_id="get_official_fpl_live_gameweek",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_live_gameweek(
     gameweek: int = Path(..., ge=1, le=38),
@@ -458,6 +465,7 @@ async def get_official_fpl_live_gameweek(
     tags=["Official FPL · Gameweeks"],
     summary="Get the official season dream team",
     operation_id="get_official_fpl_season_dream_team",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_season_dream_team():
     result = await _official_call(scout.official_client.mapped_dream_team)
@@ -470,6 +478,7 @@ async def get_official_fpl_season_dream_team():
     tags=["Official FPL · Gameweeks"],
     summary="Get an official gameweek dream team",
     operation_id="get_official_fpl_gameweek_dream_team",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_gameweek_dream_team(
     gameweek: int = Path(..., ge=1, le=38),
@@ -486,6 +495,7 @@ async def get_official_fpl_gameweek_dream_team(
     tags=["Official FPL · Fixtures"],
     summary="Get mapped official fixture statistics",
     operation_id="get_official_fpl_fixture_stats",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_fixture_stats(
     fixture_id: int = Path(..., ge=1),
@@ -502,6 +512,7 @@ async def get_official_fpl_fixture_stats(
     tags=["Official FPL · Managers"],
     summary="Get a mapped public manager profile",
     operation_id="get_official_fpl_manager",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_manager(entry_id: int = Path(..., ge=1)):
     result = await _official_call(scout.official_client.mapped_manager, entry_id)
@@ -514,6 +525,7 @@ async def get_official_fpl_manager(entry_id: int = Path(..., ge=1)):
     tags=["Official FPL · Managers"],
     summary="Get a manager's official season history",
     operation_id="get_official_fpl_manager_history",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_manager_history(entry_id: int = Path(..., ge=1)):
     result = await _official_call(scout.official_client.manager_history, entry_id)
@@ -526,6 +538,7 @@ async def get_official_fpl_manager_history(entry_id: int = Path(..., ge=1)):
     tags=["Official FPL · Managers"],
     summary="Get a manager's public official transfers",
     operation_id="get_official_fpl_manager_transfers",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_manager_transfers(
     entry_id: int = Path(..., ge=1),
@@ -552,6 +565,7 @@ async def get_official_fpl_manager_transfers(
     tags=["Official FPL · Managers"],
     summary="Get a manager's official gameweek picks",
     operation_id="get_official_fpl_manager_picks",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_manager_picks(
     entry_id: int = Path(..., ge=1),
@@ -571,6 +585,7 @@ async def get_official_fpl_manager_picks(
     tags=["Official FPL · Leagues & Cups"],
     summary="Get paginated classic-league standings",
     operation_id="get_official_fpl_classic_league_standings",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_classic_league_standings(
     league_id: int = Path(..., ge=1),
@@ -599,6 +614,7 @@ async def get_official_fpl_classic_league_standings(
     tags=["Official FPL · Leagues & Cups"],
     summary="Get paginated head-to-head standings",
     operation_id="get_official_fpl_h2h_league_standings",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_h2h_league_standings(
     league_id: int = Path(..., ge=1),
@@ -625,6 +641,7 @@ async def get_official_fpl_h2h_league_standings(
     tags=["Official FPL · Leagues & Cups"],
     summary="Get paginated head-to-head matches",
     operation_id="get_official_fpl_h2h_league_matches",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_h2h_league_matches(
     league_id: int = Path(..., ge=1),
@@ -650,6 +667,7 @@ async def get_official_fpl_h2h_league_matches(
     tags=["Official FPL · Leagues & Cups"],
     summary="Get official league cup status",
     operation_id="get_official_fpl_league_cup_status",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_league_cup_status(
     league_id: int = Path(..., ge=1),
@@ -666,6 +684,7 @@ async def get_official_fpl_league_cup_status(
     tags=["Official FPL · Reference & Rankings"],
     summary="List official FPL manager regions",
     operation_id="get_official_fpl_regions",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_regions():
     results = await _official_call(scout.official_client.regions)
@@ -678,6 +697,7 @@ async def get_official_fpl_regions():
     tags=["Official FPL · Reference & Rankings"],
     summary="Get mapped official set-piece notes",
     operation_id="get_official_fpl_set_piece_notes",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_set_piece_notes():
     result = await _official_call(scout.official_client.mapped_set_piece_notes)
@@ -690,6 +710,7 @@ async def get_official_fpl_set_piece_notes():
     tags=["Official FPL · Reference & Rankings"],
     summary="Get official best private leagues",
     operation_id="get_official_fpl_best_private_leagues",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_best_private_leagues():
     results = await _official_call(scout.official_client.best_private_leagues)
@@ -702,6 +723,7 @@ async def get_official_fpl_best_private_leagues():
     tags=["Official FPL · Reference & Rankings"],
     summary="Get official most valuable teams",
     operation_id="get_official_fpl_most_valuable_teams",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_most_valuable_teams():
     results = await _official_call(scout.official_client.most_valuable_teams)
@@ -714,6 +736,7 @@ async def get_official_fpl_most_valuable_teams():
     tags=["Official FPL · Reference & Rankings"],
     summary="Get official gameweek winners",
     operation_id="get_official_fpl_event_winners",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_event_winners(
     gameweek: int = Path(..., ge=1, le=38),
@@ -728,6 +751,7 @@ async def get_official_fpl_event_winners(
     tags=["Official FPL · Reference & Rankings"],
     summary="Get official phase winners",
     operation_id="get_official_fpl_phase_winners",
+    dependencies=AUTHENTICATION_REQUIRED,
 )
 async def get_official_fpl_phase_winners(
     phase_id: int = Path(..., ge=1),

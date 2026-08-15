@@ -80,18 +80,37 @@ class APISchemaTests(unittest.TestCase):
             for operation in methods.values():
                 self.assertTrue(operation["tags"])
 
-    def test_generated_catalog_reports_authentication(self):
+    def test_only_ui_api_routes_are_public(self):
         groups = _api_catalog()
         endpoints = [endpoint for group in groups for endpoint in group["endpoints"]]
-        public_players = next(
-            endpoint for endpoint in endpoints if endpoint["path"] == "/api/fpl/players"
-        )
-        protected_scout = next(
-            endpoint for endpoint in endpoints if endpoint["path"] == "/api/gw/scout"
-        )
+        public_routes = {
+            (method, endpoint["path"])
+            for endpoint in endpoints
+            if endpoint["authentication"] == "public"
+            for method in endpoint["methods"]
+        }
 
-        self.assertEqual(public_players["authentication"], "public")
-        self.assertEqual(protected_scout["authentication"], "bearer")
+        self.assertEqual(
+            public_routes,
+            {
+                ("GET", "/api"),
+                ("GET", "/api/fpl/gameweeks"),
+                ("GET", "/api/fpl/players"),
+                ("GET", "/api/fpl/fixtures"),
+                ("GET", "/api/fpl/gameweeks/status"),
+                ("GET", "/api/scout"),
+            },
+        )
+        self.assertTrue(
+            all(
+                endpoint["authentication"] == "bearer"
+                for endpoint in endpoints
+                if not all(
+                    (method, endpoint["path"]) in public_routes
+                    for method in endpoint["methods"]
+                )
+            )
+        )
 
 
 if __name__ == "__main__":

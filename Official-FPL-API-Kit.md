@@ -15,6 +15,8 @@ Base URLs:
 
 Every mapped response identifies its `source` and `official_endpoint`.
 Collections use `count`, `total`, and `results`; object resources use `data`.
+Only the catalog and browser UI routes are public. All other OpenFPL routes in
+this kit require `Authorization: Bearer <API_TOKEN>`.
 
 ## Gameweeks and live scoring
 

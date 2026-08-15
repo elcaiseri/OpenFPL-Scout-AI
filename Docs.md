@@ -36,8 +36,8 @@ See [Official-FPL-API-Kit.md](Official-FPL-API-Kit.md) for the complete audited
 upstream-to-OpenFPL route map, every query option, publication behavior, and the
 official account or mutation resources that are intentionally not proxied.
 
-Service discovery, mapped official FPL resources, and the web scout endpoint
-are public. Authenticated squad and projection routes require a bearer token:
+Only the API catalog and routes used directly by the web UI are public. All
+other API routes require a bearer token:
 
 ```http
 Authorization: Bearer <API_TOKEN>
@@ -54,32 +54,32 @@ variables already supplied by the process or deployment environment.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api` | Public | Full API catalog grouped by tag |
-| GET | `/api/health` | Public | Service, model, and source health |
+| GET | `/api/health` | Bearer | Service, model, and source health |
 
 ### Official FPL · Gameweeks
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/gameweeks` | Public | Completed plus current/next playable events |
+| GET | `/api/gameweeks` | Bearer | Completed plus current/next playable events |
 | GET | `/api/fpl/gameweeks` | Public | All mapped official event records |
 | GET | `/api/fpl/gameweeks/status` | Public | Bonus processing and league update state |
-| GET | `/api/fpl/gameweeks/{gameweek}/live` | Public | Live points enriched with player identity |
-| GET | `/api/fpl/dream-team` | Public | Official season dream team when published |
-| GET | `/api/fpl/gameweeks/{gameweek}/dream-team` | Public | Official event dream team when published |
+| GET | `/api/fpl/gameweeks/{gameweek}/live` | Bearer | Live points enriched with player identity |
+| GET | `/api/fpl/dream-team` | Bearer | Official season dream team when published |
+| GET | `/api/fpl/gameweeks/{gameweek}/dream-team` | Bearer | Official event dream team when published |
 
 ### Official FPL · Teams
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/fpl/teams` | Public | Clubs, normalized names, IDs, and strength ratings |
+| GET | `/api/fpl/teams` | Bearer | Clubs, normalized names, IDs, and strength ratings |
 
 ### Official FPL · Players
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/fpl/players` | Public | Players, prices, availability, and official totals |
-| GET | `/api/fpl/players/{player_id}` | Public | One mapped player |
-| GET | `/api/fpl/players/{player_id}/history` | Public | Match history, upcoming fixtures, and past-season totals |
+| GET | `/api/fpl/players/{player_id}` | Bearer | One mapped player |
+| GET | `/api/fpl/players/{player_id}/history` | Bearer | Match history, upcoming fixtures, and past-season totals |
 
 `/api/fpl/players` accepts `team_id`, `element_type`, `selectable_only`,
 `status`, `search`, `min_price`, `max_price`, `order_by`, `descending`,
@@ -91,7 +91,7 @@ prices are expressed in millions.
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | GET | `/api/fpl/fixtures` | Public | Named home/away fixtures, scores, kickoff, and difficulty |
-| GET | `/api/fpl/fixtures/{fixture_id}/stats` | Public | Official per-player fixture statistics |
+| GET | `/api/fpl/fixtures/{fixture_id}/stats` | Bearer | Official per-player fixture statistics |
 
 Fixtures accept `gameweek`, official `team_id`, `future_only`, and `finished`.
 
@@ -99,10 +99,10 @@ Fixtures accept `gameweek`, official `team_id`, `future_only`, and `finished`.
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/fpl/managers/{entry_id}` | Public | Public manager profile and favorite club |
-| GET | `/api/fpl/managers/{entry_id}/history` | Public | Current, chip, and past-season history |
-| GET | `/api/fpl/managers/{entry_id}/transfers` | Public | Transfers with mapped incoming/outgoing players |
-| GET | `/api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks` | Public | Event picks after official publication |
+| GET | `/api/fpl/managers/{entry_id}` | Bearer | Public manager profile and favorite club |
+| GET | `/api/fpl/managers/{entry_id}/history` | Bearer | Current, chip, and past-season history |
+| GET | `/api/fpl/managers/{entry_id}/transfers` | Bearer | Transfers with mapped incoming/outgoing players |
+| GET | `/api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks` | Bearer | Event picks after official publication |
 
 Transfers accept `gameweek`, `offset`, and `limit`.
 
@@ -110,21 +110,21 @@ Transfers accept `gameweek`, `offset`, and `limit`.
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/fpl/leagues/classic/{league_id}/standings` | Public | Classic standings with official pages and phase |
-| GET | `/api/fpl/leagues/h2h/{league_id}/standings` | Public | Head-to-head standings |
-| GET | `/api/fpl/leagues/h2h/{league_id}/matches` | Public | Head-to-head matches by entry or event |
-| GET | `/api/fpl/leagues/{league_id}/cup-status` | Public | League cup qualification state |
+| GET | `/api/fpl/leagues/classic/{league_id}/standings` | Bearer | Classic standings with official pages and phase |
+| GET | `/api/fpl/leagues/h2h/{league_id}/standings` | Bearer | Head-to-head standings |
+| GET | `/api/fpl/leagues/h2h/{league_id}/matches` | Bearer | Head-to-head matches by entry or event |
+| GET | `/api/fpl/leagues/{league_id}/cup-status` | Bearer | League cup qualification state |
 
 ### Official FPL · Reference & Rankings
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/fpl/regions` | Public | Manager country and region reference data |
-| GET | `/api/fpl/set-piece-notes` | Public | Club set-piece notes enriched with team data |
-| GET | `/api/fpl/rankings/best-private-leagues` | Public | Best classic private leagues |
-| GET | `/api/fpl/rankings/most-valuable-teams` | Public | Most valuable teams |
-| GET | `/api/fpl/gameweeks/{gameweek}/winners` | Public | Event winners when published |
-| GET | `/api/fpl/phases/{phase_id}/winners` | Public | Phase winners when published |
+| GET | `/api/fpl/regions` | Bearer | Manager country and region reference data |
+| GET | `/api/fpl/set-piece-notes` | Bearer | Club set-piece notes enriched with team data |
+| GET | `/api/fpl/rankings/best-private-leagues` | Bearer | Best classic private leagues |
+| GET | `/api/fpl/rankings/most-valuable-teams` | Bearer | Most valuable teams |
+| GET | `/api/fpl/gameweeks/{gameweek}/winners` | Bearer | Event winners when published |
+| GET | `/api/fpl/phases/{phase_id}/winners` | Bearer | Phase winners when published |
 
 ### Scout AI
 
