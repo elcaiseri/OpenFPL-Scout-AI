@@ -13,7 +13,6 @@ import pandas as pd
 
 from src.features import (
     MODEL_FEATURES,
-    estimate_fixture_difficulty,
     ensure_feature_columns,
     normalize_fpl_columns,
     prepare_recent_player_features,
@@ -177,10 +176,7 @@ class FPLScout:
         return fixtures
 
     def _attach_fixture_context(
-        self,
-        players: pd.DataFrame,
-        gameweek: int,
-        difficulty_by_team: Optional[Mapping[str, float]] = None,
+        self, players: pd.DataFrame, gameweek: int
     ) -> pd.DataFrame:
         result = players.copy()
         normalizer = self.config.get("gw_team_name_mapping", {})
@@ -200,42 +196,6 @@ class FPLScout:
         )
         result["was_home"] = fixture_rows.map(
             lambda fixture: fixture.get("was_home", np.nan)
-        )
-        result["fixture_count"] = fixture_rows.map(
-            lambda fixture: fixture.get("fixture_count", 1)
-        )
-        fallback_difficulty = difficulty_by_team or {}
-
-        def fixture_difficulty(row: pd.Series) -> float:
-            supplied = row["fixture"].get("difficulty")
-            if supplied is not None:
-                try:
-                    value = float(supplied)
-                    if np.isfinite(value):
-                        return value
-                except (TypeError, ValueError):
-                    pass
-            opponent_value = row["opponent_team_name"]
-            opponents = (
-                []
-                if pd.isna(opponent_value)
-                else str(opponent_value).split(" / ")
-            )
-            values = [
-                float(fallback_difficulty[opponent])
-                for opponent in opponents
-                if opponent in fallback_difficulty
-            ]
-            return float(np.mean(values)) if values else np.nan
-
-        difficulty_rows = pd.DataFrame(
-            {
-                "fixture": fixture_rows,
-                "opponent_team_name": result["opponent_team_name"],
-            }
-        )
-        result["fixture_difficulty"] = difficulty_rows.apply(
-            fixture_difficulty, axis=1
         )
         result = normalize_fpl_columns(result)
 
@@ -312,17 +272,12 @@ class FPLScout:
         """Generate predictions from an already loaded FPL history frame."""
         normalized = normalize_fpl_columns(data)
         resolved_gameweek = self._resolve_gameweek(normalized, gameweek)
-        difficulty_by_team = estimate_fixture_difficulty(
-            normalized, resolved_gameweek, window=self.history_window
-        )
         players = prepare_recent_player_features(
             normalized,
             gameweek=resolved_gameweek,
             history_window=self.history_window,
         )
-        players = self._attach_fixture_context(
-            players, resolved_gameweek, difficulty_by_team
-        )
+        players = self._attach_fixture_context(players, resolved_gameweek)
         model_input = ensure_feature_columns(players, MODEL_FEATURES)
 
         logger.info(
