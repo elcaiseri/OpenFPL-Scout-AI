@@ -27,9 +27,10 @@ pipeline impute them. It does not substitute a third-party preseason feed.
 
 ## Discovery and authentication
 
-The complete live catalog is available at `GET /api`. Interactive OpenAPI
-documentation is organized by resource at `/docs`, with ReDoc at `/redoc` and
-the machine-readable schema at `/openapi.json`.
+The complete live catalog is available at `GET /api`. In production,
+interactive OpenAPI documentation is organized by resource through ReDoc at
+`/redoc`. Local development also exposes Swagger at `/docs`, with the
+machine-readable schema at `/openapi.json`.
 
 See [Official-FPL-API-Kit.md](Official-FPL-API-Kit.md) for the complete audited
 upstream-to-OpenFPL route map, every query option, publication behavior, and the

@@ -10,6 +10,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH"
+ENV OPENFPL_ENV="production"
 
 # Allow optional dependency groups (e.g. --group train) while keeping runtime deps by default
 COPY pyproject.toml uv.lock ./

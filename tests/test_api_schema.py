@@ -1,9 +1,30 @@
 import unittest
 
-from main import _api_catalog, app
+from main import (
+    _api_catalog,
+    _documentation_config,
+    _documentation_links,
+    _is_production_environment,
+    app,
+)
 
 
 class APISchemaTests(unittest.TestCase):
+    def test_production_keeps_only_redoc_ui(self):
+        documentation = _documentation_config(is_production=True)
+
+        self.assertIsNone(documentation["docs_url"])
+        self.assertIsNone(documentation["swagger_ui_oauth2_redirect_url"])
+        self.assertEqual(documentation["redoc_url"], "/redoc")
+        self.assertEqual(
+            _documentation_links(is_production=True), {"redoc": "/redoc"}
+        )
+
+    def test_production_environment_detection(self):
+        self.assertTrue(_is_production_environment({"OPENFPL_ENV": "production"}))
+        self.assertTrue(_is_production_environment({"K_SERVICE": "openfpl"}))
+        self.assertFalse(_is_production_environment({"OPENFPL_ENV": "development"}))
+
     def test_openapi_groups_every_api_route_with_named_tags(self):
         schema = app.openapi()
         expected_paths = {

@@ -79,7 +79,8 @@ fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
 
 ### Main Endpoints
 
-OpenAPI documentation is available at `/docs`; `GET /api` returns the complete
+Production API documentation is available through ReDoc at `/redoc`; local
+development also exposes Swagger at `/docs`. `GET /api` returns the complete
 route catalog grouped by tag.
 
 | Tag | Endpoints |

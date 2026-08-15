@@ -10,7 +10,8 @@ Base URLs:
 - OpenFPL: `http://localhost:8000/api/fpl`
 - Official source: `https://fantasy.premierleague.com/api`
 - Complete generated OpenFPL catalog: `GET /api`
-- Interactive schemas and options: `GET /docs`
+- Production API reference: `GET /redoc` (Swagger at `GET /docs` is available
+  in local development only)
 
 Every mapped response identifies its `source` and `official_endpoint`.
 Collections use `count`, `total`, and `results`; object resources use `data`.

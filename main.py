@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
@@ -30,6 +31,43 @@ logger = get_logger(__name__)
 
 config = load_config("config/config.yaml")
 scout: FPLScout
+
+
+def _is_production_environment(
+    environment: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether public developer tooling should be restricted."""
+    values = os.environ if environment is None else environment
+    configured_environment = values.get("OPENFPL_ENV", "").strip().lower()
+    return configured_environment in {"prod", "production"} or bool(
+        values.get("K_SERVICE")
+    )
+
+
+def _documentation_config(is_production: bool) -> dict[str, Optional[str]]:
+    """Configure one production docs UI while retaining local Swagger tooling."""
+    return {
+        "docs_url": None if is_production else "/docs",
+        "redoc_url": "/redoc",
+        "openapi_url": "/openapi.json",
+        "swagger_ui_oauth2_redirect_url": (
+            None if is_production else "/docs/oauth2-redirect"
+        ),
+    }
+
+
+def _documentation_links(is_production: bool) -> dict[str, str]:
+    """Return the documentation links advertised by the API catalog."""
+    if is_production:
+        return {"redoc": "/redoc"}
+    return {
+        "swagger": "/docs",
+        "redoc": "/redoc",
+        "openapi": "/openapi.json",
+    }
+
+
+IS_PRODUCTION = _is_production_environment()
 
 OPENAPI_TAGS = [
     {
@@ -87,6 +125,7 @@ app = FastAPI(
     version=config.get("version", "1.0.0"),
     lifespan=lifespan,
     openapi_tags=OPENAPI_TAGS,
+    **_documentation_config(IS_PRODUCTION),
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -165,11 +204,7 @@ async def get_api_info():
         "message": "OpenFPL — Official FPL data, AI squad projections",
         "version": config.get("version", "1.0.0"),
         "source": "https://fantasy.premierleague.com/api/",
-        "documentation": {
-            "swagger": "/docs",
-            "redoc": "/redoc",
-            "openapi": "/openapi.json",
-        },
+        "documentation": _documentation_links(IS_PRODUCTION),
         "tags": _api_catalog(),
     }
 
