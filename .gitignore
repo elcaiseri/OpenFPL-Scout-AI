@@ -44,4 +44,4 @@ catboost_info/
 
 # Project-specific experiments
 trainer*.py
-models-*
+models*/

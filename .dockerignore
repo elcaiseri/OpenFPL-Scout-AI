@@ -52,4 +52,4 @@ mlruns/
 mlartifacts/
 catboost_info/
 trainer*.py
-models-*
+models*/
