@@ -336,11 +336,32 @@ class FPLScout:
         )
         players = self._attach_fixture_context(players, resolved_gameweek)
         model_input = ensure_feature_columns(players, MODEL_FEATURES)
+        populated_features = [
+            feature for feature in MODEL_FEATURES if model_input[feature].notna().any()
+        ]
+        entirely_missing_features = [
+            feature for feature in MODEL_FEATURES if model_input[feature].isna().all()
+        ]
 
         logger.info(
             "Generating gameweek %d predictions for %d players",
             resolved_gameweek,
             len(players),
+        )
+        logger.info(
+            "Scout inference model features (%d): %s",
+            len(MODEL_FEATURES),
+            ", ".join(MODEL_FEATURES),
+        )
+        logger.info(
+            "Scout inference feature coverage for gameweek %d: "
+            "populated (%d): %s;\n"
+            "entirely missing (%d): %s",
+            resolved_gameweek,
+            len(populated_features),
+            ", ".join(populated_features) or "none",
+            len(entirely_missing_features),
+            ", ".join(entirely_missing_features) or "none",
         )
         ensemble, diagnostics = self._predict_ensemble(model_input)
         players["expected_points"] = ensemble

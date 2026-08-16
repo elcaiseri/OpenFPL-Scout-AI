@@ -164,6 +164,28 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))
 
+    def test_logs_model_feature_names_and_live_coverage(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        with self.assertLogs("src.scout", level="INFO") as captured:
+            scout.predict_players(player_history(), gameweek=3)
+
+        log_output = "\n".join(captured.output)
+        self.assertIn(
+            f"Scout inference model features ({len(MODEL_FEATURES)}): "
+            f"{', '.join(MODEL_FEATURES)}",
+            log_output,
+        )
+        self.assertIn("Scout inference feature coverage for gameweek 3:", log_output)
+        self.assertIn("populated (", log_output)
+        self.assertIn("goals", log_output)
+        self.assertIn("entirely missing (", log_output)
+        self.assertIn("total_shots", log_output)
+
     def test_one_failed_model_can_degrade_without_failing_request(self):
         models = {
             "one.pkl": ConstantModel(1),
