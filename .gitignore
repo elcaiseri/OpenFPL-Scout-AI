@@ -19,6 +19,7 @@ __pycache__/
 *.zip
 *info
 data/
+data_/
 
 # Notebooks
 *.ipynb

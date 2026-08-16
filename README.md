@@ -212,6 +212,43 @@ The collector writes to `data/official` by default, which is also the default
 source for the cross-validated trainer. Legacy files under `data/external` are
 not used by the runtime or by the default retraining command.
 
+### Temporary FPL Data import
+
+While written reuse permission is pending, one historical CSV can be fetched
+through the public **Download CSV** control on
+[FPL Data](https://www.fpl-data.co.uk/statistics):
+
+```bash
+uv run python -m scripts.download_fpl_data \
+  --season latest \
+  --acknowledge-permission-pending
+```
+
+The importer makes one download request for the selected season, validates the
+CSV structure and core values, reports coverage of the 17 non-official model
+features, and writes both the dataset and provenance metadata atomically under
+`data/external`. Existing data is not changed unless `--replace` is supplied;
+lower gameweek or feature coverage is still rejected unless
+`--allow-regression` is also explicitly supplied.
+
+For a later guarded refresh of the same season, use:
+
+```bash
+uv run python -m scripts.download_fpl_data \
+  --season latest \
+  --replace \
+  --acknowledge-permission-pending
+```
+
+This source is intentionally isolated from runtime inference and the default
+training path. Do not redistribute it, train a commercial release from it, or
+schedule unattended downloads until the data owner grants permission. List
+the seasons currently offered by the page with:
+
+```bash
+uv run python -m scripts.download_fpl_data --list-seasons
+```
+
 **For RapidAPI Users:** All data is pre-processed and cached for optimal performance.
 
 ## Code Structure

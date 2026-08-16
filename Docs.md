@@ -167,3 +167,18 @@ uv run python -m scripts.collect_official_fpl --gameweek 39
 Official archives are written to `data/official`, the trainer's default input.
 Legacy `data/external` snapshots are not read by runtime inference or by the
 default retraining command.
+
+For a temporary private historical import while permission is pending, use the
+public FPL Data download control through the guarded importer:
+
+```bash
+uv run python -m scripts.download_fpl_data \
+  --season latest \
+  --acknowledge-permission-pending
+```
+
+The command validates content before an atomic write, records provenance and
+missing-feature coverage in a sidecar metadata file, and refuses silent
+replacement or material coverage regression. It is not a runtime source and
+must not be redistributed or used for the commercial service without written
+permission from FPL Data.
