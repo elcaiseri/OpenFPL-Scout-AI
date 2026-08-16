@@ -59,6 +59,9 @@ inference:
   minimum_successful_models: 3
   cache_fixtures: true
   clip_min: 0.0
+  max_players_per_team: 3
+  cold_start:
+    enabled: true
 
 official_fpl:
   base_url: "https://fantasy.premierleague.com/api"

@@ -786,6 +786,11 @@ async def _generate_scout_response(
                 scout_team=json.loads(team.to_json(orient="records")),
                 player_points=[],
                 gameweek=prediction_gameweek,
+                strategy=str(
+                    predictions.attrs.get("inference", {}).get(
+                        "strategy", "model-ensemble"
+                    )
+                ),
                 version=config.get("version", "1.0.0"),
                 source=str(predictions.attrs.get("source", "official-fpl")),
             )
@@ -797,6 +802,11 @@ async def _generate_scout_response(
                 scout_team=json.loads(team.to_json(orient="records")),
                 player_points=json.loads(predictions.to_json(orient="records")),
                 gameweek=prediction_gameweek,
+                strategy=str(
+                    predictions.attrs.get("inference", {}).get(
+                        "strategy", "model-ensemble"
+                    )
+                ),
                 version=config.get("version", "1.0.0"),
                 source=str(predictions.attrs.get("source", "official-fpl")),
             )

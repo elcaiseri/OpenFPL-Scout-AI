@@ -7,6 +7,7 @@ class ResponseModel(BaseModel):
     scout_team: List[Dict[str, Any]]
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
+    strategy: str = "model-ensemble"
     version: str = "5.3.0"
     source: str = "official-fpl"
     credits: str = (

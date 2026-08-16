@@ -40,6 +40,12 @@ class FakeOfficialClient:
         if gameweek == 1:
             history = history.drop_duplicates("id").copy()
             history["gameweek"] = 0
+            history["goals"] = np.nan
+            history["now_cost"] = 4.0 + history["id"] / 10
+            history["selected_by_percent"] = history["id"].astype(float)
+            history["status"] = "a"
+            history["can_select"] = True
+            history["chance_of_playing_next_round"] = np.nan
             return history
         return history.loc[history["gameweek"] < gameweek].copy()
 
@@ -233,6 +239,7 @@ class ScoutInferenceTests(unittest.TestCase):
                 "id": [1],
                 "element_type": [1],
                 "web_name": ["Only keeper"],
+                "team_name": ["Arsenal"],
                 "expected_points": [4.0],
             }
         )
@@ -258,6 +265,87 @@ class ScoutInferenceTests(unittest.TestCase):
         result = scout.predict_players(player_history(), gameweek=3)
 
         self.assertTrue((result.expected_points == 0).all())
+
+    def test_gameweek_one_uses_ownership_when_no_preseason_history_exists(self):
+        model = RecordingModel(9)
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: model,
+            official_client=FakeOfficialClient(),
+        )
+
+        with self.assertLogs("src.scout", level="INFO") as captured:
+            result = scout.get_official_predictions(gameweek=1)
+
+        self.assertEqual(result.attrs["inference"]["strategy"], "ownership-cold-start")
+        self.assertEqual(result.attrs["inference"]["successful_models"], [])
+        self.assertFalse(hasattr(model, "features"))
+        highest_owned = result.loc[result["id"] == 20].iloc[0]
+        self.assertAlmostEqual(highest_owned["expected_points"], np.log1p(20))
+        self.assertIn("models skipped", "\n".join(captured.output))
+
+    def test_gameweek_one_uses_models_when_real_preseason_evidence_exists(self):
+        history = player_history().drop_duplicates("id").copy()
+        history["gameweek"] = 0
+        history["selected_by_percent"] = history["id"].astype(float)
+        model = RecordingModel(4)
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: model,
+        )
+
+        result = scout.predict_players(history, gameweek=1)
+
+        self.assertEqual(result.attrs["inference"]["strategy"], "model-ensemble")
+        self.assertTrue(hasattr(model, "features"))
+        self.assertTrue((result["expected_points"] == 4).all())
+
+    def test_all_squad_strategies_are_budget_free_with_club_limit(self):
+        rows = []
+        player_id = 1
+        for position, candidate_count in {1: 5, 2: 12, 3: 12, 4: 8}.items():
+            for offset in range(candidate_count):
+                rows.append(
+                    {
+                        "id": player_id,
+                        "element_type": position,
+                        "web_name": f"Player {player_id}",
+                        "team_name": f"Club {offset % 8}",
+                        "expected_points": 5.0 - offset / 10,
+                        "cold_start_score": 5.0 - offset / 10,
+                        "now_cost": 50.0,
+                        "selected_by_percent": 100 - offset,
+                        "availability_factor": 1.0,
+                    }
+                )
+                player_id += 1
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        for strategy in ("ownership-cold-start", "model-ensemble"):
+            with self.subTest(strategy=strategy):
+                predictions = pd.DataFrame(rows)
+                predictions.attrs["inference"] = {"strategy": strategy}
+
+                team = scout.select_optimal_team(predictions)
+
+                self.assertEqual(len(team), 15)
+                self.assertEqual(
+                    team["element_type"].value_counts().to_dict(),
+                    {
+                        "Midfielder": 5,
+                        "Defender": 5,
+                        "Forward": 3,
+                        "Goalkeeper": 2,
+                    },
+                )
+                self.assertGreater(team["now_cost"].sum(), 100.0)
+                self.assertLessEqual(team["team_name"].value_counts().max(), 3)
 
     def test_official_predictions_use_fpl_data_after_gameweek_one(self):
         provider = FakeFPLDataProvider()

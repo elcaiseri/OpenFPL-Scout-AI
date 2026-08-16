@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from src.features import (
+    HISTORY_FEATURES,
     MODEL_FEATURES,
     ensure_feature_columns,
     normalize_fpl_columns,
@@ -96,6 +97,13 @@ class FPLScout:
         self.cache_fixtures = bool(inference_config.get("cache_fixtures", True))
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
+        cold_start_config = inference_config.get("cold_start", {})
+        self.cold_start_enabled = bool(cold_start_config.get("enabled", True))
+        self.max_players_per_team = int(
+            inference_config.get("max_players_per_team", 3)
+        )
+        if self.max_players_per_team < 1:
+            raise ValueError("inference.max_players_per_team must be at least 1")
 
         fpl_data_config = self.config.get("fpl_data_inference", {})
         configured_fpl_data_enabled = bool(fpl_data_config.get("enabled", False))
@@ -329,6 +337,13 @@ class FPLScout:
         """Generate predictions from an already loaded FPL history frame."""
         normalized = normalize_fpl_columns(data)
         resolved_gameweek = self._resolve_gameweek(normalized, gameweek)
+        if (
+            self.cold_start_enabled
+            and resolved_gameweek == 1
+            and not self._has_usable_pre_gameweek_data(normalized)
+        ):
+            return self._predict_ownership_cold_start(normalized)
+
         players = prepare_recent_player_features(
             normalized,
             gameweek=resolved_gameweek,
@@ -355,8 +370,7 @@ class FPLScout:
         )
         logger.info(
             "Scout inference feature coverage for gameweek %d: "
-            "populated (%d): %s;\n"
-            "entirely missing (%d): %s",
+            "populated (%d): %s; entirely missing (%d): %s",
             resolved_gameweek,
             len(populated_features),
             ", ".join(populated_features) or "none",
@@ -364,6 +378,7 @@ class FPLScout:
             ", ".join(entirely_missing_features) or "none",
         )
         ensemble, diagnostics = self._predict_ensemble(model_input)
+        diagnostics["strategy"] = "model-ensemble"
         players["expected_points"] = ensemble
 
         output_columns: Sequence[str] = [
@@ -392,6 +407,133 @@ class FPLScout:
         logger.info(
             "Inference complete with models: %s",
             ", ".join(diagnostics["successful_models"]),
+        )
+        return result
+
+    @staticmethod
+    def _has_usable_pre_gameweek_data(data: pd.DataFrame) -> bool:
+        """Return whether GW0 rows contain genuine non-zero match evidence."""
+        if "gameweek" not in data.columns:
+            return False
+        gameweeks = pd.to_numeric(data["gameweek"], errors="coerce")
+        prior = data.loc[gameweeks < 1]
+        evidence_features = [
+            feature
+            for feature in HISTORY_FEATURES
+            if feature not in {"now_cost", "selected_by_percent"}
+            and feature in prior.columns
+        ]
+        if prior.empty or not evidence_features:
+            return False
+        evidence = prior[evidence_features].apply(pd.to_numeric, errors="coerce")
+        return bool(evidence.fillna(0).ne(0).any(axis=None))
+
+    def _predict_ownership_cold_start(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Rank GW1 players from current ownership when no match history exists."""
+        required = {"id", "element_type", "web_name", "team_name", "gameweek"}
+        missing = sorted(required.difference(data.columns))
+        if missing:
+            raise ValueError(f"Cold-start data is missing required columns: {missing}")
+
+        gameweeks = pd.to_numeric(data["gameweek"], errors="coerce")
+        preseason = data.loc[gameweeks < 1].copy()
+        if preseason.empty:
+            raise ValueError("No current player roster is available for GW1 cold start")
+        preseason["gameweek"] = gameweeks.loc[preseason.index]
+        preseason = preseason.sort_values(
+            ["id", "gameweek"], ascending=[True, False], kind="stable"
+        )
+        players = preseason.drop_duplicates("id", keep="first").copy()
+        players = self._attach_fixture_context(players, 1)
+
+        if "selected_by_percent" not in players.columns:
+            raise InferenceError(
+                "GW1 ownership cold start requires selected_by_percent"
+            )
+        ownership = pd.to_numeric(players["selected_by_percent"], errors="coerce").clip(
+            lower=0
+        )
+        if not ownership.gt(0).any():
+            raise InferenceError(
+                "GW1 ownership cold start has no positive ownership values"
+            )
+
+        status = players.get(
+            "status", pd.Series("a", index=players.index, dtype=object)
+        )
+        status = status.fillna("a").astype(str).str.casefold()
+        availability = status.map(
+            {"a": 1.0, "d": 0.5, "i": 0.0, "s": 0.0, "u": 0.0, "n": 0.0}
+        ).fillna(1.0)
+        if "chance_of_playing_next_round" in players.columns:
+            chance = pd.to_numeric(
+                players["chance_of_playing_next_round"], errors="coerce"
+            )
+            availability = availability.where(
+                chance.isna(), chance.clip(lower=0, upper=100) / 100.0
+            )
+        if "can_select" in players.columns:
+            selectable = players["can_select"].map(
+                lambda value: True if pd.isna(value) else bool(value)
+            )
+            availability = availability.where(selectable, 0.0)
+
+        players["selected_by_percent"] = ownership.fillna(0.0)
+        players["availability_factor"] = availability.astype(float)
+        players["cold_start_score"] = (
+            np.log1p(players["selected_by_percent"]) * players["availability_factor"]
+        )
+        # Preserve the API's ranking field while identifying it as a GW1 score
+        # in metadata. It is not presented as a model point forecast internally.
+        players["expected_points"] = players["cold_start_score"]
+
+        output_columns: Sequence[str] = list(
+            dict.fromkeys(
+                [
+                    *self.config.get(
+                        "categorical_columns",
+                        [
+                            "id",
+                            "element_type",
+                            "web_name",
+                            "team_name",
+                            "opponent_team_name",
+                            "was_home",
+                            "gameweek",
+                        ],
+                    ),
+                    "expected_points",
+                    "cold_start_score",
+                    "now_cost",
+                    "selected_by_percent",
+                    "status",
+                    "can_select",
+                    "chance_of_playing_next_round",
+                    "availability_factor",
+                ]
+            )
+        )
+        for column in output_columns:
+            if column not in players.columns:
+                players[column] = np.nan
+        result = players[list(output_columns)].copy()
+        result.attrs["gameweek"] = 1
+        result.attrs["inference"] = {
+            "strategy": "ownership-cold-start",
+            "reason": "no-usable-pre-gameweek-history",
+            "score": "log1p(selected_by_percent) * availability_factor",
+            "successful_models": [],
+            "failed_models": {},
+        }
+        self.gameweek = 1
+        logger.warning(
+            "GW1 has no usable pre-gameweek history; using ownership cold start "
+            "for %d players (models skipped)",
+            len(result),
+        )
+        logger.info(
+            "GW1 cold-start inputs: selected_by_percent, status, can_select, "
+            "chance_of_playing_next_round"
         )
         return result
 
@@ -454,21 +596,11 @@ class FPLScout:
 
         player_key = "id" if "id" in predictions.columns else "web_name"
         unique_predictions = predictions.drop_duplicates(player_key, keep="first")
-        selected: List[pd.DataFrame] = []
-        for position, count in self.TEAM_SELECTION.items():
-            candidates = unique_predictions.loc[
-                unique_predictions["element_type"] == position
-            ]
-            if len(candidates) < count:
-                raise ValueError(
-                    f"Need {count} position-{position} players, found {len(candidates)}"
-                )
-            selected.append(candidates.nlargest(count, "expected_points"))
-
-        team = (
-            pd.concat(selected, ignore_index=True)
-            .sort_values("expected_points", ascending=False)
-            .reset_index(drop=True)
+        strategy = predictions.attrs.get("inference", {}).get("strategy")
+        team = self._select_budget_free_squad(
+            unique_predictions,
+            strategy=strategy or "model-ensemble",
+            require_available=strategy == "ownership-cold-start",
         )
         team["role"] = ""
         team.loc[0, "role"] = "captain"
@@ -482,6 +614,88 @@ class FPLScout:
             team.loc[1, "web_name"],
             team.loc[1, "expected_points"],
             team["expected_points"].sum(),
+        )
+        return team
+
+    def _select_budget_free_squad(
+        self,
+        predictions: pd.DataFrame,
+        strategy: str,
+        require_available: bool = False,
+    ) -> pd.DataFrame:
+        """Build a budget-free squad with position and per-club limits."""
+        required = {"team_name"}
+        if require_available:
+            required.add("availability_factor")
+        missing = sorted(required.difference(predictions.columns))
+        if missing:
+            raise ValueError(
+                f"Squad selection data is missing required columns: {missing}"
+            )
+
+        candidates = predictions.copy()
+        candidates["_position"] = pd.to_numeric(
+            candidates["element_type"], errors="coerce"
+        )
+        candidates["_score"] = pd.to_numeric(
+            candidates["expected_points"], errors="coerce"
+        )
+        eligible = candidates["_position"].isin(self.TEAM_SELECTION) & candidates[
+            "_score"
+        ].notna()
+        internal_columns = ["_position", "_score"]
+        if require_available:
+            candidates["_availability"] = pd.to_numeric(
+                candidates["availability_factor"], errors="coerce"
+            )
+            eligible &= candidates["_availability"].gt(0)
+            internal_columns.append("_availability")
+        candidates = candidates.loc[eligible & candidates["team_name"].notna()].copy()
+
+        for position, count in self.TEAM_SELECTION.items():
+            available = int(candidates["_position"].eq(position).sum())
+            if available < count:
+                raise ValueError(
+                    f"Need {count} position-{position} players, found {available}"
+                )
+
+        selected: List[int] = []
+        position_counts = {position: 0 for position in self.TEAM_SELECTION}
+        team_counts: Dict[str, int] = {}
+        ranked = candidates.sort_values("_score", ascending=False, kind="stable")
+        for index, player in ranked.iterrows():
+            position = int(player["_position"])
+            team_name = str(player["team_name"])
+            if position_counts[position] >= self.TEAM_SELECTION[position]:
+                continue
+            if team_counts.get(team_name, 0) >= self.max_players_per_team:
+                continue
+            selected.append(index)
+            position_counts[position] += 1
+            team_counts[team_name] = team_counts.get(team_name, 0) + 1
+            if len(selected) == sum(self.TEAM_SELECTION.values()):
+                break
+
+        if any(
+            position_counts[position] != count
+            for position, count in self.TEAM_SELECTION.items()
+        ):
+            raise ValueError(
+                "Could not construct a Scout squad within the per-team player limit"
+            )
+
+        team = (
+            candidates.loc[selected]
+            .drop(columns=internal_columns, errors="ignore")
+            .sort_values("expected_points", ascending=False)
+            .reset_index(drop=True)
+        )
+        logger.info(
+            "Selected budget-free %s squad: %d clubs, "
+            "maximum %d players per club (price ignored)",
+            strategy,
+            team["team_name"].nunique(),
+            int(team["team_name"].value_counts().max()),
         )
         return team
 

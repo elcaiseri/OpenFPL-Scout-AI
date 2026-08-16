@@ -108,8 +108,10 @@ class OfficialFPLClientTests(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result.loc[0, "team_name"], "Manchester United")
-        self.assertTrue(np.isnan(result.loc[0, "now_cost"]))
-        self.assertTrue(np.isnan(result.loc[0, "selected_by_percent"]))
+        self.assertEqual(result.loc[0, "now_cost"], 7.5)
+        self.assertEqual(result.loc[0, "selected_by_percent"], 12.5)
+        self.assertTrue(result.loc[0, "can_select"])
+        self.assertTrue(np.isnan(result.loc[0, "chance_of_playing_next_round"]))
         self.assertEqual(result.loc[0, "gameweek"], 0)
         self.assertTrue(np.isnan(result.loc[0, "opponent_team_name"]))
         self.assertEqual([call[0] for call in session.calls], ["bootstrap-static/"])

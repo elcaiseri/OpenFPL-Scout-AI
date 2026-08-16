@@ -802,8 +802,8 @@ class OfficialFPLClient:
         players: List[Mapping[str, Any]], teams: Mapping[int, str]
     ) -> pd.DataFrame:
         # Before GW1, bootstrap statistics are current-season zero totals—not a
-        # played match. Keep history unknown so the fitted pipeline applies the
-        # same fold-trained imputers used for first-gameweek training rows.
+        # played match. Keep match history unknown, but retain current roster
+        # metadata for the explicit ownership-based cold-start strategy.
         rows = []
         for player in players:
             rows.append(
@@ -812,8 +812,17 @@ class OfficialFPLClient:
                     "gameweek": 0,
                     "was_home": np.nan,
                     "opponent_team_name": np.nan,
-                    "now_cost": np.nan,
-                    "selected_by_percent": np.nan,
+                    "now_cost": OfficialFPLClient._cost(player.get("now_cost")),
+                    "selected_by_percent": OfficialFPLClient._number(
+                        player.get("selected_by_percent")
+                    ),
+                    "status": player.get("status"),
+                    "can_select": player.get(
+                        "can_select", not player.get("removed", False)
+                    ),
+                    "chance_of_playing_next_round": OfficialFPLClient._number(
+                        player.get("chance_of_playing_next_round")
+                    ),
                     "total_points": np.nan,
                 }
             )

@@ -126,11 +126,20 @@ and every option, or [Docs.md](Docs.md) for authentication and response details.
     }
   ],
   "gameweek": 7,
+  "strategy": "model-ensemble",
   "version": "5.3.0",
   "source": "official-fpl+fpl-data",
   "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
+
+For Gameweek 1, when no genuine pre-gameweek match evidence exists, Scout uses
+an explicit `ownership-cold-start` strategy. It ranks selectable players using
+official ownership adjusted for availability, skips the model ensemble, and
+builds a budget-free squad with the official positional quotas and three-player
+club limit. Player price is informational only and never affects predictions or
+selection. The normal `model-ensemble` strategy remains active whenever usable
+history is available and enforces the same three-player club limit.
 
 ## Screenshots
 
