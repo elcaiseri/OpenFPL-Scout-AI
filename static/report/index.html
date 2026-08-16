@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#12061a">
+    <title>OpenFPL Technical Report</title>
+    <meta name="description"
+        content="How OpenFPL Scout AI forecasts Fantasy Premier League points: data sources, the four-model ensemble, out-of-sample validation on a full held-out season, and the measured limits of the system.">
+    <meta name="author" content="@elcaiseri">
+    <link rel="canonical" href="https://openfpl.kassem.dev/static/report/">
+    <link rel="icon" href="/assets/openfpl-predictive-lion-frameless-2026-512.png">
+
+    <meta property="og:title" content="OpenFPL Technical Report">
+    <meta property="og:description"
+        content="Data, models, and measured accuracy behind OpenFPL Scout AI — validated on a full held-out Premier League season.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://openfpl.kassem.dev/static/report/">
+    <meta property="og:image"
+        content="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:creator" content="@elcaiseri">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <header class="masthead">
+        <div class="wrap">
+            <p class="eyebrow">Technical Report · Version 5.3.0</p>
+            <h1>How OpenFPL<br>Picks a Squad</h1>
+            <p class="lede">
+                OpenFPL Scout AI forecasts Fantasy Premier League points for every player and builds a legal
+                15-player squad for the coming Gameweek. This report documents what the system is trained on,
+                how it is validated, exactly how accurate it proved to be on a season it was not trained on,
+                and the places where it is known to be weak.
+            </p>
+            <div class="meta-row">
+                <span class="chip">Models trained <b>14 Aug 2026</b></span>
+                <span class="chip">Training rows <b>86,755</b></span>
+                <span class="chip">Held-out season <b>2025/26</b></span>
+                <span class="chip">Ensemble <b>Ridge · XGBoost · CatBoost · MLP</b></span>
+                <span class="chip">Live data <b>Official FPL API</b></span>
+            </div>
+
+            <nav class="toc" aria-label="Contents">
+                <h2>Contents</h2>
+                <ol>
+                    <li><a href="#summary">Executive summary</a></li>
+                    <li><a href="#architecture">System architecture</a></li>
+                    <li><a href="#data">Data and features</a></li>
+                    <li><a href="#models">The model ensemble</a></li>
+                    <li><a href="#validation">Validation methodology</a></li>
+                    <li><a href="#accuracy">Forecast accuracy</a></li>
+                    <li><a href="#calibration">Calibration and ranking skill</a></li>
+                    <li><a href="#backtest">Squad selection backtest</a></li>
+                    <li><a href="#drivers">What drives a forecast</a></li>
+                    <li><a href="#selection">Squad and captaincy rules</a></li>
+                    <li><a href="#rating">Team rating explained</a></li>
+                    <li><a href="#engineering">Service engineering</a></li>
+                    <li><a href="#limits">Limitations</a></li>
+                    <li><a href="#repro">Reproducibility</a></li>
+                </ol>
+            </nav>
+        </div>
+    </header>
+
+    <main class="wrap">
+
+        <!-- ============================================================= -->
+        <section id="summary">
+            <span class="sec-num">01</span>
+            <h2 class="sec">Executive summary</h2>
+            <p class="intro">
+                OpenFPL was evaluated on a complete Premier League season that was withheld from training —
+                29,747 player-gameweeks that no model scoring them had been fitted on. Every number in this report
+                comes from that evaluation or from the training artifacts that produced it.
+            </p>
+
+            <div class="tiles">
+                <div class="tile">
+                    <div class="k">Holdout RMSE</div>
+                    <div class="v">1.92</div>
+                    <div class="s">Points per player-gameweek, against a 2.35-point standard deviation in actual scores</div>
+                </div>
+                <div class="tile">
+                    <div class="k">Rank correlation</div>
+                    <div class="v">0.70</div>
+                    <div class="s">Mean Spearman ρ between forecast and outcome, across all 38 gameweeks</div>
+                </div>
+                <div class="tile">
+                    <div class="k">Squad points / GW</div>
+                    <div class="v">70.6</div>
+                    <div class="s">Versus 56.0 for FPL's own expected-points ranking, on identical rules</div>
+                </div>
+                <div class="tile">
+                    <div class="k">Gameweeks won</div>
+                    <div class="v">31/38</div>
+                    <div class="s">Against a 5-gameweek form squad; 32 of 38 against FPL's own expected points</div>
+                </div>
+            </div>
+
+            <h3>What the evaluation showed</h3>
+            <ul>
+                <li><strong>The ensemble beats every prediction baseline tested.</strong> Against FPL's own
+                    published expected-points figure, a 5-gameweek rolling-form average, a
+                    last-gameweek-repeats rule, and a position-average rule, it had lower error on all three
+                    metrics — RMSE, MAE and R².</li>
+                <li><strong>Combining models helps, but only slightly.</strong> The ensemble improves on the
+                    best single model, CatBoost, by under 0.1% RMSE — and CatBoost is fractionally
+                    <em>better</em> on MAE. The ensemble's real value is resilience: the service keeps working
+                    if a model fails to load or predict.</li>
+                <li><strong>Ranking is the strength, not point estimates.</strong> Individual scores carry
+                    about ±1.9 points of error, which is irreducible in a game where a single goal is worth
+                    4–6 points. Ordering players correctly is where the system earns its keep, and it does
+                    that consistently: ρ ≈ 0.72 in every gameweek after the season opener.</li>
+                <li><strong>Gameweek 1 is genuinely hard.</strong> With no current-season match history, rank
+                    correlation collapses to 0.12. Production handles this with a separate ownership-based
+                    cold start rather than pretending the models have signal they do not have.</li>
+            </ul>
+
+            <div class="note key">
+                <span class="label">The honest headline</span>
+                <p>OpenFPL will not tell you what a player is about to score. It will reliably tell you which
+                    players are worth more than others this week, and that ordering is good enough to build a
+                    squad that beat every naive strategy we measured it against over a full season.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="architecture">
+            <span class="sec-num">02</span>
+            <h2 class="sec">System architecture</h2>
+            <p class="intro">
+                The service is a FastAPI application. Every request for a squad triggers a live read from the
+                official FPL API, feature construction, four model predictions, and a constrained selection
+                pass. Nothing is precomputed overnight.
+            </p>
+
+            <div class="diagram">
+                <svg viewBox="0 0 900 400" role="img"
+                    aria-label="Request flow: the official FPL API and optional enrichment feed history into feature preparation, four models, ensemble averaging, and squad selection.">
+                    <!-- Sources -->
+                    <rect class="dg-box ext" x="10" y="30" width="176" height="74" rx="12" />
+                    <text class="dg-t" x="26" y="58">Official FPL API</text>
+                    <text class="dg-s" x="26" y="78">bootstrap · fixtures</text>
+                    <text class="dg-s" x="26" y="94">element-summary</text>
+
+                    <rect class="dg-box ext" x="10" y="128" width="176" height="74" rx="12" />
+                    <text class="dg-t" x="26" y="156">FPL Data (optional)</text>
+                    <text class="dg-s" x="26" y="176">fills 17 audited stats</text>
+                    <text class="dg-s" x="26" y="192">from GW2, never identity</text>
+
+                    <text class="dg-label" x="10" y="228">SOURCES — read live, cached in memory</text>
+
+                    <!-- Feature prep -->
+                    <path class="dg-arrow" d="M186 67 L 236 67 L 236 140 L 256 140" />
+                    <path class="dg-arrow" d="M186 165 L 216 165 L 216 152 L 256 152" />
+                    <polygon points="256,140 248,136 248,144" fill="#9b8fa6" />
+
+                    <rect class="dg-box" x="258" y="106" width="176" height="88" rx="12" />
+                    <text class="dg-t" x="274" y="134">Feature preparation</text>
+                    <text class="dg-s" x="274" y="154">5-match rolling means</text>
+                    <text class="dg-s" x="274" y="170">fixture context attached</text>
+                    <text class="dg-s" x="274" y="186">38 columns, training order</text>
+
+                    <!-- Models -->
+                    <path class="dg-arrow" d="M434 150 L 466 150" />
+                    <polygon points="472,150 464,146 464,154" fill="#9b8fa6" />
+
+                    <rect class="dg-box" x="474" y="46" width="150" height="42" rx="10" />
+                    <text class="dg-t" x="490" y="72">Ridge</text>
+                    <rect class="dg-box" x="474" y="96" width="150" height="42" rx="10" />
+                    <text class="dg-t" x="490" y="122">XGBoost</text>
+                    <rect class="dg-box" x="474" y="146" width="150" height="42" rx="10" />
+                    <text class="dg-t" x="490" y="172">CatBoost</text>
+                    <rect class="dg-box" x="474" y="196" width="150" height="42" rx="10" />
+                    <text class="dg-t" x="490" y="222">MLP</text>
+                    <text class="dg-label" x="474" y="258">≥ 3 of 4 must succeed</text>
+
+                    <!-- Ensemble -->
+                    <path class="dg-arrow" d="M624 67 L 654 67 L 654 138 L 674 138" />
+                    <path class="dg-arrow" d="M624 117 L 644 117 L 644 138 L 674 138" />
+                    <path class="dg-arrow" d="M624 167 L 644 167 L 644 148 L 674 148" />
+                    <path class="dg-arrow" d="M624 217 L 654 217 L 654 152 L 674 152" />
+                    <polygon points="674,143 666,139 666,147" fill="#9b8fa6" />
+
+                    <rect class="dg-box accent" x="676" y="106" width="176" height="76" rx="12" />
+                    <text class="dg-t" x="692" y="134">Ensemble average</text>
+                    <text class="dg-s" x="692" y="154">equal weights</text>
+                    <text class="dg-s" x="692" y="170">clipped at 0</text>
+
+                    <!-- Selection -->
+                    <path class="dg-arrow" d="M764 182 L 764 232" />
+                    <polygon points="764,238 760,230 768,230" fill="#9b8fa6" />
+                    <rect class="dg-box accent" x="676" y="240" width="176" height="94" rx="12" />
+                    <text class="dg-t" x="692" y="268">Squad selection</text>
+                    <text class="dg-s" x="692" y="288">2 GK · 5 DEF · 5 MID · 3 FWD</text>
+                    <text class="dg-s" x="692" y="304">max 3 per club</text>
+                    <text class="dg-s" x="692" y="320">captain + vice</text>
+
+                    <!-- Cold start branch -->
+                    <path class="dg-arrow" d="M346 194 L 346 290 L 656 290" stroke-dasharray="5 5" />
+                    <polygon points="662,290 654,286 654,294" fill="#9b8fa6" />
+                    <rect class="dg-box" x="258" y="294" width="270" height="62" rx="12" />
+                    <text class="dg-t" x="274" y="320">GW1 cold-start path</text>
+                    <text class="dg-s" x="274" y="340">log1p(ownership) × availability — models skipped</text>
+                </svg>
+            </div>
+            <p style="margin-top:18px">
+                Two paths exist. In the normal path, five-match rolling averages are built from official
+                per-player history, fixture context for the target Gameweek is attached, and the four models
+                each score every player. In Gameweek 1, when no current-season match history exists at all,
+                the models are deliberately bypassed for an explicit ownership-and-availability heuristic —
+                the app is currently serving this path, since the 2026/27 season has not yet kicked off.
+            </p>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="data">
+            <span class="sec-num">03</span>
+            <h2 class="sec">Data and features</h2>
+            <p class="intro">
+                Training used 86,755 cleaned player-match rows across three Premier League seasons. Each row
+                is one player in one fixture, and the target is the FPL points they actually scored.
+            </p>
+
+            <div class="cols">
+                <div class="card">
+                    <h4>Training corpus</h4>
+                    <ul>
+                        <li><strong>2023/24</strong> — 29,725 rows</li>
+                        <li><strong>2024/25</strong> — 27,605 rows</li>
+                        <li><strong>2025/26</strong> — 29,747 rows (held out)</li>
+                    </ul>
+                    <p style="margin-bottom:0">After cleaning: <strong>57,008</strong> development rows and
+                        <strong>29,747</strong> holdout rows.</p>
+                </div>
+                <div class="card">
+                    <h4>Feature construction</h4>
+                    <p>Every match statistic is replaced by that player's mean over their <strong>previous
+                            five matches</strong>, shifted so the match being predicted never contributes to
+                        its own inputs. Five categorical fields — position, player, club, opponent, and
+                        home/away — are kept raw.</p>
+                    <p style="margin-bottom:0">38 model inputs in total.</p>
+                </div>
+            </div>
+
+            <h3>What the model actually sees</h3>
+            <p>
+                The 32 rolling numerical inputs cover attacking volume (shots, shots on target, shots in box,
+                touches in the box, carries into the final third and penalty area), expected-goal metrics (xG,
+                npxG, xA, xGI, npxGI, xGC, xCS), realised output (goals, assists, clean sheets, goals
+                conceded), defensive work (tackles, interceptions, clearances, blocks, recoveries, CBI,
+                defensive contribution), and context (minutes, price, ownership, FPL's own xP, and points
+                versus xP).
+            </p>
+
+            <div class="note">
+                <span class="label">Leakage control</span>
+                <p>Two specific traps are handled explicitly. First, rolling means are shifted by one match,
+                    so a player's own result never feeds their own prediction. Second, in a double gameweek
+                    both fixtures receive the history available at the <em>start</em> of that gameweek —
+                    fixture one's result is not leaked into fixture two, because in reality both forecasts are
+                    made before either match is played. Missing season-specific statistics are left as NaN and
+                    imputed inside each validation fold, so no information crosses from a validation season
+                    into training.</p>
+            </div>
+
+            <div class="note caveat">
+                <span class="label">Data provenance</span>
+                <p>Live inference is driven by the official Fantasy Premier League API, which is authoritative
+                    for player identity, availability, prices, fixtures, and match history. Historical model
+                    training additionally used public FPL Data statistics CSVs to supply 17 detailed inputs
+                    that official history does not expose. Permission for that source is recorded as
+                    <em>pending</em> in the project documentation; the integration is guarded, attributed, and
+                    can be disabled at runtime with a single environment variable
+                    (<code>FPL_DATA_INFERENCE_ENABLED=false</code>), after which the service runs on official
+                    data alone.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="models">
+            <span class="sec-num">04</span>
+            <h2 class="sec">The model ensemble</h2>
+            <p class="intro">
+                Four deliberately different learners are trained on identical features and averaged. Diversity
+                is the point: a linear model, two gradient-boosted tree families, and a neural network make
+                different mistakes.
+            </p>
+
+            <div class="table-wrap">
+                <table>
+                    <caption class="visually-hidden"></caption>
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Role</th>
+                            <th>Tuned hyperparameters</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="name">Ridge</td>
+                            <td>Linear anchor; stable, high bias</td>
+                            <td><code>alpha = 25.0</code></td>
+                        </tr>
+                        <tr>
+                            <td class="name">XGBoost</td>
+                            <td>Gradient-boosted trees</td>
+                            <td><code>max_depth = 3, n_estimators = 300, lr = 0.03</code></td>
+                        </tr>
+                        <tr>
+                            <td class="name">CatBoost</td>
+                            <td>Ordered boosting, native categoricals</td>
+                            <td><code>depth = 5, iterations = 550, lr = 0.03</code></td>
+                        </tr>
+                        <tr>
+                            <td class="name">MLP</td>
+                            <td>Non-linear interactions</td>
+                            <td><code>hidden = (128, 64), alpha = 0.001, batch = 256</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p>
+                Hyperparameters were selected by grid search scored under the same forward-chaining
+                cross-validation described in the next section, never on the holdout. All four are shallow and
+                heavily regularised by modern standards — depth 3 for XGBoost, depth 5 for CatBoost — which is
+                what the signal in this problem supports.
+            </p>
+
+            <h3>How predictions are combined</h3>
+            <p>
+                At runtime the four predictions are combined as an <strong>equal-weighted mean</strong> and
+                then clipped at zero, since a negative forecast is not meaningful. The trainer additionally
+                fits optimised ensemble weights on out-of-fold predictions; on the holdout that weighted
+                variant scores 1.9240 RMSE against 1.9245 for the equal-weighted mean the service actually
+                uses — a difference of 0.03%, which is why the simpler and more predictable equal weighting is
+                deployed.
+            </p>
+            <p>
+                The service requires at least <strong>three of four</strong> models to return finite
+                predictions of the correct length. Below that it fails the request loudly rather than serving a
+                degraded squad. Each model's stored feature contract is also verified against the current
+                feature list at load time, so a stale artifact cannot silently produce nonsense.
+            </p>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="validation">
+            <span class="sec-num">05</span>
+            <h2 class="sec">Validation methodology</h2>
+            <p class="intro">
+                Football is a time series, so random shuffled splits would be dishonest — they let a model
+                learn from May to predict September. Two independent time-respecting checks were used instead.
+            </p>
+
+            <div class="diagram">
+                <svg viewBox="0 0 990 300" role="img"
+                    aria-label="Five expanding cross-validation folds train on progressively more history and validate on the period that follows; folds four and five validate inside the season later used as the holdout.">
+                    <text class="dg-label" x="12" y="20">EXPANDING FORWARD-CHAINING CROSS-VALIDATION — used for tuning and model selection</text>
+
+                    <!-- axis -->
+                    <text class="dg-s" x="120" y="46">2023/24</text>
+                    <text class="dg-s" x="360" y="46">2024/25</text>
+                    <text class="dg-s" x="600" y="46">2025/26</text>
+                    <line x1="120" y1="54" x2="840" y2="54" class="axis-line" />
+                    <line x1="360" y1="54" x2="360" y2="238" class="grid-line" />
+                    <line x1="600" y1="54" x2="600" y2="296" class="grid-line" />
+
+                    <!-- folds -->
+                    <g>
+                        <text class="dg-s" x="12" y="80">Fold 1</text>
+                        <rect x="120" y="66" width="120" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
+                        <rect x="242" y="66" width="118" height="18" rx="4" fill="#729e00" />
+                        <text class="dg-s" x="980" y="80" text-anchor="end">16,011 rows</text>
+                    </g>
+                    <g>
+                        <text class="dg-s" x="12" y="108">Fold 2</text>
+                        <rect x="120" y="94" width="240" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
+                        <rect x="362" y="94" width="118" height="18" rx="4" fill="#729e00" />
+                        <text class="dg-s" x="980" y="108" text-anchor="end">12,743 rows</text>
+                    </g>
+                    <g>
+                        <text class="dg-s" x="12" y="136">Fold 3</text>
+                        <rect x="120" y="122" width="360" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
+                        <rect x="482" y="122" width="118" height="18" rx="4" fill="#729e00" />
+                        <text class="dg-s" x="980" y="136" text-anchor="end">14,540 rows</text>
+                    </g>
+                    <g>
+                        <text class="dg-s" x="12" y="164">Fold 4</text>
+                        <rect x="120" y="150" width="478" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
+                        <rect x="602" y="150" width="118" height="18" rx="4" fill="#ca027b" />
+                        <text class="dg-s" x="980" y="164" text-anchor="end">14,175 rows</text>
+                    </g>
+                    <g>
+                        <text class="dg-s" x="12" y="192">Fold 5</text>
+                        <rect x="120" y="178" width="598" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
+                        <rect x="722" y="178" width="118" height="18" rx="4" fill="#ca027b" />
+                        <text class="dg-s" x="980" y="192" text-anchor="end">15,572 rows</text>
+                    </g>
+
+                    <!-- legend -->
+                    <rect x="120" y="212" width="12" height="12" rx="3" fill="#743bfe" fill-opacity="0.75" />
+                    <text class="dg-s" x="140" y="222">Train</text>
+                    <rect x="194" y="212" width="12" height="12" rx="3" fill="#729e00" />
+                    <text class="dg-s" x="214" y="222">Validate</text>
+                    <rect x="284" y="212" width="12" height="12" rx="3" fill="#ca027b" />
+                    <text class="dg-s" x="304" y="222">Validates inside the season later used as the holdout</text>
+
+                    <!-- holdout -->
+                    <line x1="12" y1="242" x2="980" y2="242" class="grid-line" />
+                    <text class="dg-label" x="12" y="264">FINAL HOLDOUT — refit on the first two seasons, scored once on the third</text>
+                    <rect x="120" y="274" width="478" height="14" rx="4" fill="#743bfe" fill-opacity="0.45" />
+                    <rect x="602" y="274" width="238" height="14" rx="4" fill="#ca027b" />
+                    <text class="dg-s" x="980" y="286" text-anchor="end">29,747 rows</text>
+                </svg>
+            </div>
+
+            <h3>Five expanding folds</h3>
+            <p>
+                Each fold trains on everything up to a cut-off and validates on the period that follows,
+                growing from 13,714 training rows in fold 1 to 71,183 in fold 5. This mirrors how the service
+                is actually used: fit on the past, predict the next block of fixtures. Hyperparameters, model
+                selection, and ensemble weights were all decided here.
+            </p>
+
+            <h3>One held-out season</h3>
+            <p>
+                The 2025/26 season was then set aside. All four models were refit on 2023/24 and 2024/25 only
+                — 57,008 rows — and scored once against the 29,747 rows of 2025/26. Those predictions, which
+                every accuracy figure in this report is computed from, come from estimators that had never
+                been fitted on a single row of the season they were scored against.
+            </p>
+
+            <div class="note caveat">
+                <span class="label">How clean the holdout actually is</span>
+                <p>Two distinct things can leak: model <em>fitting</em> and hyperparameter <em>selection</em>.
+                    Fitting is clean here — the scored estimators saw only the two earlier seasons. Selection
+                    is not fully clean in the artifacts this report describes: the tuning grid was scored with
+                    the five folds above, and folds 4 and 5 validate inside 2025/26, the same season later used
+                    as the holdout. Hyperparameters were therefore chosen with some visibility of the holdout
+                    season.</p>
+                <p>The practical effect is small — the choice amounted to picking one of about five candidates
+                    per model, a far weaker channel than fitting, and the tuning curves are shallow — but it
+                    means the holdout figures should be read as <strong>mildly optimistic rather than
+                        pristine</strong>. The trainer currently in the repository restricts tuning and
+                    cross-validation to development rows only, which closes this gap; the shipped artifacts
+                    predate that change and a retrain would re-establish a fully untouched holdout.</p>
+            </div>
+
+            <div class="note caveat">
+                <span class="label">What the holdout does and does not certify</span>
+                <p>Holdout figures measure the <em>procedure</em>. The model files shipped in production are
+                    refit on all three seasons, which is standard practice and should perform slightly better
+                    than the numbers here — but those exact files have seen the holdout, so they cannot be
+                    scored on it. Read every accuracy figure in this report as <strong>what this method
+                        achieved on a season it was not trained on</strong>, not as a certificate for a
+                    specific binary.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="accuracy">
+            <span class="sec-num">06</span>
+            <h2 class="sec">Forecast accuracy</h2>
+            <p class="intro">
+                Two views of the same question. First, how each model and baseline ranked on the held-out
+                season. Second, how stable those models were across the five cross-validation folds.
+            </p>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Error on the held-out 2025/26 season</p>
+                    <p class="fig-sub">Root mean squared error across 29,747 player-gameweeks. Baselines shown
+                        in grey. Lower is better.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-holdout"></div>
+                <figcaption>
+                    <b>Reading this:</b> the four models cluster tightly between 1.926 and 1.938, and averaging
+                    them buys only a further 0.001. The meaningful gap is to the baselines — the best of them,
+                    a 5-gameweek rolling form average, sits 0.19 RMSE worse, and FPL's own published
+                    expected-points figure is worse still. Actual points in this season had a standard
+                    deviation of 2.35, so an RMSE of 1.92 represents a real but bounded reduction in
+                    uncertainty.
+                </figcaption>
+            </figure>
+
+            <details class="data-table">
+                <summary>View the underlying numbers</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th class="num">RMSE</th>
+                                <th class="num">MAE</th>
+                                <th class="num">R²</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-holdout"></tbody>
+                    </table>
+                </div>
+            </details>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Stability across cross-validation folds</p>
+                    <p class="fig-sub">Validation RMSE per expanding fold. Each fold trains on all prior data
+                        and validates on the period that follows.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-cv"></div>
+                <figcaption>
+                    <b>Reading this:</b> all four models move together — fold 4 is the hardest for every one of
+                    them, and fold 1 the easiest for three of the four. That the curves are near-parallel is
+                    itself informative: the variation is driven by which fixtures fall in the validation
+                    window, not by model choice. It also explains why ensembling gains so little — models that
+                    fail in the same places cannot cover for each other. Fold 4 is the first fold asked to
+                    predict a season it has no data from, which is the single best predictor of how the system
+                    behaves at the start of a new campaign.
+                </figcaption>
+            </figure>
+
+            <details class="data-table">
+                <summary>View cross-validation summary</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th class="num">CV RMSE</th>
+                                <th class="num">CV MAE</th>
+                                <th class="num">CV R²</th>
+                                <th class="num">Fit + score</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-cv"></tbody>
+                    </table>
+                </div>
+            </details>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Accuracy by position</p>
+                    <p class="fig-sub">Mean predicted versus mean actual points, with RMSE, on the held-out
+                        season.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-position"></div>
+                <figcaption>
+                    <b>Reading this:</b> goalkeepers are the most predictable group by a wide margin (RMSE
+                    1.42) — they play whole matches and their scoring is dominated by clean sheets and saves.
+                    Defenders are the hardest (2.11), because a defender's score hinges on a binary clean sheet
+                    plus rare attacking returns. The model is also visibly conservative for defenders,
+                    predicting 1.01 against an actual mean of 1.24; it under-calls the attacking upside of
+                    defenders more than any other group.
+                </figcaption>
+            </figure>
+
+            <details class="data-table">
+                <summary>View per-position numbers</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Position</th>
+                                <th class="num">Rows</th>
+                                <th class="num">RMSE</th>
+                                <th class="num">MAE</th>
+                                <th class="num">Mean predicted</th>
+                                <th class="num">Mean actual</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-position"></tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="calibration">
+            <span class="sec-num">07</span>
+            <h2 class="sec">Calibration and ranking skill</h2>
+            <p class="intro">
+                Error magnitude is only half the story. For a squad picker, two other things matter more: do
+                higher forecasts actually correspond to higher scores, and does that hold week to week?
+            </p>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Calibration by forecast decile</p>
+                    <p class="fig-sub">Holdout players grouped into ten equal buckets by forecast, then plotted
+                        against what they actually scored.</p>
+                </div>
+                <div class="chart-scroll" id="fig-calib"></div>
+                <figcaption>
+                    <b>Reading this:</b> the relationship is monotonic — every decile scored more than the one
+                    below it, which is precisely the property a ranking system needs. The curve tracks the
+                    diagonal closely in the middle of the range and rises <em>above</em> it at the top: the
+                    highest-forecast decile was predicted at 3.64 points and actually returned 3.90. The model
+                    systematically under-promises on its best picks, which is the safer direction to be wrong
+                    in. Deciles 3 and 4 sit just below the diagonal — mildly over-called — which is the
+                    fringe-player region where minutes are least certain.
+                </figcaption>
+            </figure>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Weekly ranking skill across the held-out season</p>
+                    <p class="fig-sub">Spearman rank correlation between forecast and actual points, computed
+                        separately for each gameweek.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-weekly"></div>
+                <figcaption>
+                    <b>Reading this:</b> after the opener, ranking skill is remarkably flat — ρ between 0.65
+                    and 0.76 in all 37 remaining gameweeks, averaging 0.72. There is no decay across the
+                    season and no single catastrophic week. Gameweek 1 is the visible exception at ρ = 0.12:
+                    with zero current-season history the models have nothing to work with. This is the measured
+                    justification for the separate cold-start path in production.
+                </figcaption>
+            </figure>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="backtest">
+            <span class="sec-num">08</span>
+            <h2 class="sec">Squad selection backtest</h2>
+            <p class="intro">
+                RMSE is an abstraction. The question users actually care about is whether the resulting squad
+                scores more points. So the full selection was replayed for all 38 gameweeks of the held-out
+                season, against the same strategies, under identical rules.
+            </p>
+
+            <div class="note">
+                <span class="label">Method</span>
+                <p>For each gameweek, each strategy ranks every available player and fills the official
+                    positional quota — 2 goalkeepers, 5 defenders, 5 midfielders, 3 forwards — highest first.
+                    The score reported is the actual FPL points those 15 players went on to record. All
+                    strategies face the identical player pool and identical constraints; the only difference is
+                    the ranking they use.</p>
+            </div>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Points per gameweek by selection strategy</p>
+                    <p class="fig-sub">Mean actual points returned by the selected 15, averaged over the 38
+                        gameweeks of the held-out season.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-backtest-bar"></div>
+                <figcaption>
+                    <b>Reading this:</b> the ensemble returned 70.6 points per gameweek against 56.4 for a
+                    5-gameweek form ranking and 56.0 for FPL's own expected-points figure — roughly
+                    <b>+25%</b> over the best baseline, or about 540 extra points across a season. The two
+                    reference bars bound the problem: a random legal squad returns 17.6, and perfect hindsight
+                    returns 170.7. OpenFPL captures about 41% of the theoretical maximum.
+                </figcaption>
+            </figure>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Week by week, not just on average</p>
+                    <p class="fig-sub">Actual points returned by each strategy's squad in every gameweek of the
+                        held-out season.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-backtest-line"></div>
+                <figcaption>
+                    <b>Reading this:</b> the advantage is persistent rather than driven by a handful of lucky
+                    weeks. The ensemble beat the 5-gameweek form squad in 31 of 38 gameweeks and FPL's
+                    expected-points squad in 32 of 38. It also loses sometimes, and visibly: gameweeks 12, 19
+                    and 38 fell short of both baselines, and gameweek 33 was the single largest shortfall — 57
+                    points against 82 for the form squad. Any individual gameweek is high variance; the edge
+                    shows up over a season, not in any one week.
+                </figcaption>
+            </figure>
+
+            <details class="data-table">
+                <summary>View backtest summary table</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Strategy</th>
+                                <th class="num">Points / GW</th>
+                                <th class="num">Season total</th>
+                                <th class="num">Captain pick avg</th>
+                                <th class="num">GWs beaten by AI</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-backtest"></tbody>
+                    </table>
+                </div>
+            </details>
+
+            <h3>Captaincy</h3>
+            <p>
+                The captain is the single highest-forecast player in the squad, and doubling their score makes
+                it the highest-leverage decision in the game. Across the held-out season, the ensemble's
+                captain pick returned <strong>6.84 points on average</strong>, against 4.53 for FPL's
+                expected-points ranking and 4.42 for a form ranking. Because the captain's score is counted a
+                second time, that gap is worth roughly <strong>2.3 extra points per gameweek</strong> on top of
+                the squad advantage shown above.
+            </p>
+
+            <div class="note limit">
+                <span class="label">Three honest caveats on this backtest</span>
+                <p><strong>It is not a simulated FPL season.</strong> It sums all 15 selected players rather
+                    than modelling a starting XI, bench order, or automatic substitutions, and it applies no
+                    budget, no transfer limits, and no chips. It measures ranking quality under positional
+                    constraints — nothing more.</p>
+                <p><strong>The per-club limit is not applied.</strong> The production selector caps three
+                    players per club; the archived holdout predictions do not carry a club column, so the
+                    backtest enforces position quotas only. In practice this constraint costs points rather
+                    than adding them, so the live selector's true figure will be somewhat lower than 70.6.</p>
+                <p><strong>Perfect hindsight is not a reachable target.</strong> The 170.7 ceiling assumes you
+                    already know every result. It is included to give the 70.6 a scale, not as a goal.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="drivers">
+            <span class="sec-num">09</span>
+            <h2 class="sec">What drives a forecast</h2>
+            <p class="intro">
+                Both tree models expose which inputs they split on most. The two disagree in interesting ways,
+                which is exactly why they are ensembled.
+            </p>
+
+            <figure>
+                <div class="fig-head">
+                    <p class="fig-title">Top model inputs by split importance</p>
+                    <p class="fig-sub">Share of total importance, with one-hot encoded categorical columns
+                        summed back to their source field.</p>
+                </div>
+                <div class="chart-scroll fixed-min" id="fig-importance"></div>
+                <figcaption>
+                    <b>Reading this:</b> four inputs dominate both models — rolling minutes, FPL's own xP,
+                    ownership, and player identity. That minutes rank so highly is the model rediscovering the
+                    first rule of FPL: a player who does not start cannot score. Note the disagreement.
+                    CatBoost leans heavily on ownership (24.6%), effectively using the crowd as a prior;
+                    XGBoost leans on player identity and xP instead. Importance shows what a model splits on,
+                    not what causes points — ownership predicts well because good players are widely owned, not
+                    the other way round.
+                </figcaption>
+            </figure>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="selection">
+            <span class="sec-num">10</span>
+            <h2 class="sec">Squad and captaincy rules</h2>
+            <p class="intro">
+                Selection is a greedy constrained pass over the forecast ranking, not an optimiser. Given the
+                ranking, the outcome is deterministic and inspectable.
+            </p>
+
+            <ol class="body-list">
+                <li>Drop any player without a valid position, club, or finite forecast.</li>
+                <li>Sort every remaining player by forecast, highest first.</li>
+                <li>Walk the list, taking each player unless their position quota (2 / 5 / 5 / 3) is full or
+                    their club already has three selected.</li>
+                <li>Stop at 15. Assign the highest forecast as captain and the second as vice-captain.</li>
+            </ol>
+
+            <div class="note caveat">
+                <span class="label">Selection is budget-free by design</span>
+                <p>Prices are returned for context but play no part in either the forecast or the selection.
+                    The squad answers "who are the 15 best-projected players you can legally field together",
+                    not "what is the best squad for £100m". Treat it as a shortlist and a captaincy signal
+                    rather than a team sheet you can copy directly.</p>
+            </div>
+
+            <h3>Gameweek 1</h3>
+            <p>
+                When no current-season match history exists, the models are skipped entirely. Players are
+                ranked by <code>log1p(ownership %) × availability</code>, where availability is derived from
+                official status flags and any published chance-of-playing percentage, and unavailable players
+                are excluded outright. The response labels this path as <code>ownership-cold-start</code> so
+                clients can tell the difference. The holdout data justifies the switch: GW1 rank correlation
+                from the models alone was 0.12 against 0.72 for every other week.
+            </p>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="rating">
+            <span class="sec-num">11</span>
+            <h2 class="sec">Team rating explained</h2>
+            <p class="intro">
+                Any public FPL team ID can be scored from 0 to 100 against the same forecasts. The score is
+                fully deterministic and decomposes into three published components.
+            </p>
+
+            <div class="cols">
+                <div class="card">
+                    <h4>Starting XI — 80 points</h4>
+                    <p>Your eleven starters' combined forecast, divided by the best legal XI the AI can build
+                        from its own benchmark squad, capped at 1.0 and scaled to 80.</p>
+                </div>
+                <div class="card">
+                    <h4>Captaincy — 10 points</h4>
+                    <p>Your captain's forecast divided by the AI benchmark captain's forecast, capped at 1.0
+                        and scaled to 10.</p>
+                </div>
+                <div class="card">
+                    <h4>Availability — 10 points</h4>
+                    <p>The share of your eleven starters currently flagged as available, scaled to 10. Injured
+                        or suspended starters score zero here.</p>
+                </div>
+            </div>
+
+            <p style="margin-top:20px">
+                The three components sum and round to the published rating, which maps to a letter grade (A+
+                at 95 and above, down to E below 50). The response also returns your projected points, the AI
+                benchmark's projected points, the gap between them, your differential count below 10%
+                ownership, and plain-language strengths and risks.
+            </p>
+
+            <div class="note caveat">
+                <span class="label">Two things the rating is not</span>
+                <p>It is <strong>not budget-aware</strong> — the benchmark it compares you to ignores price, so
+                    a well-built squad on a real budget will always trail it somewhat. And it rates the picks
+                    <strong>officially published by FPL</strong>, which for a future gameweek means your
+                    current lineup, not whatever you intend to do before the deadline.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="engineering">
+            <span class="sec-num">12</span>
+            <h2 class="sec">Service engineering</h2>
+
+            <h3>API surface</h3>
+            <p>
+                33 endpoints across nine tags. Seven are public — the routes the web app itself uses — and 26
+                require a bearer token. The complete live catalogue is served at <code>/api</code>, with
+                generated documentation at <code>/redoc</code>.
+            </p>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Area</th>
+                            <th class="num">Endpoints</th>
+                            <th class="num">Public</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td class="name">Scout AI</td><td class="num">5</td><td class="num">2</td><td>Projections, squads, team ratings</td></tr>
+                        <tr><td class="name">Gameweeks</td><td class="num">6</td><td class="num">2</td><td>Event state, live scoring, dream teams</td></tr>
+                        <tr><td class="name">Reference &amp; rankings</td><td class="num">6</td><td class="num">0</td><td>Regions, set pieces, winners</td></tr>
+                        <tr><td class="name">Managers</td><td class="num">4</td><td class="num">0</td><td>Profiles, history, transfers, picks</td></tr>
+                        <tr><td class="name">Leagues &amp; cups</td><td class="num">4</td><td class="num">0</td><td>Standings and cup status</td></tr>
+                        <tr><td class="name">Players</td><td class="num">3</td><td class="num">1</td><td>Search, prices, availability, history</td></tr>
+                        <tr><td class="name">Fixtures</td><td class="num">2</td><td class="num">1</td><td>Fixtures, difficulty, per-fixture stats</td></tr>
+                        <tr><td class="name">Service</td><td class="num">2</td><td class="num">1</td><td>Catalogue and health</td></tr>
+                        <tr><td class="name">Teams</td><td class="num">1</td><td class="num">0</td><td>Clubs and strength ratings</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>Caching and upstream behaviour</h3>
+            <p>
+                Official responses are cached in memory for 300 seconds, per-player history for 900 seconds,
+                and player history is fetched across up to eight worker threads. Optional FPL Data enrichment
+                is cached for six hours, only applies from Gameweek 2, requires the exact configured season,
+                demands at least an 80% player match rate, and never overwrites an official value. If any of
+                that fails, the request completes on official data alone — enrichment can degrade the forecast
+                but can never take the service down.
+            </p>
+
+            <h3>Measured latency</h3>
+            <p>
+                Measured locally against the running service with upstream caches warm. These are indicative
+                only — they exclude network distance to the client, Cloud Run cold starts, and the several
+                hundred milliseconds an uncached upstream fetch adds to the first request.
+            </p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Endpoint</th>
+                            <th class="num">Warm response</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td class="name"><code>/api</code></td><td class="num">1.3 ms</td></tr>
+                        <tr><td class="name"><code>/api/fpl/gameweeks</code></td><td class="num">1.7 ms</td></tr>
+                        <tr><td class="name"><code>/api/fpl/fixtures?gameweek=1</code></td><td class="num">2.0 ms</td></tr>
+                        <tr><td class="name"><code>/api/fpl/players</code></td><td class="num">10.9 ms</td></tr>
+                        <tr><td class="name"><code>/api/scout?gameweek=1</code></td><td class="num">17.5 ms</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p>
+                The scout figure above is the Gameweek 1 cold-start path, which does not invoke the models. The
+                same endpoint's first uncached call, including the upstream fetch, measured 511 ms. A
+                full four-model inference over the entire player pool is heavier than either figure.
+            </p>
+
+            <h3>Deployment</h3>
+            <p>
+                The container excludes generated data and model artifacts; both are mounted read-only at
+                runtime. It defaults to port 8000 and honours Cloud Run's <code>PORT</code>. The documented
+                low-traffic profile is 1 vCPU, 512 MiB, concurrency 4, scale-to-zero, and a three-instance cap.
+            </p>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="limits">
+            <span class="sec-num">13</span>
+            <h2 class="sec">Limitations</h2>
+            <p class="intro">
+                Everything below is a measured or structural property of the system, not a hypothetical.
+            </p>
+
+            <div class="cols">
+                <div class="card">
+                    <h4>Individual scores carry real error</h4>
+                    <p>RMSE 1.92 against an actual standard deviation of 2.35 means roughly 33% of the variance
+                        in FPL points is explained and two-thirds is not. A single goal is worth 4–6 points and
+                        arrives largely at random. Use the ordering; do not read a 5.2 forecast as a prediction
+                        of five points.</p>
+                </div>
+                <div class="card">
+                    <h4>Gameweek 1 is a heuristic</h4>
+                    <p>With no current-season history the models are bypassed for an ownership-and-availability
+                        ranking. That is a crowd-following prior, not a forecast, and it inherits whatever the
+                        crowd gets wrong. The app is serving this path right now.</p>
+                </div>
+                <div class="card">
+                    <h4>No budget, transfers, or chips</h4>
+                    <p>Selection ignores price entirely and models no transfer cost, bench order, automatic
+                        substitution, or chip strategy. The squad is a shortlist, not a directly playable team.</p>
+                </div>
+                <div class="card">
+                    <h4>Defenders are the weak spot</h4>
+                    <p>Highest RMSE of any position at 2.11, and systematically under-forecast — a mean
+                        prediction of 1.01 against 1.24 actual. Clean sheets are binary events the model reads
+                        conservatively.</p>
+                </div>
+                <div class="card">
+                    <h4>New players have thin history</h4>
+                    <p>Features are five-match rolling means. A summer signing, a promoted-club player, or
+                        anyone returning from long injury has little or no usable history, and player identity
+                        is itself a significant model input. Early-season forecasts for unfamiliar names are
+                        the least trustworthy the system produces.</p>
+                </div>
+                <div class="card">
+                    <h4>Rotation and news are not modelled</h4>
+                    <p>Nothing ingests press conferences, manager comments, or rotation risk beyond official
+                        availability flags and rolling minutes. A rested starter looks identical to a
+                        guaranteed one until FPL flags them.</p>
+                </div>
+            </div>
+
+            <div class="note caveat" style="margin-top:22px">
+                <span class="label">Distribution shift</span>
+                <p>The training corpus ends with 2025/26. The deployed models are therefore forecasting
+                    <strong>2026/27, a season no model in this report has any data from</strong> — a step
+                    beyond even the holdout, which at least sat adjacent to its training seasons. FPL also
+                    periodically changes its scoring rules, and squads turn over every summer.</p>
+                <p>Cross-validation fold 4 is the measured shape of this risk: it was the first fold asked to
+                    predict a season it had no data from, and it was the worst fold for all four models — RMSE
+                    about 0.2 higher than each model's easiest fold. Expect accuracy to be at its weakest early in a
+                    new season and after any scoring change, and to improve as the retraining corpus catches
+                    up.</p>
+            </div>
+        </section>
+
+        <!-- ============================================================= -->
+        <section id="repro">
+            <span class="sec-num">14</span>
+            <h2 class="sec">Reproducibility</h2>
+
+            <p>
+                Training is seeded (<code>random_seed = 42</code>) and every run writes its artifacts to
+                <code>models/</code>: fitted pipelines, per-fold results, tuning candidates, out-of-fold
+                predictions, holdout predictions, and a metadata file recording the dataset, feature list,
+                validation strategy, and chosen hyperparameters. Every figure in this report is generated from
+                those files.
+            </p>
+
+            <pre><code>uv sync --all-groups
+uv run uvicorn main:app --reload      # serve at localhost:8000
+uv run python -m scripts.collect_official_fpl --gameweek 39</code></pre>
+
+            <div class="note caveat">
+                <span class="label">Artifacts predate the current trainer</span>
+                <p>The shipped artifacts come from a run on 14 August 2026 that used an earlier version of
+                    <code>trainer-booster.py</code>. Two signatures identify it: the cross-validation folds in
+                    <code>cv_fold_results.csv</code> span all 86,755 rows rather than the 57,008 development
+                    rows the current code passes to them, and <code>training_metadata.json</code> lacks the
+                    <code>holdout_season</code>, <code>development_rows</code>, and <code>holdout_rows</code>
+                    keys the current code writes. No <code>ensemble_weights</code> file was written either.
+                    This is what makes the selection caveat in section 05 apply. Retraining with the current
+                    trainer would regenerate every figure here on a strictly clean holdout.</p>
+            </div>
+
+            <h3>Test suite status</h3>
+            <p>
+                48 tests pass across six modules covering the official FPL client, scout inference and
+                selection, team rating, data enrichment, the download importer, and the API schema. Two
+                caveats apply to running them:
+            </p>
+            <ul>
+                <li><code>tests/test_features.py</code> currently <strong>fails to collect</strong>: it imports
+                    <code>estimate_fixture_difficulty</code> from <code>src.features</code>, which no longer
+                    exists there. Those nine tests are not running and the module needs updating to match the
+                    current feature API.</li>
+                <li><code>pytest</code> is not declared in <code>pyproject.toml</code>, and collection requires
+                    <code>PYTHONPATH=.</code>. A plain <code>uv run pytest</code> picks up an interpreter
+                    without the project's runtime dependencies and fails on import.</li>
+            </ul>
+            <pre><code>PYTHONPATH=. uv run --with pytest pytest -q</code></pre>
+
+            <h3>Artifact provenance</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Artifact</th>
+                            <th>Contents</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td class="name"><code>training_metadata.json</code></td><td>Dataset summary, feature list, fold results, tuning, seed, timestamp</td></tr>
+                        <tr><td class="name"><code>holdout_predictions.csv</code></td><td>29,747 rows — actuals, four model outputs, four baselines, both ensembles</td></tr>
+                        <tr><td class="name"><code>oof_predictions.csv</code></td><td>Out-of-fold predictions used to fit ensemble weights</td></tr>
+                        <tr><td class="name"><code>cv_fold_results.csv</code></td><td>Per-model, per-fold RMSE, MAE, R², and fold boundaries</td></tr>
+                        <tr><td class="name"><code>tuning_results.csv</code></td><td>Every hyperparameter candidate with its cross-validated score</td></tr>
+                        <tr><td class="name"><code>*_reg.pkl</code></td><td>Fitted scikit-learn pipelines, feature contract embedded</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="wrap">
+            <p>
+                <strong style="color:var(--ink)">OpenFPL Scout AI</strong> · Technical report for version 5.3.0
+                · Models trained 14 August 2026 · Report generated 16 August 2026.
+            </p>
+            <p>
+                Live data from the official Fantasy Premier League API, with optional FPL Data enrichment.
+                OpenFPL is an independent project and is not affiliated with, endorsed by, or connected to the
+                Premier League or Fantasy Premier League. Forecasts are statistical estimates and carry the
+                error documented above — they are not advice or a guarantee of any outcome.
+            </p>
+            <p>
+                <a href="/">Back to the app</a> · <a href="/api">API catalogue</a> · <a href="/redoc">API
+                    reference</a> · @elcaiseri, 2026
+            </p>
+        </div>
+    </footer>
+
+    <script src="data.js"></script>
+    <script src="charts.js"></script>
+</body>
+
+</html>

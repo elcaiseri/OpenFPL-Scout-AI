@@ -1,0 +1,795 @@
+/* OpenFPL Scout AI — technical report
+   Dark-only, matching the host application (the app ships no light theme).
+   Data-mark palette is validated for CVD separation and contrast on --panel. */
+
+:root {
+    /* Surfaces */
+    --bg: #12061a;
+    --panel: #1c0828;
+    --panel-2: #250f33;
+    --line: rgba(255, 255, 255, 0.10);
+    --line-strong: rgba(255, 255, 255, 0.18);
+
+    /* Ink */
+    --ink: #f8f7fb;
+    --ink-2: #c5b9cf;
+    --ink-3: #91849e;
+
+    /* Brand chrome — never used to encode data */
+    --lime: #c8ff32;
+    --aqua: #39f1ff;
+    --pink: #ff4fa7;
+
+    /* Validated categorical data palette (dark, surface #1c0828)
+       Lightness band PASS · Chroma floor PASS · CVD separation PASS (ΔE 17.3)
+       Normal-vision floor PASS (ΔE 17.9) · Contrast vs surface PASS (all >= 3:1) */
+    --s1: #729e00;
+    --s2: #00a8b3;
+    --s3: #9a6500;
+    --s4: #743bfe;
+    --s5: #ca027b;
+    --reference: #6f6478;
+
+    /* Status — reserved meanings, always shipped with a label */
+    --good: #3f9d5a;
+    --warn: #a97800;
+    --bad: #c0392b;
+
+    --font-body: Inter, Aptos, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --radius: 16px;
+    --maxw: 1140px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.65;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Layout ---------- */
+
+.wrap {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+main section {
+    padding: 56px 0 8px;
+    border-top: 1px solid var(--line);
+}
+
+main section:first-of-type {
+    border-top: 0;
+}
+
+/* ---------- Masthead ---------- */
+
+.masthead {
+    padding: 64px 0 40px;
+    background:
+        radial-gradient(900px 420px at 12% -10%, rgba(200, 255, 50, 0.10), transparent 60%),
+        radial-gradient(700px 380px at 88% 0%, rgba(57, 241, 255, 0.09), transparent 60%);
+}
+
+.eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--lime);
+    font-weight: 600;
+    margin: 0 0 14px;
+}
+
+.masthead h1 {
+    font-family: var(--font-display);
+    font-size: clamp(38px, 7vw, 74px);
+    line-height: 0.98;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    margin: 0 0 18px;
+}
+
+.masthead .lede {
+    font-size: clamp(16px, 2.1vw, 19px);
+    color: var(--ink-2);
+    max-width: 68ch;
+    margin: 0 0 26px;
+}
+
+.meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-top: 8px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    background: rgba(255, 255, 255, 0.03);
+    white-space: nowrap;
+}
+
+.chip b {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+/* ---------- Table of contents ---------- */
+
+.toc {
+    margin: 34px 0 0;
+    padding: 20px 22px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.toc h2 {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+    font-weight: 600;
+}
+
+.toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 4px 24px;
+    counter-reset: toc;
+}
+
+.toc li {
+    counter-increment: toc;
+}
+
+.toc a {
+    display: block;
+    padding: 5px 0;
+    color: var(--ink-2);
+    text-decoration: none;
+    font-size: 14.5px;
+    border-bottom: 1px solid transparent;
+}
+
+.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    margin-right: 10px;
+}
+
+.toc a:hover {
+    color: var(--lime);
+}
+
+/* ---------- Headings ---------- */
+
+h2.sec {
+    font-size: clamp(24px, 3.4vw, 32px);
+    line-height: 1.15;
+    margin: 0 0 6px;
+    letter-spacing: -0.015em;
+}
+
+.sec-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--lime);
+    letter-spacing: 0.1em;
+    display: block;
+    margin-bottom: 10px;
+}
+
+h3 {
+    font-size: 18px;
+    margin: 30px 0 8px;
+    letter-spacing: -0.01em;
+}
+
+h4 {
+    font-size: 15px;
+    margin: 22px 0 6px;
+    color: var(--ink);
+}
+
+p {
+    margin: 0 0 14px;
+    max-width: 76ch;
+    color: var(--ink-2);
+}
+
+p.intro {
+    font-size: 17px;
+    color: var(--ink-2);
+    margin-bottom: 22px;
+}
+
+ul,
+ol.body-list {
+    margin: 0 0 16px;
+    padding-left: 20px;
+    max-width: 76ch;
+    color: var(--ink-2);
+}
+
+li {
+    margin-bottom: 7px;
+}
+
+strong {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+a {
+    color: var(--aqua);
+}
+
+code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 6px;
+    color: var(--ink);
+    word-break: break-word;
+}
+
+pre {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin: 0 0 18px;
+}
+
+pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* ---------- Stat tiles ---------- */
+
+.tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin: 24px 0 8px;
+}
+
+.tile {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+}
+
+.tile .k {
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.tile .v {
+    font-size: 31px;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+.tile .s {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    margin-top: 6px;
+    line-height: 1.45;
+}
+
+/* ---------- Figures ---------- */
+
+figure {
+    margin: 26px 0 30px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px 22px 18px;
+}
+
+figcaption {
+    font-size: 13px;
+    color: var(--ink-3);
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    line-height: 1.55;
+    max-width: 90ch;
+}
+
+figcaption b {
+    color: var(--ink-2);
+    font-weight: 600;
+}
+
+.fig-head {
+    margin-bottom: 16px;
+}
+
+.fig-title {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 3px;
+}
+
+.fig-sub {
+    font-size: 13px;
+    color: var(--ink-3);
+    margin: 0;
+    max-width: 80ch;
+}
+
+.chart-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+
+.chart-scroll svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.chart-scroll.fixed-min svg {
+    min-width: 620px;
+    max-width: none;
+    width: 100%;
+}
+
+/* ---------- Legend ---------- */
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--ink-2);
+}
+
+.legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.legend i {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex: none;
+    display: inline-block;
+}
+
+.legend i.dash {
+    height: 0;
+    width: 16px;
+    border-radius: 0;
+    border-top: 2px dashed var(--reference);
+}
+
+/* ---------- SVG primitives ---------- */
+
+.grid-line {
+    stroke: rgba(255, 255, 255, 0.07);
+    stroke-width: 1;
+}
+
+.axis-line {
+    stroke: rgba(255, 255, 255, 0.16);
+    stroke-width: 1;
+}
+
+.tick {
+    fill: var(--ink-3);
+    font-size: 11px;
+    font-family: var(--font-body);
+}
+
+.tick-strong {
+    fill: var(--ink-2);
+    font-size: 12px;
+    font-family: var(--font-body);
+}
+
+.axis-title {
+    fill: var(--ink-3);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-family: var(--font-body);
+}
+
+.val-label {
+    fill: var(--ink);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-body);
+}
+
+.hit {
+    fill: transparent;
+    cursor: pointer;
+}
+
+/* ---------- Tooltip ---------- */
+
+.tip {
+    position: fixed;
+    z-index: 60;
+    pointer-events: none;
+    background: #0b0410;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity 120ms ease;
+    max-width: 260px;
+}
+
+.tip.on {
+    opacity: 1;
+}
+
+.tip b {
+    color: var(--ink);
+    display: block;
+    margin-bottom: 3px;
+    font-size: 13px;
+}
+
+.tip .row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-variant-numeric: tabular-nums;
+}
+
+.tip .row i {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex: none;
+}
+
+/* ---------- Tables ---------- */
+
+.table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    margin: 0 0 20px;
+    background: var(--panel);
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13.5px;
+    min-width: 520px;
+}
+
+th,
+td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+
+th {
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+td {
+    color: var(--ink-2);
+}
+
+td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+th.num {
+    text-align: right;
+}
+
+tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+tbody tr.best td {
+    color: var(--ink);
+    background: rgba(200, 255, 50, 0.05);
+}
+
+td.name {
+    color: var(--ink);
+}
+
+details.data-table {
+    margin: -8px 0 26px;
+}
+
+details.data-table summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--ink-3);
+    padding: 6px 0;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+details.data-table summary::-webkit-details-marker {
+    display: none;
+}
+
+details.data-table summary::before {
+    content: "▸";
+    font-size: 10px;
+    transition: transform 150ms ease;
+    display: inline-block;
+}
+
+details.data-table[open] summary::before {
+    transform: rotate(90deg);
+}
+
+details.data-table summary:hover {
+    color: var(--lime);
+}
+
+details.data-table .table-wrap {
+    margin-top: 10px;
+}
+
+/* ---------- Callouts ---------- */
+
+.note {
+    border-left: 3px solid var(--line-strong);
+    background: var(--panel);
+    border-radius: 0 12px 12px 0;
+    padding: 15px 18px;
+    margin: 0 0 20px;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    max-width: 82ch;
+}
+
+.note p:last-child {
+    margin-bottom: 0;
+}
+
+.note .label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.note.caveat {
+    border-left-color: var(--warn);
+}
+
+.note.caveat .label {
+    color: var(--warn);
+}
+
+.note.key {
+    border-left-color: var(--lime);
+}
+
+.note.key .label {
+    color: var(--lime);
+}
+
+.note.limit {
+    border-left-color: var(--bad);
+}
+
+.note.limit .label {
+    color: var(--bad);
+}
+
+/* ---------- Two-column ---------- */
+
+.cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px 26px;
+    margin-bottom: 8px;
+}
+
+.cols > div {
+    min-width: 0;
+}
+
+.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+}
+
+.card h4 {
+    margin-top: 0;
+}
+
+.card p:last-child,
+.card ul:last-child {
+    margin-bottom: 0;
+}
+
+/* ---------- Diagram ---------- */
+
+.diagram {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin: 24px 0 8px;
+}
+
+.diagram svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.dg-box {
+    fill: var(--panel-2);
+    stroke: var(--line-strong);
+    stroke-width: 1;
+}
+
+.dg-box.accent {
+    stroke: rgba(200, 255, 50, 0.45);
+    fill: rgba(200, 255, 50, 0.07);
+}
+
+.dg-box.ext {
+    stroke: rgba(57, 241, 255, 0.4);
+    fill: rgba(57, 241, 255, 0.06);
+}
+
+.dg-t {
+    fill: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-body);
+}
+
+.dg-s {
+    fill: var(--ink-3);
+    font-size: 11px;
+    font-family: var(--font-body);
+}
+
+.dg-arrow {
+    stroke: var(--line-strong);
+    stroke-width: 1.5;
+    fill: none;
+}
+
+.dg-label {
+    fill: var(--ink-3);
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+}
+
+/* ---------- Footer ---------- */
+
+footer {
+    margin-top: 64px;
+    border-top: 1px solid var(--line);
+    padding: 32px 0 60px;
+    font-size: 13.5px;
+    color: var(--ink-3);
+}
+
+footer p {
+    color: var(--ink-3);
+    font-size: 13.5px;
+}
+
+footer a {
+    color: var(--ink-2);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 640px) {
+    .wrap {
+        padding: 0 18px;
+    }
+
+    figure {
+        padding: 16px 14px 14px;
+    }
+
+    .tile .v {
+        font-size: 27px;
+    }
+
+    main section {
+        padding-top: 44px;
+    }
+}
+
+@media print {
+    body {
+        background: #fff;
+        color: #000;
+    }
+
+    .toc,
+    .tip {
+        display: none;
+    }
+}
