@@ -71,6 +71,7 @@
                 </a>
 
                 <div class="topbar-actions">
+                    <a href="/static/report/index.html">Report</a>
                     <a href="/redoc">API docs</a>
                     <a href="/api">API kit</a>
                     <span class="season-chip">
@@ -345,6 +346,61 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <section class="report-section" aria-label="Technical report">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-index">05</span>
+                        <div>
+                            <p>How the model works</p>
+                            <small>Data, validation, measured accuracy, and known limits</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="report-card">
+                    <div class="report-copy">
+                        <h3>The technical report</h3>
+                        <p>
+                            OpenFPL was measured on a full Premier League season held out of training —
+                            29,747 player-gameweeks. The report documents the four-model ensemble, how it
+                            was validated, exactly how accurate it proved to be, and where it is known to
+                            be weak.
+                        </p>
+                        <div class="report-actions">
+                            <a class="report-button primary" href="/static/report/index.html">
+                                Read the report
+                            </a>
+                            <a class="report-button" href="/static/report/openfpl-technical-report.pdf"
+                                type="application/pdf">
+                                Download PDF
+                            </a>
+                        </div>
+                    </div>
+                    <dl class="report-stats" aria-label="Headline results from the held-out season">
+                        <div>
+                            <dt>Holdout RMSE</dt>
+                            <dd>1.92</dd>
+                            <small>points per player-gameweek</small>
+                        </div>
+                        <div>
+                            <dt>Rank correlation</dt>
+                            <dd>0.70</dd>
+                            <small>mean Spearman ρ, all 38 GWs</small>
+                        </div>
+                        <div>
+                            <dt>Squad points</dt>
+                            <dd>70.6</dd>
+                            <small>per GW vs 56.0 for FPL's xP</small>
+                        </div>
+                        <div>
+                            <dt>Gameweeks won</dt>
+                            <dd>31/38</dd>
+                            <small>against a 5-GW form squad</small>
+                        </div>
+                    </dl>
                 </div>
             </section>
         </main>

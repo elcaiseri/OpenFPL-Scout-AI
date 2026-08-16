@@ -142,70 +142,70 @@
                 <svg viewBox="0 0 900 400" role="img"
                     aria-label="Request flow: the official FPL API and optional enrichment feed history into feature preparation, four models, ensemble averaging, and squad selection.">
                     <!-- Sources -->
-                    <rect class="dg-box ext" x="10" y="30" width="176" height="74" rx="12" />
-                    <text class="dg-t" x="26" y="58">Official FPL API</text>
-                    <text class="dg-s" x="26" y="78">bootstrap · fixtures</text>
-                    <text class="dg-s" x="26" y="94">element-summary</text>
+                    <rect class="dg-box ext" fill="#1e1635" stroke="#28657e" stroke-width="1" x="10" y="30" width="176" height="74" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="26" y="58">Official FPL API</text>
+                    <text class="dg-s" fill="#91849e" x="26" y="78">bootstrap · fixtures</text>
+                    <text class="dg-s" fill="#91849e" x="26" y="94">element-summary</text>
 
-                    <rect class="dg-box ext" x="10" y="128" width="176" height="74" rx="12" />
-                    <text class="dg-t" x="26" y="156">FPL Data (optional)</text>
-                    <text class="dg-s" x="26" y="176">fills 17 audited stats</text>
-                    <text class="dg-s" x="26" y="192">from GW2, never identity</text>
+                    <rect class="dg-box ext" fill="#1e1635" stroke="#28657e" stroke-width="1" x="10" y="128" width="176" height="74" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="26" y="156">FPL Data (optional)</text>
+                    <text class="dg-s" fill="#91849e" x="26" y="176">fills 17 audited stats</text>
+                    <text class="dg-s" fill="#91849e" x="26" y="192">from GW2, never identity</text>
 
-                    <text class="dg-label" x="10" y="228">SOURCES — read live, cached in memory</text>
+                    <text class="dg-label" fill="#91849e" x="10" y="228">SOURCES — read live, cached in memory</text>
 
                     <!-- Feature prep -->
-                    <path class="dg-arrow" d="M186 67 L 236 67 L 236 140 L 256 140" />
-                    <path class="dg-arrow" d="M186 165 L 216 165 L 216 152 L 256 152" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M186 67 L 236 67 L 236 140 L 256 140" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M186 165 L 216 165 L 216 152 L 256 152" />
                     <polygon points="256,140 248,136 248,144" fill="#9b8fa6" />
 
-                    <rect class="dg-box" x="258" y="106" width="176" height="88" rx="12" />
-                    <text class="dg-t" x="274" y="134">Feature preparation</text>
-                    <text class="dg-s" x="274" y="154">5-match rolling means</text>
-                    <text class="dg-s" x="274" y="170">fixture context attached</text>
-                    <text class="dg-s" x="274" y="186">38 columns, training order</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="258" y="106" width="176" height="88" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="274" y="134">Feature preparation</text>
+                    <text class="dg-s" fill="#91849e" x="274" y="154">5-match rolling means</text>
+                    <text class="dg-s" fill="#91849e" x="274" y="170">fixture context attached</text>
+                    <text class="dg-s" fill="#91849e" x="274" y="186">38 columns, training order</text>
 
                     <!-- Models -->
-                    <path class="dg-arrow" d="M434 150 L 466 150" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M434 150 L 466 150" />
                     <polygon points="472,150 464,146 464,154" fill="#9b8fa6" />
 
-                    <rect class="dg-box" x="474" y="46" width="150" height="42" rx="10" />
-                    <text class="dg-t" x="490" y="72">Ridge</text>
-                    <rect class="dg-box" x="474" y="96" width="150" height="42" rx="10" />
-                    <text class="dg-t" x="490" y="122">XGBoost</text>
-                    <rect class="dg-box" x="474" y="146" width="150" height="42" rx="10" />
-                    <text class="dg-t" x="490" y="172">CatBoost</text>
-                    <rect class="dg-box" x="474" y="196" width="150" height="42" rx="10" />
-                    <text class="dg-t" x="490" y="222">MLP</text>
-                    <text class="dg-label" x="474" y="258">≥ 3 of 4 must succeed</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="474" y="46" width="150" height="42" rx="10" />
+                    <text class="dg-t" fill="#f8f7fb" x="490" y="72">Ridge</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="474" y="96" width="150" height="42" rx="10" />
+                    <text class="dg-t" fill="#f8f7fb" x="490" y="122">XGBoost</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="474" y="146" width="150" height="42" rx="10" />
+                    <text class="dg-t" fill="#f8f7fb" x="490" y="172">CatBoost</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="474" y="196" width="150" height="42" rx="10" />
+                    <text class="dg-t" fill="#f8f7fb" x="490" y="222">MLP</text>
+                    <text class="dg-label" fill="#91849e" x="474" y="258">≥ 3 of 4 must succeed</text>
 
                     <!-- Ensemble -->
-                    <path class="dg-arrow" d="M624 67 L 654 67 L 654 138 L 674 138" />
-                    <path class="dg-arrow" d="M624 117 L 644 117 L 644 138 L 674 138" />
-                    <path class="dg-arrow" d="M624 167 L 644 167 L 644 148 L 674 148" />
-                    <path class="dg-arrow" d="M624 217 L 654 217 L 654 152 L 674 152" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M624 67 L 654 67 L 654 138 L 674 138" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M624 117 L 644 117 L 644 138 L 674 138" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M624 167 L 644 167 L 644 148 L 674 148" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M624 217 L 654 217 L 654 152 L 674 152" />
                     <polygon points="674,143 666,139 666,147" fill="#9b8fa6" />
 
-                    <rect class="dg-box accent" x="676" y="106" width="176" height="76" rx="12" />
-                    <text class="dg-t" x="692" y="134">Ensemble average</text>
-                    <text class="dg-s" x="692" y="154">equal weights</text>
-                    <text class="dg-s" x="692" y="170">clipped at 0</text>
+                    <rect class="dg-box accent" fill="#281929" stroke="#69772d" stroke-width="1" x="676" y="106" width="176" height="76" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="692" y="134">Ensemble average</text>
+                    <text class="dg-s" fill="#91849e" x="692" y="154">equal weights</text>
+                    <text class="dg-s" fill="#91849e" x="692" y="170">clipped at 0</text>
 
                     <!-- Selection -->
-                    <path class="dg-arrow" d="M764 182 L 764 232" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M764 182 L 764 232" />
                     <polygon points="764,238 760,230 768,230" fill="#9b8fa6" />
-                    <rect class="dg-box accent" x="676" y="240" width="176" height="94" rx="12" />
-                    <text class="dg-t" x="692" y="268">Squad selection</text>
-                    <text class="dg-s" x="692" y="288">2 GK · 5 DEF · 5 MID · 3 FWD</text>
-                    <text class="dg-s" x="692" y="304">max 3 per club</text>
-                    <text class="dg-s" x="692" y="320">captain + vice</text>
+                    <rect class="dg-box accent" fill="#281929" stroke="#69772d" stroke-width="1" x="676" y="240" width="176" height="94" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="692" y="268">Squad selection</text>
+                    <text class="dg-s" fill="#91849e" x="692" y="288">2 GK · 5 DEF · 5 MID · 3 FWD</text>
+                    <text class="dg-s" fill="#91849e" x="692" y="304">max 3 per club</text>
+                    <text class="dg-s" fill="#91849e" x="692" y="320">captain + vice</text>
 
                     <!-- Cold start branch -->
-                    <path class="dg-arrow" d="M346 194 L 346 290 L 656 290" stroke-dasharray="5 5" />
+                    <path class="dg-arrow" fill="none" stroke="#48404f" stroke-width="1.5" d="M346 194 L 346 290 L 656 290" stroke-dasharray="5 5" />
                     <polygon points="662,290 654,286 654,294" fill="#9b8fa6" />
-                    <rect class="dg-box" x="258" y="294" width="270" height="62" rx="12" />
-                    <text class="dg-t" x="274" y="320">GW1 cold-start path</text>
-                    <text class="dg-s" x="274" y="340">log1p(ownership) × availability — models skipped</text>
+                    <rect class="dg-box" fill="#250f33" stroke="#48404f" stroke-width="1" x="258" y="294" width="300" height="62" rx="12" />
+                    <text class="dg-t" fill="#f8f7fb" x="274" y="320">GW1 cold-start path</text>
+                    <text class="dg-s" fill="#91849e" x="274" y="340">log1p(ownership) × availability — models skipped</text>
                 </svg>
             </div>
             <p style="margin-top:18px">
@@ -362,62 +362,62 @@
             <div class="diagram">
                 <svg viewBox="0 0 990 300" role="img"
                     aria-label="Five expanding cross-validation folds train on progressively more history and validate on the period that follows; folds four and five validate inside the season later used as the holdout.">
-                    <text class="dg-label" x="12" y="20">EXPANDING FORWARD-CHAINING CROSS-VALIDATION — used for tuning and model selection</text>
+                    <text class="dg-label" fill="#91849e" x="12" y="20">EXPANDING FORWARD-CHAINING CROSS-VALIDATION — used for tuning and model selection</text>
 
                     <!-- axis -->
-                    <text class="dg-s" x="120" y="46">2023/24</text>
-                    <text class="dg-s" x="360" y="46">2024/25</text>
-                    <text class="dg-s" x="600" y="46">2025/26</text>
-                    <line x1="120" y1="54" x2="840" y2="54" class="axis-line" />
-                    <line x1="360" y1="54" x2="360" y2="238" class="grid-line" />
-                    <line x1="600" y1="54" x2="600" y2="296" class="grid-line" />
+                    <text class="dg-s" fill="#91849e" x="120" y="46">2023/24</text>
+                    <text class="dg-s" fill="#91849e" x="360" y="46">2024/25</text>
+                    <text class="dg-s" fill="#91849e" x="600" y="46">2025/26</text>
+                    <line x1="120" y1="54" x2="840" y2="54" class="axis-line" fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+                    <line x1="360" y1="54" x2="360" y2="238" class="grid-line" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="1" />
+                    <line x1="600" y1="54" x2="600" y2="296" class="grid-line" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="1" />
 
                     <!-- folds -->
                     <g>
-                        <text class="dg-s" x="12" y="80">Fold 1</text>
+                        <text class="dg-s" fill="#91849e" x="12" y="80">Fold 1</text>
                         <rect x="120" y="66" width="120" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
                         <rect x="242" y="66" width="118" height="18" rx="4" fill="#729e00" />
-                        <text class="dg-s" x="980" y="80" text-anchor="end">16,011 rows</text>
+                        <text class="dg-s" fill="#91849e" x="980" y="80" text-anchor="end">16,011 rows</text>
                     </g>
                     <g>
-                        <text class="dg-s" x="12" y="108">Fold 2</text>
+                        <text class="dg-s" fill="#91849e" x="12" y="108">Fold 2</text>
                         <rect x="120" y="94" width="240" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
                         <rect x="362" y="94" width="118" height="18" rx="4" fill="#729e00" />
-                        <text class="dg-s" x="980" y="108" text-anchor="end">12,743 rows</text>
+                        <text class="dg-s" fill="#91849e" x="980" y="108" text-anchor="end">12,743 rows</text>
                     </g>
                     <g>
-                        <text class="dg-s" x="12" y="136">Fold 3</text>
+                        <text class="dg-s" fill="#91849e" x="12" y="136">Fold 3</text>
                         <rect x="120" y="122" width="360" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
                         <rect x="482" y="122" width="118" height="18" rx="4" fill="#729e00" />
-                        <text class="dg-s" x="980" y="136" text-anchor="end">14,540 rows</text>
+                        <text class="dg-s" fill="#91849e" x="980" y="136" text-anchor="end">14,540 rows</text>
                     </g>
                     <g>
-                        <text class="dg-s" x="12" y="164">Fold 4</text>
+                        <text class="dg-s" fill="#91849e" x="12" y="164">Fold 4</text>
                         <rect x="120" y="150" width="478" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
                         <rect x="602" y="150" width="118" height="18" rx="4" fill="#ca027b" />
-                        <text class="dg-s" x="980" y="164" text-anchor="end">14,175 rows</text>
+                        <text class="dg-s" fill="#91849e" x="980" y="164" text-anchor="end">14,175 rows</text>
                     </g>
                     <g>
-                        <text class="dg-s" x="12" y="192">Fold 5</text>
+                        <text class="dg-s" fill="#91849e" x="12" y="192">Fold 5</text>
                         <rect x="120" y="178" width="598" height="18" rx="4" fill="#743bfe" fill-opacity="0.75" />
                         <rect x="722" y="178" width="118" height="18" rx="4" fill="#ca027b" />
-                        <text class="dg-s" x="980" y="192" text-anchor="end">15,572 rows</text>
+                        <text class="dg-s" fill="#91849e" x="980" y="192" text-anchor="end">15,572 rows</text>
                     </g>
 
                     <!-- legend -->
                     <rect x="120" y="212" width="12" height="12" rx="3" fill="#743bfe" fill-opacity="0.75" />
-                    <text class="dg-s" x="140" y="222">Train</text>
+                    <text class="dg-s" fill="#91849e" x="140" y="222">Train</text>
                     <rect x="194" y="212" width="12" height="12" rx="3" fill="#729e00" />
-                    <text class="dg-s" x="214" y="222">Validate</text>
+                    <text class="dg-s" fill="#91849e" x="214" y="222">Validate</text>
                     <rect x="284" y="212" width="12" height="12" rx="3" fill="#ca027b" />
-                    <text class="dg-s" x="304" y="222">Validates inside the season later used as the holdout</text>
+                    <text class="dg-s" fill="#91849e" x="304" y="222">Validates inside the season later used as the holdout</text>
 
                     <!-- holdout -->
-                    <line x1="12" y1="242" x2="980" y2="242" class="grid-line" />
-                    <text class="dg-label" x="12" y="264">FINAL HOLDOUT — refit on the first two seasons, scored once on the third</text>
+                    <line x1="12" y1="242" x2="980" y2="242" class="grid-line" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="1" />
+                    <text class="dg-label" fill="#91849e" x="12" y="264">FINAL HOLDOUT — refit on the first two seasons, scored once on the third</text>
                     <rect x="120" y="274" width="478" height="14" rx="4" fill="#743bfe" fill-opacity="0.45" />
                     <rect x="602" y="274" width="238" height="14" rx="4" fill="#ca027b" />
-                    <text class="dg-s" x="980" y="286" text-anchor="end">29,747 rows</text>
+                    <text class="dg-s" fill="#91849e" x="980" y="286" text-anchor="end">29,747 rows</text>
                 </svg>
             </div>
 

@@ -460,8 +460,9 @@ figcaption b {
     font-family: var(--font-body);
 }
 
+/* fill/pointer-events come from presentation attributes set in charts.js so
+   that non-browser renderers do not fall back to SVG's default black fill. */
 .hit {
-    fill: transparent;
     cursor: pointer;
 }
 

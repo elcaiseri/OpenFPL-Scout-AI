@@ -10,8 +10,35 @@
     if (!D) return;
 
     var NS = "http://www.w3.org/2000/svg";
-    var PAL = ["#729e00", "#00a8b3", "#9a6500", "#743bfe", "#ca027b"];
-    var REF = "#6f6478";
+    /* Validated for the dark chart surface #1c0828. The PDF build reuses this
+       file and can substitute an equivalently validated palette. */
+    var PAL = window.REPORT_PALETTE || ["#729e00", "#00a8b3", "#9a6500", "#743bfe", "#ca027b"];
+    var REF = window.REPORT_REFERENCE || "#6f6478";
+    var SURFACE = window.REPORT_SURFACE || "#1c0828";
+
+    var INK = window.REPORT_INK || {
+        primary: "#f8f7fb",
+        secondary: "#c5b9cf",
+        muted: "#91849e",
+        grid: "rgba(255, 255, 255, 0.07)",
+        axis: "rgba(255, 255, 255, 0.16)"
+    };
+
+    /* Presentation attributes mirroring the SVG rules in style.css. Renderers
+       outside a browser — the PDF build among them — do not apply document CSS
+       to SVG shapes, and an unstyled shape defaults to solid black. Attributes
+       have lower priority than CSS, so the page still renders from the
+       stylesheet and these only act as the fallback. */
+    var PRESENTATION = {
+        "grid-line": { stroke: INK.grid, "stroke-width": 1, fill: "none" },
+        "axis-line": { stroke: INK.axis, "stroke-width": 1, fill: "none" },
+        "tick": { fill: INK.muted },
+        "tick-strong": { fill: INK.secondary },
+        "axis-title": { fill: INK.muted },
+        "val-label": { fill: INK.primary },
+        /* pointer-events keeps the target hit-testable despite fill:none. */
+        "hit": { fill: "none", "pointer-events": "all" }
+    };
 
     /* ---------- tiny SVG helpers ---------- */
 
@@ -20,6 +47,12 @@
         for (var key in attrs) {
             if (attrs[key] !== null && attrs[key] !== undefined) {
                 node.setAttribute(key, attrs[key]);
+            }
+        }
+        var fallback = attrs && PRESENTATION[attrs.class];
+        if (fallback) {
+            for (var name2 in fallback) {
+                if (attrs[name2] === undefined) node.setAttribute(name2, fallback[name2]);
             }
         }
         if (parent) parent.appendChild(node);
@@ -152,7 +185,9 @@
         if (!mount) return;
 
         var rows = D.holdout.slice().sort(function (a, b) { return a.rmse - b.rmse; });
-        var rowH = 30, padT = 34, padB = 44, padL = 176, padR = 58;
+        /* padL leaves room for the longest label in a wide fallback font — the
+           PDF renderer does not have the page's preferred face. */
+        var rowH = 30, padT = 34, padB = 44, padL = 218, padR = 58;
         var W = 780, H = padT + rows.length * rowH + padB;
         var plotW = W - padL - padR;
         var max = 2.7;
@@ -228,10 +263,17 @@
 
         series[0].folds.forEach(function (fold, i) {
             var x = xOf(i);
-            var span = fold.val.split("→");
+            var span = fold.val.split("→").map(seasonLabel);
+            /* Every fold validates inside a single season, so name the season
+               once and show only the gameweek range beneath it. */
+            var from = span[0].split(" GW"), to = span[1].split(" GW");
+            var line2 = from[0] === to[0] ? from[0] : span[0];
+            var line3 = from[0] === to[0]
+                ? "GW" + from[1] + " → GW" + to[1]
+                : "→ " + span[1];
             text(s, x, H - padB + 22, "Fold " + fold.fold, "tick-strong", "middle");
-            text(s, x, H - padB + 40, seasonLabel(span[0]), "tick", "middle");
-            text(s, x, H - padB + 54, "→ " + seasonLabel(span[1]), "tick", "middle");
+            text(s, x, H - padB + 40, line2, "tick", "middle");
+            text(s, x, H - padB + 54, line3, "tick", "middle");
         });
         el("line", { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, class: "axis-line" }, s);
 
@@ -242,7 +284,7 @@
             el("path", { d: d, fill: "none", stroke: item.color, "stroke-width": 2, "stroke-linejoin": "round" }, s);
             item.folds.forEach(function (fold, i) {
                 /* 2px surface ring keeps overlapping markers separable */
-                el("circle", { cx: xOf(i), cy: yOf(fold.rmse), r: 5, fill: item.color, stroke: "#1c0828", "stroke-width": 2 }, s);
+                el("circle", { cx: xOf(i), cy: yOf(fold.rmse), r: 5, fill: item.color, stroke: SURFACE, "stroke-width": 2 }, s);
             });
         });
 
@@ -311,7 +353,7 @@
         }, s);
 
         pts.forEach(function (p) {
-            el("circle", { cx: p.x, cy: p.y, r: 6, fill: PAL[0], stroke: "#1c0828", "stroke-width": 2 }, s);
+            el("circle", { cx: p.x, cy: p.y, r: 6, fill: PAL[0], stroke: SURFACE, "stroke-width": 2 }, s);
             var hit = el("circle", { cx: p.x, cy: p.y, r: 16, class: "hit" }, s);
             bindTip(hit, "<b>Decile " + p.row.decile + " of 10</b>" +
                 tipRow(PAL[0], "Predicted", fmt(p.row.pred, 2)) +
@@ -347,7 +389,8 @@
         text(s, padL + plotW / 2, H - padB + 40, "Gameweek (2025/26 holdout season)", "axis-title", "middle");
 
         rows.forEach(function (row, i) {
-            if (row.gw % 4 === 1 || row.gw === 38) {
+            /* Skip GW37 so it cannot collide with the final GW38 label. */
+            if ((row.gw % 4 === 1 && row.gw < 36) || row.gw === 38) {
                 text(s, xOf(i), H - padB + 20, row.gw, "tick", "middle");
             }
         });
@@ -371,7 +414,7 @@
             var isGw1 = row.gw === 1;
             el("circle", {
                 cx: xOf(i), cy: yOf(row.spearman), r: isGw1 ? 6 : 3.5,
-                fill: isGw1 ? "#c0392b" : PAL[0], stroke: "#1c0828", "stroke-width": 2
+                fill: isGw1 ? "#c0392b" : PAL[0], stroke: SURFACE, "stroke-width": 2
             }, s);
             var hit = el("rect", { x: xOf(i) - plotW / (rows.length * 2), y: padT, width: plotW / rows.length, height: plotH, class: "hit" }, s);
             bindTip(hit, "<b>Gameweek " + row.gw + "</b>" +
@@ -465,7 +508,7 @@
         text(s, padL + plotW / 2, H - padB + 40, "Gameweek (2025/26 holdout season)", "axis-title", "middle");
 
         b.forEach(function (row, i) {
-            if (row.gw % 4 === 1 || row.gw === 38) text(s, xOf(i), H - padB + 20, row.gw, "tick", "middle");
+            if ((row.gw % 4 === 1 && row.gw < 36) || row.gw === 38) text(s, xOf(i), H - padB + 20, row.gw, "tick", "middle");
         });
         el("line", { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, class: "axis-line" }, s);
 
