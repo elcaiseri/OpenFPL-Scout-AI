@@ -20,14 +20,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     NUMEXPR_NUM_THREADS="1"
 
 COPY --from=builder /app/.venv /app/.venv
-COPY main.py ./
-COPY config/config.yaml ./config/config.yaml
-COPY scripts ./scripts
-COPY src ./src
-COPY static ./static
-COPY assets/openfpl-predictive-lion-frameless-2026-512.png \
-    assets/apple-touch-icon-predictive-lion-frameless.png \
-    ./assets/
+COPY . ./
 
 RUN mkdir -p /app/data /app/models
 
