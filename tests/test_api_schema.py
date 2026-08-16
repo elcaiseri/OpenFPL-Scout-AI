@@ -1,4 +1,8 @@
+import asyncio
 import unittest
+from unittest.mock import patch
+
+import pandas as pd
 
 from main import (
     _api_catalog,
@@ -6,10 +10,83 @@ from main import (
     _documentation_links,
     _is_production_environment,
     app,
+    rate_public_manager_team,
 )
 
 
+class FakeRatingOfficialClient:
+    def mapped_manager(self, entry_id):
+        return {
+            "id": entry_id,
+            "name": "Test XI",
+            "player_first_name": "Test",
+            "player_last_name": "Manager",
+            "current_event": 1,
+        }
+
+    def mapped_manager_picks(self, entry_id, gameweek):
+        positions = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 1, 2, 3, 4]
+        return {
+            "entry_id": entry_id,
+            "gameweek": gameweek,
+            "picks": [
+                {
+                    "element": index,
+                    "position": index,
+                    "multiplier": 2 if index == 1 else 1 if index <= 11 else 0,
+                    "is_captain": index == 1,
+                    "is_vice_captain": index == 2,
+                    "player": {
+                        "id": index,
+                        "position": position,
+                        "price": 5.0,
+                    },
+                }
+                for index, position in enumerate(positions, start=1)
+            ],
+        }
+
+
+class FakeRatingScout:
+    def __init__(self):
+        self.official_client = FakeRatingOfficialClient()
+
+    def get_official_predictions(self, gameweek):
+        positions = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 1, 2, 3, 4]
+        predictions = pd.DataFrame(
+            [
+                {
+                    "id": index,
+                    "web_name": f"Player {index}",
+                    "team_name": f"Club {index % 6}",
+                    "element_type": position,
+                    "expected_points": 5.0,
+                    "availability_factor": 1.0,
+                    "selected_by_percent": 20.0,
+                }
+                for index, position in enumerate(positions, start=1)
+            ]
+        )
+        predictions.attrs["gameweek"] = gameweek
+        predictions.attrs["inference"] = {"strategy": "model-ensemble"}
+        predictions.attrs["source"] = "official-fpl"
+        return predictions
+
+    def select_optimal_team(self, predictions):
+        return predictions.copy()
+
+
 class APISchemaTests(unittest.TestCase):
+    def test_public_team_rating_combines_manager_picks_and_predictions(self):
+        with patch("main.scout", FakeRatingScout(), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertEqual(result.entry_id, 123)
+        self.assertEqual(result.team_name, "Test XI")
+        self.assertEqual(result.rating, 100)
+        self.assertEqual(result.grade, "A+")
+        self.assertEqual(len(result.squad), 15)
+
     def test_production_keeps_only_redoc_ui(self):
         documentation = _documentation_config(is_production=True)
 
@@ -32,6 +109,7 @@ class APISchemaTests(unittest.TestCase):
             "/api/health",
             "/api/gameweeks",
             "/api/scout",
+            "/api/scout/team-rating",
             "/api/gw/scout",
             "/api/gw/playerpoints",
             "/api/fpl/gameweeks",
@@ -99,6 +177,7 @@ class APISchemaTests(unittest.TestCase):
                 ("GET", "/api/fpl/fixtures"),
                 ("GET", "/api/fpl/gameweeks/status"),
                 ("GET", "/api/scout"),
+                ("GET", "/api/scout/team-rating"),
             },
         )
         self.assertTrue(

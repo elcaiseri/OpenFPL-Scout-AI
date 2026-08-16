@@ -112,6 +112,7 @@ publishes them for the active season.
 | Method and route | Authentication | Options |
 |---|---|---|
 | `GET /api/scout` | Public | Optional `gameweek` |
+| `GET /api/scout/team-rating` | Public | Required `entry_id` and `gameweek` |
 | `POST /api/scout` | OpenFPL bearer token | Optional `gameweek` |
 | `GET /api/gw/scout` | OpenFPL bearer token | Required `gameweek` |
 | `GET /api/gw/playerpoints` | OpenFPL bearer token | `gameweek`, `element_type`, `web_name`, `team_name`, `was_home` |

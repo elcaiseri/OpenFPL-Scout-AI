@@ -236,7 +236,7 @@
                 </div>
             </section>
 
-            <section class="squad-section" aria-label="AI-selected squad">
+            <section class="squad-section" aria-label="AI squad selection">
                 <div class="section-heading squad-heading">
                     <div>
                         <span class="section-index">04</span>
@@ -245,7 +245,7 @@
                             <small id="squad-subtitle">15 picks ranked for the selected Gameweek</small>
                         </div>
                     </div>
-                    <div class="squad-tools">
+                    <div class="squad-tools" id="squad-tools">
                         <span class="formation-chip" id="formation-chip">2 • 5 • 5 • 3</span>
                         <div class="view-switcher" role="group" aria-label="Squad view">
                             <button class="view-button active" type="button" data-view="pitch" aria-pressed="true">Pitch</button>
@@ -254,32 +254,96 @@
                     </div>
                 </div>
 
-                <div class="squad-view active" id="pitch-view">
-                    <div class="pitch" id="pitch" role="region" aria-label="Squad formation display">
-                        <div class="loading" role="status" aria-live="polite">
-                            <span class="loading-ball" aria-hidden="true"></span>
-                            Running local AI inference…
+                <div class="squad-mode-picker" role="group" aria-label="Choose squad analysis mode">
+                    <button class="squad-mode-button active" type="button" data-squad-mode="scout" aria-pressed="true">
+                        <span class="mode-number">01</span>
+                        <span><strong>AI Scout Team</strong><small>See OpenFPL's 15 recommended picks</small></span>
+                        <span class="mode-arrow" aria-hidden="true">→</span>
+                    </button>
+                    <button class="squad-mode-button" type="button" data-squad-mode="rating" aria-pressed="false">
+                        <span class="mode-number">02</span>
+                        <span><strong>Rate Your Team</strong><small>Score your published squad with the same AI</small></span>
+                        <span class="mode-arrow" aria-hidden="true">→</span>
+                    </button>
+                </div>
+
+                <div class="team-rating-panel" id="team-rating-panel" hidden>
+                    <form class="team-rating-form" id="team-rating-form">
+                        <div>
+                            <label for="team-id-input">Your FPL team ID</label>
+                            <small>Enter the number from your “Points” page URL.</small>
+                        </div>
+                        <div class="team-id-control">
+                            <input id="team-id-input" name="entry_id" type="text" inputmode="numeric"
+                                pattern="[0-9]+" autocomplete="off" placeholder="e.g. 1234567" required
+                                aria-describedby="team-rating-note team-rating-error">
+                            <button id="rate-team-button" type="submit">Rate my team</button>
+                        </div>
+                    </form>
+                    <p class="team-rating-note" id="team-rating-note">
+                        OpenFPL reads only public, post-deadline picks. For an upcoming Gameweek, your latest published squad is scored against that Gameweek's forecast.
+                    </p>
+                    <div class="team-rating-error" id="team-rating-error" role="alert" hidden></div>
+
+                    <div class="team-rating-result" id="team-rating-result" aria-live="polite" hidden>
+                        <div class="rating-verdict">
+                            <div class="rating-score" id="rating-score-ring">
+                                <strong id="rating-score">—</strong>
+                                <span>/ 100</span>
+                            </div>
+                            <div class="rating-team-copy">
+                                <span class="rating-kicker">AI team rating · <b id="rating-grade">—</b></span>
+                                <h3 id="rating-team-name">Your team</h3>
+                                <p id="rating-manager-name">FPL manager</p>
+                                <small id="rating-picks-label">Latest published squad</small>
+                            </div>
+                            <div class="rating-metrics">
+                                <span><small>Your projection</small><strong id="rating-projection">—</strong></span>
+                                <span><small>AI benchmark</small><strong id="rating-benchmark">—</strong></span>
+                                <span><small>Projected gap</small><strong id="rating-gap">—</strong></span>
+                            </div>
+                        </div>
+                        <div class="rating-insights">
+                            <article>
+                                <span class="insight-label strength">Strengths</span>
+                                <ul id="rating-strengths"></ul>
+                            </article>
+                            <article>
+                                <span class="insight-label risk">Watch list</span>
+                                <ul id="rating-risks"></ul>
+                            </article>
                         </div>
                     </div>
                 </div>
 
-                <div class="squad-view" id="table-view" hidden>
-                    <div class="table-shell">
-                        <table class="squad-table">
-                            <caption class="sr-only">AI-selected FPL squad with official player information</caption>
-                            <thead>
-                                <tr>
-                                    <th scope="col">Rank / player</th>
-                                    <th scope="col">Pos</th>
-                                    <th scope="col">Fixture</th>
-                                    <th scope="col">Price</th>
-                                    <th scope="col">Selected by</th>
-                                    <th scope="col">Status</th>
-                                    <th scope="col">xPts</th>
-                                </tr>
-                            </thead>
-                            <tbody id="squad-table-body"></tbody>
-                        </table>
+                <div id="squad-display">
+                    <div class="squad-view active" id="pitch-view">
+                        <div class="pitch" id="pitch" role="region" aria-label="Squad formation display">
+                            <div class="loading" role="status" aria-live="polite">
+                                <span class="loading-ball" aria-hidden="true"></span>
+                                Running local AI inference…
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="squad-view" id="table-view" hidden>
+                        <div class="table-shell">
+                            <table class="squad-table">
+                                <caption class="sr-only">FPL squad with official player information</caption>
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Rank / player</th>
+                                        <th scope="col">Pos</th>
+                                        <th scope="col">Fixture</th>
+                                        <th scope="col">Price</th>
+                                        <th scope="col">Selected by</th>
+                                        <th scope="col">Status</th>
+                                        <th scope="col">xPts</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="squad-table-body"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </section>

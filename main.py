@@ -22,9 +22,11 @@ from src.models import (
     OfficialFPLItemModel,
     PlayerPointsModel,
     ResponseModel,
+    TeamRatingModel,
 )
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
 from src.scout import FPLScout, InferenceError
+from src.team_rating import rate_manager_team
 from src.utils import load_config
 
 logger = get_logger(__name__)
@@ -77,7 +79,10 @@ OPENAPI_TAGS = [
     },
     {
         "name": "Scout AI",
-        "description": "Model-ensemble player projections and optimized FPL squads.",
+        "description": (
+            "Model-ensemble player projections, optimized squads, and manager "
+            "team ratings."
+        ),
     },
     {
         "name": "Official FPL · Gameweeks",
@@ -830,6 +835,119 @@ async def generate_public_scout_team(
 ):
     """Generate the web app's scout team from official and enriched history."""
     return await _generate_scout_response(gameweek, public=True)
+
+
+@app.get(
+    "/api/scout/team-rating",
+    response_model=TeamRatingModel,
+    tags=["Scout AI"],
+    summary="Rate a published FPL manager squad",
+    operation_id="rate_public_manager_team",
+)
+async def rate_public_manager_team(
+    entry_id: int = Query(..., ge=1, description="Public FPL manager team ID"),
+    gameweek: int = Query(..., ge=1, le=38),
+):
+    """Score a manager's latest published picks for the selected Gameweek."""
+    try:
+        manager = await _official_call(scout.official_client.mapped_manager, entry_id)
+        current_event_value = manager.get("current_event")
+        current_event = (
+            gameweek if current_event_value is None else int(current_event_value)
+        )
+        picks_gameweek = min(gameweek, current_event)
+        if picks_gameweek < 1:
+            raise HTTPException(
+                status_code=422,
+                detail="This manager does not have a published FPL squad yet.",
+            )
+        picks_payload = await _official_call(
+            scout.official_client.mapped_manager_picks,
+            entry_id,
+            picks_gameweek,
+        )
+        predictions = await run_in_threadpool(
+            scout.get_official_predictions, gameweek
+        )
+        prediction_gameweek = int(predictions.attrs["gameweek"])
+
+        prediction_records = json.loads(predictions.to_json(orient="records"))
+        predictions_by_id = {
+            int(player["id"]): player
+            for player in prediction_records
+            if player.get("id") is not None
+        }
+        squad = []
+        missing_players = []
+        for pick in picks_payload.get("picks", []):
+            player_id = int(pick.get("element") or 0)
+            prediction = predictions_by_id.get(player_id)
+            if prediction is None:
+                missing_players.append(player_id)
+                continue
+            official = pick.get("player") or {}
+            role = (
+                "captain"
+                if pick.get("is_captain")
+                else "vice" if pick.get("is_vice_captain") else ""
+            )
+            squad.append(
+                {
+                    **official,
+                    **prediction,
+                    "id": player_id,
+                    "pick_position": int(pick.get("position") or 0),
+                    "multiplier": int(pick.get("multiplier") or 0),
+                    "is_captain": bool(pick.get("is_captain")),
+                    "is_vice_captain": bool(pick.get("is_vice_captain")),
+                    "role": role,
+                }
+            )
+        if missing_players:
+            raise ValueError(
+                "Could not project every published squad player: "
+                + ", ".join(str(player_id) for player_id in missing_players)
+            )
+
+        benchmark = await run_in_threadpool(scout.select_optimal_team, predictions)
+        benchmark_records = json.loads(benchmark.to_json(orient="records"))
+        rating = rate_manager_team(squad, benchmark_records)
+        manager_name = " ".join(
+            str(manager.get(field) or "").strip()
+            for field in ("player_first_name", "player_last_name")
+        ).strip()
+        return TeamRatingModel(
+            entry_id=entry_id,
+            manager_name=manager_name or "FPL Manager",
+            team_name=str(manager.get("name") or f"Team {entry_id}"),
+            gameweek=prediction_gameweek,
+            picks_gameweek=picks_gameweek,
+            squad=sorted(squad, key=lambda player: player["pick_position"]),
+            strategy=str(
+                predictions.attrs.get("inference", {}).get(
+                    "strategy", "model-ensemble"
+                )
+            ),
+            version=config.get("version", "1.0.0"),
+            source=str(predictions.attrs.get("source", "official-fpl")),
+            **rating,
+        )
+    except HTTPException as error:
+        if error.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Manager or published picks not found. Check the team ID; "
+                    "the current squad becomes public after the FPL deadline."
+                ),
+            ) from error
+        raise
+    except OfficialFPLAPIError as error:
+        logger.exception("Official FPL team rating request failed")
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (InferenceError, ValueError) as error:
+        logger.exception("Manager team rating failed")
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post(

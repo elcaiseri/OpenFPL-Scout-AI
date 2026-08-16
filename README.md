@@ -24,7 +24,9 @@ responsive web dashboard and FastAPI service.
 - GW1 uses an explicit ownership and availability cold start when no genuine
   current-season match history exists.
 - The dashboard includes Gameweek planning, deadline status, fixture context,
-  pitch and table views, and detailed player cards.
+  pitch and table views, detailed player cards, and a manager team-rating mode.
+- A public FPL team ID can be scored from 0–100 against the same AI benchmark,
+  with separate starting-XI, captaincy, and availability signals.
 - Optional FPL Data enrichment can fill missing historical statistics from GW2
   without replacing official values.
 
@@ -80,13 +82,14 @@ and extended data routes require `Authorization: Bearer <token>`.
 
 ```bash
 curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
+curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek=1"
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
 
 | Area | Coverage |
 |---|---|
-| Scout | Player projections, full squad, captaincy, and strategy metadata |
+| Scout | Player projections, full squad, captaincy, and published manager team ratings |
 | Gameweeks | Event state, live scoring, and dream teams |
 | Players and clubs | Search, availability, prices, history, and strength data |
 | Fixtures | Opponents, venue, scores, kickoff, difficulty, and player stats |

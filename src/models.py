@@ -15,6 +15,28 @@ class ResponseModel(BaseModel):
     )
 
 
+class TeamRatingModel(BaseModel):
+    entry_id: int
+    manager_name: str
+    team_name: str
+    gameweek: int
+    picks_gameweek: int
+    rating: int = Field(..., ge=0, le=100)
+    grade: str
+    projected_points: float
+    ai_projected_points: float
+    projected_gap: float
+    components: Dict[str, float]
+    captain: str
+    differentials: int
+    strengths: List[str] = Field(default_factory=list)
+    risks: List[str] = Field(default_factory=list)
+    squad: List[Dict[str, Any]] = Field(default_factory=list)
+    strategy: str = "model-ensemble"
+    version: str = "5.3.0"
+    source: str = "official-fpl"
+
+
 class OfficialFPLCollectionModel(BaseModel):
     """A normalized collection sourced from one official FPL endpoint."""
 

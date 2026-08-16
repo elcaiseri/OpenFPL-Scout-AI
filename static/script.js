@@ -5,6 +5,7 @@ const CONFIG = {
     cacheExpiry: 5 * 60 * 1000,
     endpoints: {
         scout: '/api/scout',
+        teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
         players: '/api/fpl/players?limit=1000',
         eventStatus: '/api/fpl/gameweeks/status',
@@ -18,8 +19,13 @@ const appState = {
     visibleEvents: [],
     currentData: null,
     isLoading: false,
+    isRatingLoading: false,
     activeView: 'pitch',
+    squadMode: 'scout',
+    ratingEntryId: null,
+    ratingData: null,
     dashboardCache: new Map(),
+    ratingCache: new Map(),
     referenceCache: null,
     referenceTimestamp: 0,
     countdownTimer: null
@@ -141,6 +147,7 @@ const utils = {
 
     clearCache() {
         appState.dashboardCache.clear();
+        appState.ratingCache.clear();
         appState.referenceCache = null;
         appState.referenceTimestamp = 0;
     }
@@ -160,7 +167,17 @@ const dom = new Proxy({}, {
             captainPoints: 'captain-points', squadValue: 'squad-value',
             differentialCount: 'differential-count', fixtureRail: 'fixture-rail',
             squadSubtitle: 'squad-subtitle', formationChip: 'formation-chip',
+            squadTools: 'squad-tools', squadDisplay: 'squad-display',
             pitchView: 'pitch-view', tableView: 'table-view', tableBody: 'squad-table-body',
+            teamRatingPanel: 'team-rating-panel', teamRatingForm: 'team-rating-form',
+            teamIdInput: 'team-id-input', rateTeamButton: 'rate-team-button',
+            teamRatingError: 'team-rating-error', teamRatingResult: 'team-rating-result',
+            ratingScoreRing: 'rating-score-ring', ratingScore: 'rating-score',
+            ratingGrade: 'rating-grade', ratingTeamName: 'rating-team-name',
+            ratingManagerName: 'rating-manager-name', ratingPicksLabel: 'rating-picks-label',
+            ratingProjection: 'rating-projection', ratingBenchmark: 'rating-benchmark',
+            ratingGap: 'rating-gap', ratingStrengths: 'rating-strengths',
+            ratingRisks: 'rating-risks',
             credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
             dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
             dialogTeam: 'dialog-team', dialogPoints: 'dialog-points',
@@ -236,6 +253,16 @@ const dataLoader = {
         };
         appState.dashboardCache.set(gameweek, dashboard);
         return dashboard;
+    },
+
+    async loadTeamRating(entryId, gameweek, force = false) {
+        const key = `${entryId}:${gameweek}`;
+        if (appState.ratingCache.has(key) && !force) {
+            return appState.ratingCache.get(key);
+        }
+        const rating = await utils.fetchJson(CONFIG.endpoints.teamRating(entryId, gameweek));
+        appState.ratingCache.set(key, rating);
+        return rating;
     },
 
     playerFixture(player, fixtures) {
@@ -424,7 +451,7 @@ const dashboardRenderer = {
         }).join('');
     },
 
-    squad(players) {
+    squad(players, options = {}) {
         if (!Array.isArray(players) || !players.length) {
             throw new Error('The AI engine returned no squad players');
         }
@@ -456,7 +483,8 @@ const dashboardRenderer = {
             playerRenderer.tableRow(player, index)
         ).join('');
         dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
-        dom.squadSubtitle.textContent = `${players.length} official players · select any pick for the full briefing`;
+        dom.squadSubtitle.textContent = options.subtitle
+            || `${players.length} official players · select any pick for the full briefing`;
     },
 
     loading(message = 'Running local AI inference…') {
@@ -539,6 +567,9 @@ const gameweekManager = {
             appState.currentGameweek = Number(gameweek);
             this.setActive(gameweek);
             dashboardRenderer.render(data);
+            if (appState.squadMode === 'rating' && appState.ratingEntryId) {
+                await teamRating.rate(appState.ratingEntryId, force);
+            }
         } catch (error) {
             console.error('Dashboard load failed:', error);
             dashboardRenderer.error(error.message);
@@ -546,6 +577,112 @@ const gameweekManager = {
             appState.isLoading = false;
             dom.gameweekSelect.disabled = false;
             document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
+        }
+    }
+};
+
+const teamRating = {
+    setMode(mode) {
+        appState.squadMode = mode;
+        const ratingMode = mode === 'rating';
+        dom.teamRatingPanel.hidden = !ratingMode;
+        document.querySelectorAll('.squad-mode-button').forEach(button => {
+            const active = button.dataset.squadMode === mode;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+
+        if (!ratingMode) {
+            dom.teamRatingError.hidden = true;
+            dom.squadDisplay.hidden = false;
+            dom.squadTools.hidden = false;
+            if (appState.currentData?.scout_team) {
+                dashboardRenderer.squad(appState.currentData.scout_team, {
+                    subtitle: '15 AI picks ranked for the selected Gameweek'
+                });
+            }
+            return;
+        }
+
+        if (appState.ratingData
+            && Number(appState.ratingData.gameweek) === Number(appState.currentGameweek)) {
+            this.render(appState.ratingData);
+        } else {
+            dom.teamRatingResult.hidden = true;
+            dom.squadDisplay.hidden = true;
+            dom.squadTools.hidden = true;
+        }
+        requestAnimationFrame(() => dom.teamIdInput.focus());
+    },
+
+    loading() {
+        appState.isRatingLoading = true;
+        dom.rateTeamButton.disabled = true;
+        dom.refreshButton.disabled = true;
+        dom.gameweekSelect.disabled = true;
+        document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = true; });
+        dom.rateTeamButton.textContent = 'Scoring…';
+        dom.teamRatingError.hidden = true;
+        dom.teamRatingResult.hidden = true;
+        dom.squadDisplay.hidden = true;
+        dom.squadTools.hidden = true;
+    },
+
+    render(data) {
+        appState.ratingData = data;
+        const score = utils.number(data.rating, 0);
+        dom.ratingScore.textContent = String(Math.round(score));
+        dom.ratingScoreRing.style.setProperty('--rating-score', `${Math.max(0, Math.min(100, score)) * 3.6}deg`);
+        dom.ratingGrade.textContent = data.grade || '—';
+        dom.ratingTeamName.textContent = data.team_name || `Team ${data.entry_id}`;
+        dom.ratingManagerName.textContent = data.manager_name || 'FPL manager';
+        dom.ratingPicksLabel.textContent = Number(data.picks_gameweek) === Number(data.gameweek)
+            ? `Published Gameweek ${data.picks_gameweek} squad`
+            : `Gameweek ${data.picks_gameweek} squad · scored for Gameweek ${data.gameweek}`;
+        dom.ratingProjection.textContent = `${utils.number(data.projected_points, 0).toFixed(2)} xP`;
+        dom.ratingBenchmark.textContent = `${utils.number(data.ai_projected_points, 0).toFixed(2)} xP`;
+        dom.ratingGap.textContent = `${utils.number(data.projected_gap, 0).toFixed(2)} xP`;
+        dom.ratingStrengths.innerHTML = (data.strengths || [])
+            .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
+        dom.ratingRisks.innerHTML = (data.risks || [])
+            .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
+        dom.teamRatingResult.hidden = false;
+        dom.squadDisplay.hidden = false;
+        dom.squadTools.hidden = false;
+        dashboardRenderer.squad(data.squad || [], {
+            subtitle: `${data.team_name || 'Your team'} · AI score ${Math.round(score)}/100`
+        });
+    },
+
+    error(message) {
+        dom.teamRatingError.textContent = message;
+        dom.teamRatingError.hidden = false;
+        dom.teamRatingResult.hidden = true;
+        dom.squadDisplay.hidden = true;
+        dom.squadTools.hidden = true;
+    },
+
+    async rate(entryId, force = false) {
+        if (appState.isRatingLoading) return;
+        appState.ratingEntryId = Number(entryId);
+        this.loading();
+        try {
+            const data = await dataLoader.loadTeamRating(
+                appState.ratingEntryId, appState.currentGameweek, force
+            );
+            this.render(data);
+        } catch (error) {
+            console.error('Team rating failed:', error);
+            this.error(error.message);
+        } finally {
+            appState.isRatingLoading = false;
+            dom.rateTeamButton.disabled = false;
+            dom.rateTeamButton.textContent = 'Rate my team';
+            if (!appState.isLoading) {
+                dom.refreshButton.disabled = false;
+                dom.gameweekSelect.disabled = false;
+                document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
+            }
         }
     }
 };
@@ -593,7 +730,7 @@ const interactions = {
     },
 
     async refresh() {
-        if (appState.isLoading) return;
+        if (appState.isLoading || appState.isRatingLoading) return;
         dom.refreshButton.classList.add('refreshing');
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
@@ -620,6 +757,19 @@ const interactions = {
         dom.refreshButton.addEventListener('click', () => this.refresh());
         document.querySelectorAll('.view-button').forEach(button => {
             button.addEventListener('click', () => this.switchView(button.dataset.view));
+        });
+        document.querySelectorAll('.squad-mode-button').forEach(button => {
+            button.addEventListener('click', () => teamRating.setMode(button.dataset.squadMode));
+        });
+        dom.teamRatingForm.addEventListener('submit', event => {
+            event.preventDefault();
+            const rawEntryId = dom.teamIdInput.value.trim();
+            if (!/^\d+$/.test(rawEntryId) || Number(rawEntryId) < 1) {
+                teamRating.error('Enter a valid numeric FPL team ID.');
+                dom.teamIdInput.focus();
+                return;
+            }
+            teamRating.rate(Number(rawEntryId));
         });
         document.addEventListener('click', event => {
             const target = event.target.closest('[data-player]');
@@ -670,5 +820,6 @@ window.FPLScoutApp = {
     utils,
     dataLoader,
     gameweekManager,
+    teamRating,
     clearCache: utils.clearCache
 };

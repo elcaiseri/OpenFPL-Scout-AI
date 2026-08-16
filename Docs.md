@@ -136,7 +136,8 @@ Transfers accept `gameweek`, `offset`, and `limit`.
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/scout` | Public | Live squad plus all player projections |
+| GET | `/api/scout` | Public | Live optimized squad |
+| GET | `/api/scout/team-rating` | Public | Score a manager's published squad for a Gameweek |
 | POST | `/api/scout` | Bearer | Authenticated equivalent of the public scout |
 | GET | `/api/gw/scout` | Bearer | Squad-only gameweek response |
 | GET | `/api/gw/playerpoints` | Bearer | Filtered player projections |
@@ -145,7 +146,14 @@ Transfers accept `gameweek`, `offset`, and `limit`.
 curl "http://localhost:8000/api/fpl/fixtures?gameweek=1"
 curl "http://localhost:8000/api/fpl/players?team_id=1&selectable_only=true"
 curl "http://localhost:8000/api/scout?gameweek=1"
+curl "http://localhost:8000/api/scout/team-rating?entry_id=1234567&gameweek=1"
 ```
+
+Team ratings use the latest picks made public by official FPL. When planning a
+future Gameweek, OpenFPL scores that published lineup with the selected
+Gameweek's projections. The 100-point rating allocates 80 points to starting-XI
+quality against the budget-free AI benchmark, 10 to captaincy, and 10 to
+availability.
 
 ## Response
 
