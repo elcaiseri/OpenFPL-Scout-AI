@@ -82,6 +82,25 @@ variable supplied by Cloud Run. A Cloud Run revision must expose equivalent
 volumes at `/app/data` and `/app/models`; local Docker bind mounts are not
 transferred with the image.
 
+For a low-traffic Cloud Run service, start with request-based billing, 1 vCPU,
+512 MiB, concurrency 4, scale-to-zero, and a three-instance cost cap:
+
+```bash
+gcloud run services update SERVICE \
+  --region REGION \
+  --cpu 1 \
+  --memory 512Mi \
+  --concurrency 4 \
+  --min 0 \
+  --max 3 \
+  --cpu-throttling \
+  --cpu-boost
+```
+
+Increase memory only if Cloud Monitoring reports pressure or out-of-memory
+restarts. Use a minimum instance only when lower cold-start latency is worth
+the idle charge.
+
 ## API
 
 The web application and its supporting read endpoints are public. Administrative
