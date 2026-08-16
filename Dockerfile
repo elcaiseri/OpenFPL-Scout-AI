@@ -1,23 +1,19 @@
 FROM python:3.9-slim-trixie
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Bring in uv for dependency management and .venv creation
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH"
-ENV OPENFPL_ENV="production"
+ENV PATH="/app/.venv/bin:$PATH" \
+    OPENFPL_ENV="production" \
+    PORT="8000" \
+    PYTHONDONTWRITEBYTECODE="1" \
+    PYTHONUNBUFFERED="1"
 
-# Allow optional dependency groups (e.g. --group train) while keeping runtime deps by default
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --all-groups
+RUN uv sync --locked --all-groups --no-cache
 
-# Copy application code last to maximise layer caching
 COPY . .
+RUN mkdir -p /app/data /app/models
 
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port \"${PORT}\""]

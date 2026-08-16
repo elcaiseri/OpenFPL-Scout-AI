@@ -63,17 +63,24 @@ FPL_DATA_INFERENCE_ENABLED=false
 
 ## Docker
 
-The image excludes generated model artifacts. Mount a local `models` directory
-at runtime:
+The image intentionally excludes generated data and model artifacts. Mount both
+directories read-only at their configured runtime paths:
 
 ```bash
-docker build -t openfpl-scout-ai .
+docker build --platform linux/amd64 -t openfpl-scout-ai .
 docker run --rm \
+  --name openfpl-scout-ai \
   -p 8000:8000 \
   -e VALID_API_KEYS=local-development-token \
-  -v "${PWD}/models:/app/models:ro" \
+  --mount type=bind,src="${PWD}/data",dst=/app/data,readonly \
+  --mount type=bind,src="${PWD}/models",dst=/app/models,readonly \
   openfpl-scout-ai
 ```
+
+The container defaults to port `8000` and honors the `PORT` environment
+variable supplied by Cloud Run. A Cloud Run revision must expose equivalent
+volumes at `/app/data` and `/app/models`; local Docker bind mounts are not
+transferred with the image.
 
 ## API
 

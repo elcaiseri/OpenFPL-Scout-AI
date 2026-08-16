@@ -43,13 +43,15 @@ tests/
 Docs.md
 Official-FPL-API-Kit.md
 
-# Generated data and experiment outputs
+# Generated outputs are supplied through runtime bind or Cloud Run volume mounts.
 *.csv
 *.zip
 data*/
+models*/
+
+# Local experiment artifacts
 all_csv_history/
 mlruns/
 mlartifacts/
 catboost_info/
 trainer*.py
-models*/
