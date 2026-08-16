@@ -3,8 +3,9 @@
 Version: 5.3.0
 
 OpenFPL Scout generates player projections and a positional 15-player squad.
-All runtime football data comes directly from the public official Fantasy
-Premier League API at `https://fantasy.premierleague.com/api/`.
+The public official Fantasy Premier League API remains the authoritative
+runtime source. From GW2, missing match-stat inputs can be filled by guarded
+FPL Data enrichment when the exact configured season is available.
 
 ## Runtime data sources
 
@@ -18,8 +19,13 @@ Premier League API at `https://fantasy.premierleague.com/api/`.
 | Public league standings and cups | `/leagues-classic/...`, `/leagues-h2h/...`, `/league/...` |
 | Regions, set pieces, rankings, and winners | `/regions/`, `/team/set-piece-notes/`, `/stats/...`, `/winners/...` |
 
-No football-data.org key, RapidAPI data feed, or uploaded statistics file is
-required. Official responses are cached briefly in memory to reduce traffic.
+FPL Data's public CSV download is an optional inference-enrichment source for
+the 17 audited inputs absent from official history. It never supplies player
+identity or upcoming fixture context.
+
+No football-data.org key, RapidAPI data feed, or user-uploaded statistics file
+is required. Official responses are cached briefly in memory. FPL Data is
+cached for six hours and failures fall back to official-only inference.
 
 Before the first gameweek, official current-season match history is empty.
 OpenFPL therefore leaves form statistics unknown and lets each trained model's
@@ -149,8 +155,8 @@ curl "http://localhost:8000/api/scout?gameweek=1"
   "player_points": [],
   "gameweek": 1,
   "version": "5.3.0",
-  "source": "official-fpl",
-  "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
+  "source": "official-fpl+fpl-data",
+  "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
 
@@ -165,11 +171,11 @@ uv run python -m scripts.collect_official_fpl --gameweek 39
 ```
 
 Official archives are written to `data/official`, the trainer's default input.
-Legacy `data/external` snapshots are not read by runtime inference or by the
-default retraining command.
+The exact current-season file under `data/external` can be a validated local
+fallback for inference enrichment but is not the default retraining input.
 
-For a temporary private historical import while permission is pending, use the
-public FPL Data download control through the guarded importer:
+For a temporary permission-pending current or historical import, use the public
+FPL Data download control through the guarded importer:
 
 ```bash
 uv run python -m scripts.download_fpl_data \
@@ -179,6 +185,9 @@ uv run python -m scripts.download_fpl_data \
 
 The command validates content before an atomic write, records provenance and
 missing-feature coverage in a sidecar metadata file, and refuses silent
-replacement or material coverage regression. It is not a runtime source and
-must not be redistributed or used for the commercial service without written
-permission from FPL Data.
+replacement or material coverage regression. Runtime accepts only the exact
+configured season, begins at GW2, preserves official values, requires at least
+an 80% match rate, and falls back safely when enrichment cannot be applied.
+Permission remains pending; keep attribution and provenance, do not
+redistribute the CSV, and disable the integration if the owner declines. Set
+`FPL_DATA_INFERENCE_ENABLED=false` for an immediate production kill switch.

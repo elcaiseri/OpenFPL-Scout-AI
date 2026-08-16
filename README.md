@@ -4,7 +4,7 @@
 
 *OpenFPL 2026/27 icon generated with OpenAI image generation.*
 
-OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection. All runtime player, club, gameweek, and fixture data comes directly from the official Fantasy Premier League API.
+OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection. Official Fantasy Premier League data remains authoritative for runtime players, clubs, match history, gameweeks, and fixtures. From GW2, missing historical statistics can be filled by a guarded, permission-pending FPL Data enrichment.
 
 ## 🚀 Live Demo & API Access
 
@@ -20,6 +20,7 @@ OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, 
 - 🎯 **AI-Powered Predictions**: Ensemble ML models (Ridge, XGBoost, CatBoost, MLP)
 - ⚽ **Interactive Web UI**: Beautiful pitch visualization with player cards
 - 📊 **Official FPL Data**: Live players, histories, fixtures, and event state
+- 🧩 **Guarded Stat Enrichment**: Missing post-GW1 history inputs from FPL Data when a validated current-season export is available
 - 🚀 **Fast Performance**: Async player predictions and caching
 - 🏆 **Smart Team Selection**: Automated optimal team selection by position
 - 👑 **Captain Assignment**: Intelligent captain/vice-captain selection
@@ -126,8 +127,8 @@ and every option, or [Docs.md](Docs.md) for authentication and response details.
   ],
   "gameweek": 7,
   "version": "5.3.0",
-  "source": "official-fpl",
-  "credits": "OpenFPL Scout AI | Official FPL data | @elcaiseri, 2026"
+  "source": "official-fpl+fpl-data",
+  "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
 
@@ -181,9 +182,12 @@ feature contract. Runtime inference uses player IDs, caches fixture lookups,
 supports per-model weights, and can continue when one model fails as long as
 `inference.minimum_successful_models` is satisfied.
 
-Runtime requests never read the local training CSVs. Before GW1, when official
-match history is empty, history features remain unknown and are handled by the
-imputers fitted inside each saved model pipeline.
+Before GW1, runtime inference uses official FPL only; empty history features are
+handled by the imputers fitted inside each saved model pipeline. From GW2, the
+engine may load the exact configured FPL Data season, but it only fills values
+missing from official history. Wrong-season, stale, duplicate-key, and
+low-match-ratio data is rejected, with automatic fallback to official-only
+inference.
 
 - Ensemble predictions for accuracy
 - Season-forward validation metrics
@@ -198,9 +202,9 @@ Integrates directly with official FPL endpoints for:
 - Live scoring, manager history, public picks, transfers, leagues, and cups
 - Regions, set-piece notes, rankings, event winners, and phase winners
 
-No football-data.org API key or uploaded statistics file is required. The
-official FPL API does not provide a stable versioned historical archive, so
-new official match history must be collected during each active season.
+No football-data.org API key or user-uploaded statistics file is required. The
+official FPL API does not provide a stable versioned historical archive, so new
+official match history must be collected during each active season.
 
 Archive the active official season for future retraining with:
 
@@ -209,12 +213,13 @@ uv run python -m scripts.collect_official_fpl --gameweek 39
 ```
 
 The collector writes to `data/official` by default, which is also the default
-source for the cross-validated trainer. Legacy files under `data/external` are
-not used by the runtime or by the default retraining command.
+source for the cross-validated trainer. A current-season FPL Data file under
+`data/external` may serve as a validated local inference fallback; it is not the
+default retraining source.
 
 ### Temporary FPL Data import
 
-While written reuse permission is pending, one historical CSV can be fetched
+While written reuse permission is pending, one season CSV can be fetched
 through the public **Download CSV** control on
 [FPL Data](https://www.fpl-data.co.uk/statistics):
 
@@ -240,10 +245,13 @@ uv run python -m scripts.download_fpl_data \
   --acknowledge-permission-pending
 ```
 
-This source is intentionally isolated from runtime inference and the default
-training path. Do not redistribute it, train a commercial release from it, or
-schedule unattended downloads until the data owner grants permission. List
-the seasons currently offered by the page with:
+For 2026/27, runtime enrichment is configured for the exact `2026_27` season
+from GW2 onward and cached for six hours. It will not substitute the currently
+available 2025/26 file. Permission remains pending, so keep provenance, do not
+redistribute the CSV, and disable `fpl_data_inference.enabled` immediately if
+the owner declines. In production, `FPL_DATA_INFERENCE_ENABLED=false` is an
+immediate environment-level kill switch. List the seasons currently offered by
+the page with:
 
 ```bash
 uv run python -m scripts.download_fpl_data --list-seasons

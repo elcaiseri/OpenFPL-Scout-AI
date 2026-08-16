@@ -1,4 +1,4 @@
-"""OpenFPL Scout API backed exclusively by official FPL runtime data."""
+"""OpenFPL Scout API with official FPL data and guarded stat enrichment."""
 
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ OPENAPI_TAGS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global scout
-    logger.info("Initializing application with official FPL data")
+    logger.info("Initializing application with official FPL as the primary source")
     scout = FPLScout(config)
     logger.info("FPLScout initialized and ready")
     yield
@@ -122,7 +122,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="OpenFPL API",
-    description="AI-powered FPL Scout using official Fantasy Premier League data",
+    description=(
+        "AI-powered FPL Scout using official Fantasy Premier League data with "
+        "guarded historical-stat enrichment"
+    ),
     version=config.get("version", "1.0.0"),
     lifespan=lifespan,
     openapi_tags=OPENAPI_TAGS,
@@ -202,9 +205,9 @@ async def serve_index():
 async def get_api_info():
     """Return every public and authenticated route grouped by OpenAPI tag."""
     return {
-        "message": "OpenFPL — Official FPL data, AI squad projections",
+        "message": "OpenFPL — Official FPL data with guarded stat enrichment",
         "version": config.get("version", "1.0.0"),
-        "source": "https://fantasy.premierleague.com/api/",
+        "source": "official-fpl (primary); fpl-data (optional enrichment)",
         "documentation": _documentation_links(IS_PRODUCTION),
         "tags": _api_catalog(),
     }
@@ -222,6 +225,13 @@ async def check_health():
     return {
         "status": "healthy",
         "source": "official-fpl",
+        "fpl_data_enrichment": {
+            "enabled": scout.fpl_data_enabled,
+            "start_gameweek": scout.fpl_data_start_gameweek,
+            "season": scout.fpl_data_season,
+            "permission_status": scout.fpl_data_permission_status,
+            "last_result": scout.last_data_enrichment,
+        },
         "models": len(scout.model_artifacts),
     }
 
@@ -777,7 +787,7 @@ async def _generate_scout_response(
                 player_points=[],
                 gameweek=prediction_gameweek,
                 version=config.get("version", "1.0.0"),
-                source="official-fpl",
+                source=str(predictions.attrs.get("source", "official-fpl")),
             )
         else:
             logger.info(
@@ -788,7 +798,7 @@ async def _generate_scout_response(
                 player_points=json.loads(predictions.to_json(orient="records")),
                 gameweek=prediction_gameweek,
                 version=config.get("version", "1.0.0"),
-                source="official-fpl",
+                source=str(predictions.attrs.get("source", "official-fpl")),
             )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")
@@ -808,7 +818,7 @@ async def _generate_scout_response(
 async def generate_public_scout_team(
     gameweek: Optional[int] = Query(None, ge=1, le=38),
 ):
-    """Generate the web app's scout team from live official FPL data."""
+    """Generate the web app's scout team from official and enriched history."""
     return await _generate_scout_response(gameweek, public=True)
 
 
@@ -823,7 +833,7 @@ async def generate_authenticated_scout_team(
     gameweek: Optional[int] = Query(None, ge=1, le=38),
     api_key: str = Depends(verify_api_key),
 ):
-    """Generate a scout team without accepting third-party file uploads."""
+    """Generate a scout team without accepting user file uploads."""
     return await _generate_scout_response(gameweek, public=False)
 
 
@@ -838,7 +848,7 @@ async def get_scout_team(
     gameweek: int = Query(..., ge=1, le=38),
     api_key: str = Depends(verify_api_key),
 ):
-    """Generate a gameweek squad directly from official FPL data."""
+    """Generate a gameweek squad with official FPL as the primary source."""
     response = await _generate_scout_response(gameweek, public=False)
     response.player_points = []
     return response
@@ -855,7 +865,7 @@ async def get_player_predictions(
     params: PlayerPointsModel = Depends(),
     api_key: str = Depends(verify_api_key),
 ):
-    """Generate official-data projections and apply optional player filters."""
+    """Generate enriched projections and apply optional player filters."""
     response = await _generate_scout_response(params.gameweek, public=False)
     filters = params.model_dump(exclude_unset=True)
     filters.pop("gameweek", None)

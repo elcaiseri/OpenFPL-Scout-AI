@@ -67,6 +67,18 @@ official_fpl:
   history_cache_ttl_seconds: 900
   max_workers: 8
 
+# Temporary, permission-pending enrichment of missing historical match inputs.
+# Official FPL remains authoritative for player identity, history, and fixtures.
+fpl_data_inference:
+  enabled: true
+  start_gameweek: 2
+  season: "2026_27"
+  local_path: "data/external/fpl-data-stats-2027.csv"
+  runtime_cache_path: "/tmp/openfpl/fpl-data-stats-2027.csv"
+  refresh_ttl_seconds: 21600
+  minimum_match_ratio: 0.8
+  timeout_seconds: 60
+  permission_status: "pending"
 
 # Model Information
 models:

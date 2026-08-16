@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,40 @@ class ConstantModel:
 
 class WrongContractModel(ConstantModel):
     feature_names_in_ = np.asarray(["wrong_feature"])
+
+
+class RecordingModel(ConstantModel):
+    def predict(self, features):
+        self.features = features.copy()
+        return super().predict(features)
+
+
+class FakeOfficialClient:
+    def next_gameweek(self):
+        return 2
+
+    def player_history(self, gameweek):
+        history = player_history()
+        if gameweek == 1:
+            history = history.drop_duplicates("id").copy()
+            history["gameweek"] = 0
+            return history
+        return history.loc[history["gameweek"] < gameweek].copy()
+
+
+class FakeFPLDataProvider:
+    def __init__(self):
+        self.calls = []
+
+    def enrich(self, history, gameweek):
+        self.calls.append(gameweek)
+        enriched = history.copy()
+        enriched["total_shots"] = 7.0
+        return enriched, {
+            "provider": "fpl-data",
+            "status": "applied",
+            "matched_rows": len(enriched),
+        }
 
 
 def player_history():
@@ -77,6 +112,16 @@ def scout_config(minimum=3):
             "four": {"path": "four.pkl", "weight": 1},
         },
     }
+
+
+def enable_fpl_data(config):
+    config["fpl_data_inference"] = {
+        "enabled": True,
+        "start_gameweek": 2,
+        "season": "2026_27",
+        "permission_status": "pending",
+    }
+    return config
 
 
 class ScoutInferenceTests(unittest.TestCase):
@@ -191,6 +236,66 @@ class ScoutInferenceTests(unittest.TestCase):
         result = scout.predict_players(player_history(), gameweek=3)
 
         self.assertTrue((result.expected_points == 0).all())
+
+    def test_official_predictions_use_fpl_data_after_gameweek_one(self):
+        provider = FakeFPLDataProvider()
+        model = RecordingModel(2)
+        scout = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: model,
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=provider,
+        )
+
+        result = scout.get_official_predictions(gameweek=2)
+
+        self.assertEqual(provider.calls, [2])
+        self.assertTrue((model.features["total_shots"] == 7).all())
+        self.assertEqual(result.attrs["source"], "official-fpl+fpl-data")
+        self.assertEqual(
+            result.attrs["inference"]["data_enrichment"]["status"], "applied"
+        )
+
+    def test_gameweek_one_does_not_contact_fpl_data(self):
+        provider = FakeFPLDataProvider()
+        scout = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(2),
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=provider,
+        )
+
+        result = scout.get_official_predictions(gameweek=1)
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(result.attrs["source"], "official-fpl")
+        self.assertEqual(
+            result.attrs["inference"]["data_enrichment"]["status"],
+            "before-start-gameweek",
+        )
+
+    def test_environment_kill_switch_disables_enrichment(self):
+        provider = FakeFPLDataProvider()
+        with patch.dict(
+            "os.environ", {"FPL_DATA_INFERENCE_ENABLED": "false"}, clear=False
+        ):
+            scout = FPLScout(
+                enable_fpl_data(scout_config()),
+                fixture_provider=self.fixtures,
+                model_loader=lambda path: ConstantModel(2),
+                official_client=FakeOfficialClient(),
+                fpl_data_provider=provider,
+            )
+
+        result = scout.get_official_predictions(gameweek=2)
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(result.attrs["source"], "official-fpl")
+        self.assertEqual(
+            result.attrs["inference"]["data_enrichment"]["status"], "disabled"
+        )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
-"""Download one FPL Data CSV through the site's public Download CSV control.
+"""Download one guarded FPL Data CSV while reuse permission is pending.
 
-This is a temporary historical-training import while reuse permission is
-pending. It is deliberately not connected to runtime inference or deployment.
+The shared client is also used by optional post-GW1 inference enrichment.
 """
 
 from __future__ import annotations
@@ -406,8 +405,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--acknowledge-permission-pending",
         action="store_true",
         help=(
-            "Confirm this is a temporary private import that will not be "
-            "redistributed or used commercially before permission is granted"
+            "Confirm this is temporary permission-pending use with provenance, "
+            "attribution, no CSV redistribution, and an immediate kill switch"
         ),
     )
     parser.add_argument(
@@ -426,7 +425,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     if not args.list_seasons and not args.acknowledge_permission_pending:
         raise ValueError(
             "Permission is still pending. Re-run with "
-            "--acknowledge-permission-pending for temporary private use."
+            "--acknowledge-permission-pending for temporary guarded use."
         )
 
     client = FPLDataClient(timeout_seconds=args.timeout_seconds)
