@@ -1,175 +1,117 @@
-# OpenFPL-Scout-AI
+# OpenFPL Scout AI
 
-<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI frameless Predictive Lion logo combining football, Premier League and neural-data signals" width="180"/>
+<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI logo" width="160">
 
-*OpenFPL 2026/27 icon generated with OpenAI image generation.*
+OpenFPL predicts Fantasy Premier League player points and selects a complete
+15-player squad for each Gameweek. It combines live official FPL data with a
+Ridge, XGBoost, CatBoost, and MLP ensemble, then presents the result through a
+responsive web dashboard and FastAPI service.
 
-OpenFPL-Scout-AI is an AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection. Official Fantasy Premier League data remains authoritative for runtime players, clubs, match history, gameweeks, and fixtures. From GW2, missing historical statistics can be filled by a guarded, permission-pending FPL Data enrichment.
+[Live app](https://openfpl.kassem.dev) ·
+[API reference](https://openfpl.kassem.dev/redoc) ·
+[Route catalog](https://openfpl.kassem.dev/api)
 
-## 🚀 Live Demo & API Access
+## Highlights
 
-**Web Interface:** **[https://openfpl-scout-ai-186049008266.europe-west1.run.app](https://openfpl-scout-ai-186049008266.europe-west1.run.app)**
+- Official FPL is the source of truth for players, clubs, availability,
+  Gameweeks, fixtures, history, live scores, managers, leagues, and rankings.
+- A four-model ensemble produces player projections from leakage-safe recent
+  form, minutes, availability, ownership, and fixture context.
+- Inference validates each model's feature contract, caches upstream data, and
+  can continue when one model fails.
+- The squad selector enforces the official positional quotas and a maximum of
+  three players per club, then assigns captain and vice-captain.
+- GW1 uses an explicit ownership and availability cold start when no genuine
+  current-season match history exists.
+- The dashboard includes Gameweek planning, deadline status, fixture context,
+  pitch and table views, and detailed player cards.
+- Optional FPL Data enrichment can fill missing historical statistics from GW2
+  without replacing official values.
 
-**🔥 API Access via RapidAPI:** **[Subscribe on RapidAPI Marketplace](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)** 
-- Free tier: 10 requests/hour
-- Professional support and documentation
-- Easy integration with RapidAPI headers
+Squad selection is intentionally budget-free. Prices are returned for context
+but do not affect player projections or selection.
 
-## Features
+## Run locally
 
-- 🎯 **AI-Powered Predictions**: Ensemble ML models (Ridge, XGBoost, CatBoost, MLP)
-- ⚽ **Interactive Web UI**: Beautiful pitch visualization with player cards
-- 📊 **Official FPL Data**: Live players, histories, fixtures, and event state
-- 🧩 **Guarded Stat Enrichment**: Missing post-GW1 history inputs from FPL Data when a validated current-season export is available
-- 🚀 **Fast Performance**: Async player predictions and caching
-- 🏆 **Smart Team Selection**: Automated optimal team selection by position
-- 👑 **Captain Assignment**: Intelligent captain/vice-captain selection
-- 📱 **Mobile Responsive**: Works perfectly on all devices
-- 📸 **Screenshot Feature**: Download your team lineup as PNG
-- 🎨 **Professional Design**: FPL-themed UI with gradient backgrounds
-- 🔌 **RapidAPI Integration**: Professional API marketplace access
+Requirements: Python 3.9 or newer and
+[uv](https://docs.astral.sh/uv/). Model artifacts must exist at the paths in
+`config/config.yaml`; generated models are not stored in Git.
 
-## Installation
+```bash
+uv sync --all-groups
+uv run uvicorn main:app --reload
+```
 
-**Docker:**
+Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
+available at [localhost:8000/docs](http://localhost:8000/docs).
+
+Protected routes read comma-separated bearer tokens from `.env` or the process
+environment:
+
+```dotenv
+VALID_API_KEYS=local-development-token
+OPENFPL_ENV=development
+```
+
+Optional FPL Data enrichment can be disabled immediately with:
+
+```dotenv
+FPL_DATA_INFERENCE_ENABLED=false
+```
+
+## Docker
+
+The image excludes generated model artifacts. Mount a local `models` directory
+at runtime:
+
 ```bash
 docker build -t openfpl-scout-ai .
-docker run -d -p 8000:8000 --name openfpl-api openfpl-scout-ai
+docker run --rm \
+  -p 8000:8000 \
+  -e VALID_API_KEYS=local-development-token \
+  -v "${PWD}/models:/app/models:ro" \
+  openfpl-scout-ai
 ```
 
-## Usage
+## API
 
-### Web Interface
-Visit the [live demo](https://openfpl-scout-ai-186049008266.europe-west1.run.app) or [http://localhost:8000](http://localhost:8000) for local development:
+The web application and its supporting read endpoints are public. Administrative
+and extended data routes require `Authorization: Bearer <token>`.
 
-- **Visual Team Display**: See your optimal team laid out on a football pitch
-- **Player Cards**: Detailed cards showing player stats, fixtures, and expected points
-- **Gameweek Selection**: Navigate between different gameweeks
-- **Screenshot Export**: Download your team lineup as a high-quality image
-- **Interactive Elements**: Click on player cards for detailed information
-
-### API Access via RapidAPI
-
-**🔥 Primary API Access:** [Subscribe on RapidAPI Marketplace](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
-
-**Base URL:** `https://openfpl-api.p.rapidapi.com`
-
-**Authentication:**
-```http
-X-RapidAPI-Key: YOUR_RAPIDAPI_KEY
-X-RapidAPI-Host: openfpl-api.p.rapidapi.com
+```bash
+curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
+curl -H "Authorization: Bearer <token>" \
+  "https://openfpl.kassem.dev/api/health"
 ```
 
-**Quick Example:**
-```javascript
-const options = {
-    method: 'GET',
-    headers: {
-        'X-RapidAPI-Key': 'YOUR_RAPIDAPI_KEY',
-        'X-RapidAPI-Host': 'openfpl-api.p.rapidapi.com'
-    }
-};
-
-fetch('https://openfpl-api.p.rapidapi.com/api/gw/scout?gameweek=7', options)
-    .then(response => response.json())
-    .then(data => console.log(data));
-```
-
-### API Documentation
-- **RapidAPI Docs:** [https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
-
-### Main Endpoints
-
-Production API documentation is available through ReDoc at `/redoc`; local
-development also exposes Swagger at `/docs`. `GET /api` returns the complete
-route catalog grouped by tag.
-
-| Tag | Endpoints |
+| Area | Coverage |
 |---|---|
-| Service | `GET /api`, `GET /api/health` |
-| Official FPL · Gameweeks | Events, status, live scoring, and dream teams |
-| Official FPL · Teams | `GET /api/fpl/teams` |
-| Official FPL · Players | Player collection, details, and history |
-| Official FPL · Fixtures | Fixture collection and per-fixture statistics |
-| Official FPL · Managers | Public profiles, history, transfers, and picks |
-| Official FPL · Leagues & Cups | Classic/H2H standings, H2H matches, and cup state |
-| Official FPL · Reference & Rankings | Regions, set pieces, rankings, and winners |
-| Scout AI | `GET/POST /api/scout`, `GET /api/gw/scout`, `GET /api/gw/playerpoints` |
+| Scout | Player projections, full squad, captaincy, and strategy metadata |
+| Gameweeks | Event state, live scoring, and dream teams |
+| Players and clubs | Search, availability, prices, history, and strength data |
+| Fixtures | Opponents, venue, scores, kickoff, difficulty, and player stats |
+| Managers | Profiles, season history, transfers, and published picks |
+| Leagues | Classic and head-to-head standings, matches, and cup status |
+| Reference data | Regions, set pieces, rankings, and winners |
 
-Mapped player queries include availability, name, price, sorting, and pagination
-options. Fixtures include gameweek, club, future, and finished filters. See the
-[Official FPL API Kit](Official-FPL-API-Kit.md) for the full audited route map
-and every option, or [Docs.md](Docs.md) for authentication and response details.
-- `GET /api` — API information and metadata
+See [Docs.md](Docs.md) for authentication and response details, or the
+[Official FPL API Kit](Official-FPL-API-Kit.md) for the complete route map.
 
-**Sample `/api/gw/scout` response:**
-```json
-{
-  "scout_team": [
-    {
-      "element_type": "Goalkeeper",
-      "web_name": "Alisson",
-      "team_name": "Liverpool",
-      "expected_points": 5.2,
-      "role": "",
-      "now_cost": 55,
-      "selected_by_percent": 15.5
-    },
-    {
-      "element_type": "Defender",
-      "web_name": "Alexander-Arnold",
-      "team_name": "Liverpool",
-      "expected_points": 8.1,
-      "role": "captain",
-      "now_cost": 70,
-      "selected_by_percent": 45.2
-    }
-  ],
-  "gameweek": 7,
-  "strategy": "model-ensemble",
-  "version": "5.3.0",
-  "source": "official-fpl+fpl-data",
-  "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
-}
+## Models and data
+
+Runtime data flows from official FPL through the shared feature pipeline, model
+ensemble, and squad selector. The optional enrichment layer accepts only the
+configured season, fills missing values only, rejects stale or poorly matched
+data, and falls back to official-only inference on failure.
+
+Archive active-season official history for future training:
+
+```bash
+uv run python -m scripts.collect_official_fpl --gameweek 39
 ```
 
-For Gameweek 1, when no genuine pre-gameweek match evidence exists, Scout uses
-an explicit `ownership-cold-start` strategy. It ranks selectable players using
-official ownership adjusted for availability, skips the model ensemble, and
-builds a budget-free squad with the official positional quotas and three-player
-club limit. Player price is informational only and never affects predictions or
-selection. The normal `model-ensemble` strategy remains active whenever usable
-history is available and enforces the same three-player club limit.
-
-## Screenshots
-
-The web interface provides a beautiful visualization of your optimal FPL team:
-
-![Team Visualization](assets/FPL-Scout-Team-GW1-2025-08-07.png)
-
-Features of the UI:
-- **Football Pitch Layout**: Players arranged in realistic formation
-- **Color-Coded Positions**: Goalkeepers (Orange), Defenders (Blue), Midfielders (Light Blue), Forwards (Green)
-- **Captain Badges**: Golden 'C' for captain, Silver 'VC' for vice-captain
-- **Fixture Information**: Opponent teams and home/away indicators
-- **Expected Points**: AI-predicted points for each player
-- **Team Statistics**: Total expected points and player count
-- **Responsive Design**: Works on desktop, tablet, and mobile devices
-
-## Model Overview
-
-| Model             | Version | Description                    |
-|-------------------|---------|--------------------------------|
-| Ridge Regression  | v6.0    | Regularized linear baseline    |
-| XGBoost           | v6.0    | Gradient boosting ensemble     |
-| CatBoost          | v6.0    | Categorical boosting model     |
-| MLP                | v2.0    | Neural-network regressor       |
-
-Training uses leakage-safe 3/5/10-match form, volatility, recent minutes,
-appearance/start probabilities, and fixture context. Player names are retained
-for API output but are not model inputs. Tuning uses expanding chronological
-folds on development seasons, followed by one evaluation on the untouched
-latest season. To retrain all deployment models and record metrics:
+Train all four pipelines with chronological cross-validation and an untouched
+latest-season holdout:
 
 ```bash
 uv run --group train python trainer-booster.py \
@@ -179,58 +121,12 @@ uv run --group train python trainer-booster.py \
   --tune
 ```
 
-The run writes each complete preprocessing/model pipeline plus CV and tuning
-summaries, baseline comparisons, row-level OOF predictions, untouched-holdout
-results and predictions, optimized ensemble weights, metadata, and an
-append-only training history. The latest archived season is the holdout by
-default; use `--holdout-season YEAR` to state it explicitly and `--quick` for a
-fast smoke test.
+Use `--quick` for a training smoke test. Runs write model pipelines, fold and
+holdout metrics, predictions, ensemble weights, metadata, and training history
+to the selected output directory.
 
-At startup, the inference engine validates each saved model against the shared
-feature contract. Runtime inference uses player IDs, caches fixture lookups,
-supports per-model weights, and can continue when one model fails as long as
-`inference.minimum_successful_models` is satisfied.
-
-Before GW1, runtime inference uses official FPL only; empty history features are
-handled by the imputers fitted inside each saved model pipeline. From GW2, the
-engine may load the exact configured FPL Data season, but it only fills values
-missing from official history. Wrong-season, stale, duplicate-key, and
-low-match-ratio data is rejected, with automatic fallback to official-only
-inference.
-
-- Ensemble predictions for accuracy
-- Season-forward validation metrics
-- Optimized for FPL player performance
-
-## API Integration
-
-Integrates directly with official FPL endpoints for:
-- Bootstrap players, teams, positions, and gameweek state
-- Player gameweek history and official FPL statistics
-- Fixtures, kickoff times, difficulty, and home/away status
-- Live scoring, manager history, public picks, transfers, leagues, and cups
-- Regions, set-piece notes, rankings, event winners, and phase winners
-
-No football-data.org API key or user-uploaded statistics file is required. The
-official FPL API does not provide a stable versioned historical archive, so new
-official match history must be collected during each active season.
-
-Archive the active official season for future retraining with:
-
-```bash
-uv run python -m scripts.collect_official_fpl --gameweek 39
-```
-
-The collector writes to `data/official` by default, which is also the default
-source for the cross-validated trainer. A current-season FPL Data file under
-`data/external` may serve as a validated local inference fallback; it is not the
-default retraining source.
-
-### Temporary FPL Data import
-
-While written reuse permission is pending, one season CSV can be fetched
-through the public **Download CSV** control on
-[FPL Data](https://www.fpl-data.co.uk/statistics):
+FPL Data imports remain permission-pending and are guarded by explicit
+acknowledgement, validation, provenance recording, and atomic writes:
 
 ```bash
 uv run python -m scripts.download_fpl_data \
@@ -238,84 +134,22 @@ uv run python -m scripts.download_fpl_data \
   --acknowledge-permission-pending
 ```
 
-The importer makes one download request for the selected season, validates the
-CSV structure and core values, reports coverage of the 17 non-official model
-features, and writes both the dataset and provenance metadata atomically under
-`data/external`. Existing data is not changed unless `--replace` is supplied;
-lower gameweek or feature coverage is still rejected unless
-`--allow-regression` is also explicitly supplied.
+## Project layout
 
-For a later guarded refresh of the same season, use:
-
-```bash
-uv run python -m scripts.download_fpl_data \
-  --season latest \
-  --replace \
-  --acknowledge-permission-pending
-```
-
-For 2026/27, runtime enrichment is configured for the exact `2026_27` season
-from GW2 onward and cached for six hours. It will not substitute the currently
-available 2025/26 file. Permission remains pending, so keep provenance, do not
-redistribute the CSV, and disable `fpl_data_inference.enabled` immediately if
-the owner declines. In production, `FPL_DATA_INFERENCE_ENABLED=false` is an
-immediate environment-level kill switch. List the seasons currently offered by
-the page with:
-
-```bash
-uv run python -m scripts.download_fpl_data --list-seasons
-```
-
-**For RapidAPI Users:** All data is pre-processed and cached for optimal performance.
-
-## Code Structure
-
-- `main.py`: FastAPI app and endpoints
-- `src/scout.py`: FPLScout class (predictions, team selection)
-- `src/features.py`: Shared training and inference feature contract
-- `src/official_fpl.py`: Official FPL API client and schema adapter
-- `src/models.py`: Pydantic response models
-- `src/utils.py`: Config and helpers
-- `src/logger.py`: Logging
-
-## What's New
-
-- **🔌 RapidAPI Marketplace**: Now available on RapidAPI with professional support
-- **📈 Enhanced API**: New endpoints for gameweeks and player filtering
-- **🌐 Live Deployment**: Available on Google Cloud Platform
-- **🎨 Beautiful Web Interface**: Interactive team visualization with football pitch layout
-- **📸 Screenshot Feature**: Export your team lineup as high-quality PNG images
-- **📱 Mobile Responsive**: Perfect experience on all devices
-- **2026/2027 Season**: Models and UI updated for the new season
-- **CatBoost Integration**: Improved ML pipeline ([Issue #1](https://github.com/elcaiseri/Fantasy-Premier-League-LTX/issues/1))
-- **RESTful API**: FastAPI endpoints for team selection and predictions
-- **Rebranding**: Now OpenFPL-Scout-AI
-- **Refactored Code**: Improved modularity and maintainability
-- **AI-Powered Predictions**: Advanced ensemble models, including an MLP
-- **Async Processing**: Fast parallel predictions
-- **Live Data**: Real-time match integration
-- **Docker Support**: Easy deployment
-
-## Contributing
-
-Contributions welcome! Ideas for improvement:
-- Enhanced algorithms and selection logic
-- Additional UI features and visualizations
-- Player injury/form tracking
-- Better documentation
-- Mobile app development
-
-Fork, branch, and submit a pull request.
+| Path | Purpose |
+|---|---|
+| `main.py` | FastAPI application, route catalog, and web entry point |
+| `src/official_fpl.py` | Official FPL client, caching, and schema mapping |
+| `src/scout.py` | Inference, cold start, and squad selection |
+| `src/features.py` | Shared training and runtime feature contract |
+| `src/fpl_data_inference.py` | Guarded optional stat enrichment |
+| `static/` | Responsive dashboard |
+| `trainer-booster.py` | Time-aware model training and evaluation |
+| `scripts/` | Official archive collection and guarded data import |
+| `tests/` | API, data, feature, inference, and selection tests |
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+[MIT](LICENSE)
 
-## API Support & Contact
-
-**For API Support:**
-- **RapidAPI Marketplace:** [https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
-- **Email:** [support@openfpl.kassem.dev](mailto:iqasem4444@gmail.com)
-
-**General Questions:**
-- **Email:** [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
+Questions: [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
