@@ -1,32 +1,55 @@
-# Byte-compiled / cache files
-__pycache__/
-.ipynb_checkpoints/
+# Version control and container metadata
+.git/
+.gitignore
+.dockerignore
+Dockerfile*
+compose*.yml
+compose*.yaml
+docker-compose*.yml
+docker-compose*.yaml
 
-# Environment files
+# Local configuration and secrets
 .env
-.conda
+.env.*
+!.env.example
+.venv/
+venv/
+.conda/
+.python-version
 
-# OS files
+# Python bytecode, caches, and build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
 .DS_Store
+.idea/
+.vscode/
 
-# Data and output files
-#*.json
+# Development-only files
+tests/
+*.ipynb
+.ipynb_checkpoints/
+Docs.md
+Official-FPL-API-Kit.md
+
+# Generated data and experiment outputs
 *.csv
 *.zip
-*info
-data/
+data*/
 all_csv_history/
 mlruns/
 mlartifacts/
 catboost_info/
-
-# Notebooks
-*.ipynb
-
-# Project-specific files
 trainer*.py
 models-*
-.venv/
-.git/
-.idea/
-.vscode/

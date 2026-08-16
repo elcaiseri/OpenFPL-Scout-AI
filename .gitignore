@@ -1,30 +1,47 @@
-# Byte-compiled / cache files
+# Python bytecode and tool caches
 __pycache__/
-.ipynb_checkpoints/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Environment files
+# Python build and environment files
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.conda/
 .env
-.conda
+.env.*
+!.env.example
 
-# OS files
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Editors and operating systems
 .DS_Store
+.idea/
+.vscode/
 
-# Data and output files
-#*.json
+# Generated data and experiment outputs
 *.csv
 !models/training_results.csv
 !models/cv_fold_results.csv
 !models/tuning_results.csv
 !models/holdout_results.csv
 *.zip
-*info
-data/
-data_/
+data*/
+all_csv_history/
+mlruns/
+mlartifacts/
+catboost_info/
 
-# Notebooks
-*.ipynb
-
-# Project-specific files
-#trainer*.py
+# Project-specific experiments
+trainer*.py
 models-*
-.venv/
