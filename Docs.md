@@ -1,6 +1,6 @@
 # OpenFPL Scout API
 
-Version: 5.3.0
+Version: 6.0.0
 
 OpenFPL Scout generates player projections and a positional 15-player squad.
 The public official Fantasy Premier League API remains the authoritative
@@ -162,7 +162,7 @@ availability.
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "5.3.0",
+  "version": "6.0.0",
   "source": "official-fpl+fpl-data",
   "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }

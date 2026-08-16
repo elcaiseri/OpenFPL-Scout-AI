@@ -8,7 +8,7 @@ class ResponseModel(BaseModel):
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
     strategy: str = "model-ensemble"
-    version: str = "5.3.0"
+    version: str = "6.0.0"
     source: str = "official-fpl"
     credits: str = (
         "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
@@ -33,7 +33,7 @@ class TeamRatingModel(BaseModel):
     risks: List[str] = Field(default_factory=list)
     squad: List[Dict[str, Any]] = Field(default_factory=list)
     strategy: str = "model-ensemble"
-    version: str = "5.3.0"
+    version: str = "6.0.0"
     source: str = "official-fpl"
 
 

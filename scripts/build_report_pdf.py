@@ -44,7 +44,7 @@ PRINT_CSS = """
     margin: 16mm 14mm 18mm;
     background: var(--bg);
     @bottom-left {
-        content: "OpenFPL Scout AI — Technical Report v5.3.0";
+        content: "OpenFPL Scout AI — Technical Report v6.0.0";
         font-family: var(--font-body);
         font-size: 8pt;
         color: #7b6e88;
