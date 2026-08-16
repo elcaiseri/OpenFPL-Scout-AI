@@ -40,6 +40,7 @@
                 <span class="chip">Models trained <b>14 Aug 2026</b></span>
                 <span class="chip">Training rows <b>86,755</b></span>
                 <span class="chip">Held-out season <b>2025/26</b></span>
+                <span class="chip">Source <b>github.com/elcaiseri/OpenFPL-Scout-AI</b></span>
                 <span class="chip">Ensemble <b>Ridge · XGBoost · CatBoost · MLP</b></span>
                 <span class="chip">Live data <b>Official FPL API</b></span>
             </div>
@@ -975,6 +976,26 @@
         <section id="repro">
             <span class="sec-num">14</span>
             <h2 class="sec">Reproducibility</h2>
+            <p class="intro">
+                Everything described in this report is open source, including the figures on this page. If a
+                number here looks wrong, you can check it yourself — and then tell us.
+            </p>
+
+            <div class="note key">
+                <span class="label">Source and contributions</span>
+                <p>The models, the training pipeline, the backtests behind every figure, the API, and this
+                    report all live in one repository:</p>
+                <p style="margin-bottom:10px"><strong><a
+                            href="https://github.com/elcaiseri/OpenFPL-Scout-AI">github.com/elcaiseri/OpenFPL-Scout-AI</a></strong>
+                </p>
+                <p style="margin-bottom:0">Fork it to run your own experiments, retrain on your own data, or
+                    try a different model. Open an issue if a figure looks wrong or a caveat is understated,
+                    and send a pull request if you improve something — contributions of any size are welcome.
+                </p>
+            </div>
+
+            <pre><code>git clone https://github.com/elcaiseri/OpenFPL-Scout-AI.git
+cd OpenFPL-Scout-AI</code></pre>
 
             <p>
                 Training is seeded (<code>random_seed = 42</code>) and every run writes its artifacts to
@@ -1050,6 +1071,11 @@ uv run python -m scripts.collect_official_fpl --gameweek 39</code></pre>
                 OpenFPL is an independent project and is not affiliated with, endorsed by, or connected to the
                 Premier League or Fantasy Premier League. Forecasts are statistical estimates and carry the
                 error documented above — they are not advice or a guarantee of any outcome.
+            </p>
+            <p>
+                Open source at
+                <a href="https://github.com/elcaiseri/OpenFPL-Scout-AI">github.com/elcaiseri/OpenFPL-Scout-AI</a>
+                — forks, issues, and pull requests welcome.
             </p>
             <p>
                 <a href="/">Back to the app</a> · <a href="/api">API catalogue</a> · <a href="/redoc">API

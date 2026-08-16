@@ -2885,3 +2885,52 @@ select {
         text-align: center;
     }
 }
+
+.report-oss {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px 30px;
+    align-items: center;
+    margin-top: 14px;
+    padding: 22px 30px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.report-oss-copy h3 {
+    color: var(--paper);
+    font-size: 0.95rem;
+    font-weight: 800;
+}
+
+.report-oss-copy p {
+    margin-top: 7px;
+    max-width: 74ch;
+    color: var(--muted);
+    font-size: 0.79rem;
+    line-height: 1.6;
+}
+
+/* The GitHub mark is a solid glyph, unlike the stroked arrows elsewhere. */
+.report-oss .community-link svg {
+    width: 18px;
+    fill: currentColor;
+    stroke: none;
+}
+
+@media (max-width: 900px) {
+    .report-oss {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .report-oss .community-link {
+        justify-content: center;
+    }
+}
+
+@media (max-width: 680px) {
+    .report-oss {
+        padding: 20px 18px;
+    }
+}

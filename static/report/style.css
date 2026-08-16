@@ -783,13 +783,10 @@ footer a {
     }
 }
 
+/* Paged output is produced by scripts/build_report_pdf.py, which supplies its
+   own complete print stylesheet. A partial @media print block here only fought
+   it — flipping the page white while every chart and panel stayed dark. */
 @media print {
-    body {
-        background: #fff;
-        color: #000;
-    }
-
-    .toc,
     .tip {
         display: none;
     }
