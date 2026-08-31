@@ -23,8 +23,16 @@ X-RapidAPI-Key: YOUR_RAPIDAPI_KEY
 X-RapidAPI-Host: openfpl-api.p.rapidapi.com
 ```
 
-You do not need to create a separate OpenFPL API key when using the API through
-RapidAPI.
+Most endpoints are **protected** and additionally require an OpenFPL bearer
+token in the `Authorization` header:
+
+```http
+Authorization: ******
+```
+
+A small number of endpoints are **public** and only require the RapidAPI
+headers. These are noted with *(public)* in the endpoint catalogs below.
+All other endpoints require both headers.
 
 ## Quick start
 
@@ -53,8 +61,8 @@ playable Gameweek from the official FPL event state.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/scout` | Generate a 15-player squad for the requested or upcoming Gameweek |
-| `GET` | `/api/scout/team-rating` | Rate a public FPL manager squad from 0 to 100 |
+| `GET` | `/api/scout` | Generate a 15-player squad for the requested or upcoming Gameweek *(public)* |
+| `GET` | `/api/scout/team-rating` | Rate a public FPL manager squad from 0 to 100 *(public)* |
 | `POST` | `/api/scout` | Generate a squad with the full player-projection payload |
 | `GET` | `/api/gw/scout` | Generate a squad for a required Gameweek |
 | `GET` | `/api/gw/playerpoints` | Generate and filter player point projections |
@@ -128,11 +136,11 @@ OpenFPL maps official FPL responses into stable, application-friendly JSON.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api` | Discover every route grouped by resource |
+| `GET` | `/api` | Discover every route grouped by resource *(public)* |
 | `GET` | `/api/health` | Check service, model, and data-source health |
 | `GET` | `/api/gameweeks` | List completed and currently playable Gameweeks |
-| `GET` | `/api/fpl/gameweeks` | List all official Gameweek records |
-| `GET` | `/api/fpl/gameweeks/status` | Get bonus processing and league-update status |
+| `GET` | `/api/fpl/gameweeks` | List all official Gameweek records *(public)* |
+| `GET` | `/api/fpl/gameweeks/status` | Get bonus processing and league-update status *(public)* |
 | `GET` | `/api/fpl/gameweeks/{gameweek}/live` | Get live player scoring for a Gameweek |
 | `GET` | `/api/fpl/dream-team` | Get the published season Dream Team |
 | `GET` | `/api/fpl/gameweeks/{gameweek}/dream-team` | Get a published Gameweek Dream Team |
