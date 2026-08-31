@@ -14,8 +14,7 @@
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
     <link rel="canonical" href="https://openfpl.kassem.dev/">
 
-    <link rel="image_src"
-        href="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
+    <link rel="image_src" href="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
     <meta property="og:title" content="OpenFPL Scout AI — FPL Predictions, Captain Picks &amp; xPts">
     <meta property="og:description"
         content="AI expected points (xPts) for every Premier League player, plus captain picks, differentials, FDR fixture context and a full 15-man Gameweek squad built on official FPL data.">
@@ -151,8 +150,8 @@
             <nav class="topbar" aria-label="Primary navigation">
                 <a class="brand" href="/" aria-label="OpenFPL Scout AI home">
                     <span class="brand-mark" aria-hidden="true">
-                        <img src="/assets/openfpl-predictive-lion-frameless-2026-512.png"
-                            alt="OpenFPL Scout AI logo" width="512" height="512">
+                        <img src="/assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI logo"
+                            width="512" height="512">
                     </span>
                     <span class="brand-copy">
                         <strong>OpenFPL</strong>
@@ -174,11 +173,10 @@
             <div class="hero-grid">
                 <div class="hero-copy">
                     <p class="eyebrow">AI Fantasy Premier League scout</p>
-                    <h1>FPL predictions.<span>Win the Gameweek.</span></h1>
+                    <h1>READ THE GAME.<span>Win the Gameweek.</span></h1>
                     <p class="hero-description">
-                        OpenFPL projects expected points (xPts) for every Premier League player from form,
-                        minutes, availability, ownership and Fixture Difficulty Rating — then builds a legal
-                        15-man squad with captain and vice-captain before the FPL deadline.
+                        OpenFPL Scout AI uses machine learning and live FPL data to predict player points, then
+                        optimises a complete 15-man squad with captain and vice-captain for the next Gameweek.
                     </p>
                     <div class="hero-proof" aria-label="How the FPL scout works">
                         <span><i aria-hidden="true"></i> Form &amp; minutes</span>
@@ -217,7 +215,8 @@
                 </div>
 
                 <div class="control-actions">
-                    <div class="gameweek-window" id="gameweek-window" role="group" aria-label="Gameweek planning window">
+                    <div class="gameweek-window" id="gameweek-window" role="group"
+                        aria-label="Gameweek planning window">
                         <span class="gameweek-window-loading">Loading Gameweeks…</span>
                     </div>
                     <div class="gameweek-selector" hidden>
@@ -225,7 +224,8 @@
                             <option value="">Loading official Gameweeks…</option>
                         </select>
                     </div>
-                    <button class="refresh-button" id="refresh-button" type="button" aria-label="Refresh official FPL data">
+                    <button class="refresh-button" id="refresh-button" type="button"
+                        aria-label="Refresh official FPL data">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.6-2.6L20 9M4 15l2.3 2.6A7 7 0 0 0 18 15" />
                         </svg>
@@ -283,7 +283,8 @@
                         <div class="stat-label">Projected Gameweek points</div>
                     </article>
                     <article class="stat-card">
-                        <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small id="captain-points">— xPts</small></div>
+                        <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small
+                                id="captain-points">— xPts</small></div>
                         <div class="stat-value stat-name" id="captain-name">—</div>
                         <div class="stat-label">Captain (armband)</div>
                     </article>
@@ -297,10 +298,12 @@
                         <div class="stat-value" id="differential-count">—</div>
                         <div class="stat-label">Differential picks</div>
                     </article>
-                    <article class="stat-card engine-card" title="Private machine-learning inference runs inside OpenFPL's own runtime">
+                    <article class="stat-card engine-card"
+                        title="Private machine-learning inference runs inside OpenFPL's own runtime">
                         <div class="stat-topline"><span class="stat-icon">AI</span><small>Past + live</small></div>
                         <div class="engine-grid" aria-label="Signals behind every xPts projection">
-                            <span>Form &amp; minutes</span><span>Fixtures &amp; FDR</span><span>Price &amp; ownership</span><span>xPts model</span>
+                            <span>Form &amp; minutes</span><span>Fixtures &amp; FDR</span><span>Price &amp;
+                                ownership</span><span>xPts model</span>
                         </div>
                         <div class="stat-label">Ridge · XGBoost · CatBoost · MLP ensemble</div>
                     </article>
@@ -329,14 +332,17 @@
                         <span class="section-index">04</span>
                         <div>
                             <h2>AI squad selection</h2>
-                            <small id="squad-subtitle">15 picks, captain and vice-captain for the selected Gameweek</small>
+                            <small id="squad-subtitle">15 picks, captain and vice-captain for the selected
+                                Gameweek</small>
                         </div>
                     </div>
                     <div class="squad-tools" id="squad-tools">
                         <span class="formation-chip" id="formation-chip">2 • 5 • 5 • 3</span>
                         <div class="view-switcher" role="group" aria-label="Squad view">
-                            <button class="view-button active" type="button" data-view="pitch" aria-pressed="true">Pitch</button>
-                            <button class="view-button" type="button" data-view="table" aria-pressed="false">List</button>
+                            <button class="view-button active" type="button" data-view="pitch"
+                                aria-pressed="true">Pitch</button>
+                            <button class="view-button" type="button" data-view="table"
+                                aria-pressed="false">List</button>
                         </div>
                     </div>
                 </div>
@@ -344,12 +350,14 @@
                 <div class="squad-mode-picker" role="group" aria-label="Choose squad analysis mode">
                     <button class="squad-mode-button active" type="button" data-squad-mode="scout" aria-pressed="true">
                         <span class="mode-number">01</span>
-                        <span><strong>AI Scout Team</strong><small>The 15 recommended FPL picks, plus the armband</small></span>
+                        <span><strong>AI Scout Team</strong><small>The 15 recommended FPL picks, plus the
+                                armband</small></span>
                         <span class="mode-arrow" aria-hidden="true">→</span>
                     </button>
                     <button class="squad-mode-button" type="button" data-squad-mode="rating" aria-pressed="false">
                         <span class="mode-number">02</span>
-                        <span><strong>Rate Your Team</strong><small>Score your FPL squad out of 100 against the AI</small></span>
+                        <span><strong>Rate Your Team</strong><small>Score your FPL squad out of 100 against the
+                                AI</small></span>
                         <span class="mode-arrow" aria-hidden="true">→</span>
                     </button>
                 </div>
@@ -361,8 +369,8 @@
                             <small>The number in your FPL “Points” page URL.</small>
                         </div>
                         <div class="team-id-control">
-                            <input id="team-id-input" name="entry_id" type="text" inputmode="numeric"
-                                pattern="[0-9]+" autocomplete="off" placeholder="e.g. 1234567" required
+                            <input id="team-id-input" name="entry_id" type="text" inputmode="numeric" pattern="[0-9]+"
+                                autocomplete="off" placeholder="e.g. 1234567" required
                                 aria-describedby="team-rating-note team-rating-error">
                             <button id="rate-team-button" type="submit">Rate my team</button>
                         </div>
@@ -417,7 +425,8 @@
                     <div class="squad-view" id="table-view" hidden>
                         <div class="table-shell">
                             <table class="squad-table">
-                                <caption class="sr-only">FPL scout squad with official player price, ownership and availability</caption>
+                                <caption class="sr-only">FPL scout squad with official player price, ownership and
+                                    availability</caption>
                                 <thead>
                                     <tr>
                                         <th scope="col">Rank / player</th>
@@ -500,9 +509,8 @@
                             request. Contributions of any size are welcome.
                         </p>
                     </div>
-                    <a class="community-link" href="https://github.com/elcaiseri/OpenFPL-Scout-AI"
-                        target="_blank" rel="noopener noreferrer"
-                        aria-label="Fork OpenFPL Scout AI on GitHub">
+                    <a class="community-link" href="https://github.com/elcaiseri/OpenFPL-Scout-AI" target="_blank"
+                        rel="noopener noreferrer" aria-label="Fork OpenFPL Scout AI on GitHub">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path
                                 d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
@@ -612,12 +620,30 @@
             <span>Expected<br>points</span>
         </div>
         <dl class="dialog-details">
-            <div><dt>Fixture</dt><dd id="dialog-fixture">—</dd></div>
-            <div><dt>Venue</dt><dd id="dialog-venue">—</dd></div>
-            <div><dt>Price</dt><dd id="dialog-price">—</dd></div>
-            <div><dt>Ownership (TSB)</dt><dd id="dialog-ownership">—</dd></div>
-            <div><dt>Season points</dt><dd id="dialog-total-points">—</dd></div>
-            <div><dt>Squad role</dt><dd id="dialog-role">Squad</dd></div>
+            <div>
+                <dt>Fixture</dt>
+                <dd id="dialog-fixture">—</dd>
+            </div>
+            <div>
+                <dt>Venue</dt>
+                <dd id="dialog-venue">—</dd>
+            </div>
+            <div>
+                <dt>Price</dt>
+                <dd id="dialog-price">—</dd>
+            </div>
+            <div>
+                <dt>Ownership (TSB)</dt>
+                <dd id="dialog-ownership">—</dd>
+            </div>
+            <div>
+                <dt>Season points</dt>
+                <dd id="dialog-total-points">—</dd>
+            </div>
+            <div>
+                <dt>Squad role</dt>
+                <dd id="dialog-role">Squad</dd>
+            </div>
         </dl>
         <div class="dialog-news" id="dialog-news" hidden></div>
         <p class="dialog-source">Player, club, price, ownership and availability from the official FPL API.</p>
