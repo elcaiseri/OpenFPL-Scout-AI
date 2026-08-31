@@ -9,7 +9,7 @@ from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -198,6 +198,54 @@ async def serve_index():
         raise HTTPException(
             status_code=500, detail="Failed to read index.html"
         ) from error
+
+
+SITE_URL = os.getenv("OPENFPL_SITE_URL", "https://openfpl.kassem.dev").rstrip("/")
+
+ROBOTS_TXT = f"""User-agent: *
+Allow: /
+Disallow: /docs
+Disallow: /redoc
+Disallow: /openapi.json
+
+Sitemap: {SITE_URL}/sitemap.xml
+"""
+
+# /api returns JSON, so the sitemap lists only the two indexable HTML pages.
+SITEMAP_PATHS = ("/", "/static/report/index.html")
+
+
+@app.get(
+    "/robots.txt",
+    response_class=PlainTextResponse,
+    include_in_schema=False,
+)
+async def serve_robots() -> PlainTextResponse:
+    """Serve robots.txt so crawlers index the app but skip the API consoles."""
+    return PlainTextResponse(
+        content=ROBOTS_TXT, headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def serve_sitemap() -> Response:
+    """Serve a sitemap covering the app and the technical report."""
+    entries = "".join(
+        f"<url><loc>{SITE_URL}{path}</loc>"
+        f"<changefreq>{'daily' if path == '/' else 'monthly'}</changefreq>"
+        f"<priority>{'1.0' if path == '/' else '0.6'}</priority></url>"
+        for path in SITEMAP_PATHS
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{entries}</urlset>"
+    )
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get(

@@ -5,52 +5,141 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#16051f">
+    <title>FPL Predictions, Captain Picks &amp; xPts | OpenFPL Scout AI</title>
     <meta name="description"
-        content="OpenFPL is an AI-powered FPL Scout using historical and live official data to predict player performance and optimise squad selection.">
+        content="Free AI Fantasy Premier League predictions: expected points (xPts) for every player, captain picks, differentials, FDR fixture analysis and a full 15-man Gameweek squad from official FPL data.">
     <meta name="keywords"
-        content="Fantasy Premier League, FPL, AI predictions, machine learning, official FPL data, FPL scout, player performance, squad optimiser, captain picks">
+        content="FPL, Fantasy Premier League, FPL predictions, FPL tips, expected points, xPts, FPL captain picks, armband, differentials, FDR, Fixture Difficulty Rating, Gameweek, FPL deadline, Premier League fantasy football, FPL squad selector, team rating, FPL scout, price changes, bonus points, clean sheets">
     <meta name="author" content="@elcaiseri">
-    <meta name="robots" content="index, follow">
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
     <link rel="canonical" href="https://openfpl.kassem.dev/">
 
     <link rel="image_src"
         href="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
-    <meta property="og:title" content="OpenFPL Scout AI — Read the Game. Win the Gameweek.">
+    <meta property="og:title" content="OpenFPL Scout AI — FPL Predictions, Captain Picks &amp; xPts">
     <meta property="og:description"
-        content="Historical form and live official FPL data meet private machine learning to forecast player performance and optimise every squad.">
+        content="AI expected points (xPts) for every Premier League player, plus captain picks, differentials, FDR fixture context and a full 15-man Gameweek squad built on official FPL data.">
     <meta property="og:image"
         content="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
+    <meta property="og:image:alt" content="OpenFPL Scout AI — AI Fantasy Premier League scout">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <meta property="og:url" content="https://openfpl.kassem.dev/">
     <meta property="og:type" content="website">
+    <meta property="og:locale" content="en_GB">
     <meta property="og:site_name" content="OpenFPL Scout">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="OpenFPL Scout AI — Read the Game. Win the Gameweek.">
-    <meta name="twitter:description" content="An AI-powered FPL Scout for player forecasts, optimised squads and sharper captaincy calls.">
+    <meta name="twitter:title" content="OpenFPL Scout AI — FPL Predictions, Captain Picks &amp; xPts">
+    <meta name="twitter:description"
+        content="AI expected points for every Premier League player, captain picks, differentials and a full 15-man Gameweek squad from official FPL data.">
     <meta name="twitter:image"
         content="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
+    <meta name="twitter:image:alt" content="OpenFPL Scout AI — AI Fantasy Premier League scout">
     <meta name="twitter:creator" content="@elcaiseri">
 
     <script type="application/ld+json">
     {
         "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "OpenFPL Scout AI",
-        "description": "AI-powered Fantasy Premier League scouting using historical and live official data to predict player performance and optimise squad selection",
-        "url": "https://openfpl.kassem.dev/",
-        "image": "https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png",
-        "applicationCategory": "SportsApplication",
-        "operatingSystem": "Web Browser",
-        "author": { "@type": "Person", "name": "@elcaiseri" }
+        "@graph": [
+            {
+                "@type": "WebApplication",
+                "@id": "https://openfpl.kassem.dev/#app",
+                "name": "OpenFPL Scout AI",
+                "alternateName": "OpenFPL",
+                "description": "AI Fantasy Premier League scout that forecasts expected points (xPts) for every Premier League player and builds a legal 15-player Gameweek squad with captain and vice-captain, using official FPL data.",
+                "url": "https://openfpl.kassem.dev/",
+                "image": "https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png",
+                "applicationCategory": "SportsApplication",
+                "applicationSubCategory": "Fantasy Football",
+                "operatingSystem": "Web Browser",
+                "inLanguage": "en-GB",
+                "isAccessibleForFree": true,
+                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "GBP" },
+                "featureList": [
+                    "Expected points (xPts) predictions for every Premier League player",
+                    "Captain and vice-captain picks for the upcoming Gameweek",
+                    "Differential picks under 10% ownership",
+                    "Premier League fixtures with official Fixture Difficulty Rating (FDR)",
+                    "FPL deadline countdown and Gameweek planner",
+                    "Team rating out of 100 for any public FPL team ID"
+                ],
+                "author": { "@type": "Person", "name": "@elcaiseri" },
+                "about": {
+                    "@type": "Thing",
+                    "name": "Fantasy Premier League",
+                    "sameAs": "https://en.wikipedia.org/wiki/Fantasy_Premier_League"
+                }
+            },
+            {
+                "@type": "FAQPage",
+                "@id": "https://openfpl.kassem.dev/#faq",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": "How does OpenFPL predict FPL points?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "An ensemble of four models — Ridge, XGBoost, CatBoost and an MLP — reads each player's recent form, minutes, availability, ownership, price and fixture context from the official FPL API, then projects expected points for the upcoming Gameweek. The squad selector applies the official rules: two goalkeepers, five defenders, five midfielders, three forwards, and a maximum of three players per Premier League club."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "What does xPts mean in FPL?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "xPts is expected points — the average FPL score a player is projected to return in a Gameweek, before the captain's double. It blends the chance of starting, appearance points, attacking returns, clean sheets and bonus points into one number you can rank players by."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Who should I captain this Gameweek?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "The armband goes to the highest projected starter in the scout squad, shown on the Captain card with the vice-captain marked VC on the pitch. Captain points are doubled, so the pick is the single biggest swing in your Gameweek — always confirm the player is fit and starting before the deadline."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "What is a differential in FPL?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "A differential is a player owned by less than 10% of managers (TSB). Differentials gain rank when they return and cost you little when they blank, because most of the field does not own them. OpenFPL counts the differentials inside the recommended squad each Gameweek."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Does OpenFPL account for injuries and flagged players?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Yes. Availability comes straight from official FPL, so injured, suspended and doubtful players carry their flag and are filtered out of selection. The model can only rank what has already been published, so check late team news and press conferences before the deadline."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Does OpenFPL consider my budget, transfers and chips?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "No. Squad selection is deliberately budget-free: prices and team value are shown for context but do not affect projections or picks. Transfers, hits, and chips such as Wildcard, Bench Boost, Triple Captain and Free Hit are your call — use the projections to inform them."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "How is my FPL team rated out of 100?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Enter your public FPL team ID and OpenFPL reads your latest published picks, projects them for the selected Gameweek, and scores them against the AI benchmark squad. The rating combines your starting XI, your captaincy call and the availability of your players."
+                        }
+                    }
+                ]
+            }
+        ]
     }
     </script>
 
     <link rel="icon" type="image/png" sizes="512x512" href="/assets/openfpl-predictive-lion-frameless-2026-512.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon-predictive-lion-frameless.png">
     <link rel="stylesheet" href="/static/style.css">
-    <title>OpenFPL Scout AI — Official Data. Sharper Picks.</title>
 </head>
 
 <body>
@@ -60,20 +149,21 @@
     <div class="container">
         <header class="header">
             <nav class="topbar" aria-label="Primary navigation">
-                <a class="brand" href="/" aria-label="OpenFPL Scout home">
+                <a class="brand" href="/" aria-label="OpenFPL Scout AI home">
                     <span class="brand-mark" aria-hidden="true">
-                        <img src="/assets/openfpl-predictive-lion-frameless-2026-512.png" alt="">
+                        <img src="/assets/openfpl-predictive-lion-frameless-2026-512.png"
+                            alt="OpenFPL Scout AI logo" width="512" height="512">
                     </span>
                     <span class="brand-copy">
                         <strong>OpenFPL</strong>
-                        <small>AI scout intelligence</small>
+                        <small>Fantasy Premier League AI scout</small>
                     </span>
                 </a>
 
                 <div class="topbar-actions">
-                    <a href="/static/report/index.html">Report</a>
-                    <a href="/redoc">API docs</a>
-                    <a href="/api">API kit</a>
+                    <a href="/static/report/index.html" title="How the FPL prediction model works">Report</a>
+                    <a href="/redoc" title="OpenFPL FPL API reference">API docs</a>
+                    <a href="/api" title="OpenFPL FPL API route catalog">API kit</a>
                     <span class="season-chip">
                         <span class="status-dot" aria-hidden="true"></span>
                         2026/27 live
@@ -83,22 +173,24 @@
 
             <div class="hero-grid">
                 <div class="hero-copy">
-                    <p class="eyebrow">AI-powered FPL Scout</p>
-                    <h1>Read the game.<span>Win the gameweek.</span></h1>
+                    <p class="eyebrow">AI Fantasy Premier League scout</p>
+                    <h1>FPL predictions.<span>Win the Gameweek.</span></h1>
                     <p class="hero-description">
-                        Machine-learning models study historical performance and live official FPL data to forecast every player, then optimise a complete 15-player squad for the Gameweek ahead.
+                        OpenFPL projects expected points (xPts) for every Premier League player from form,
+                        minutes, availability, ownership and Fixture Difficulty Rating — then builds a legal
+                        15-man squad with captain and vice-captain before the FPL deadline.
                     </p>
-                    <div class="hero-proof" aria-label="AI scouting workflow">
-                        <span><i aria-hidden="true"></i> Historical form</span>
-                        <span>Live official FPL</span>
-                        <span>Player forecasts</span>
-                        <span>Squad optimisation</span>
+                    <div class="hero-proof" aria-label="How the FPL scout works">
+                        <span><i aria-hidden="true"></i> Form &amp; minutes</span>
+                        <span>Official FPL data</span>
+                        <span>xPts per player</span>
+                        <span>Squad &amp; armband</span>
                     </div>
                 </div>
 
-                <section class="gameweek-panel" aria-live="polite" aria-label="Current gameweek status">
+                <section class="gameweek-panel" aria-live="polite" aria-label="Current Gameweek deadline status">
                     <div class="panel-topline">
-                        <span class="panel-kicker">Selection room</span>
+                        <span class="panel-kicker">FPL deadline</span>
                         <span class="source-state" id="source-state">Updating</span>
                     </div>
                     <strong class="gameweek" id="gameweek-info">Loading…</strong>
@@ -107,7 +199,7 @@
                         <strong id="deadline-countdown">—</strong>
                     </div>
                     <div class="panel-foot">
-                        <span id="deadline-date">Loading official deadline</span>
+                        <span id="deadline-date">Loading official FPL deadline</span>
                         <span id="event-state">Before deadline</span>
                     </div>
                 </section>
@@ -115,22 +207,22 @@
         </header>
 
         <main>
-            <section class="control-deck" aria-label="Gameweek controls">
+            <section class="control-deck" aria-label="Gameweek planner controls">
                 <div class="selector-copy">
                     <span class="section-index">01</span>
                     <div>
                         <label for="gameweek-select">Gameweek planner</label>
-                        <p>Plan the current Gameweek and look ahead to the next two.</p>
+                        <p>Plan this Gameweek and look ahead two more before the deadline.</p>
                     </div>
                 </div>
 
                 <div class="control-actions">
                     <div class="gameweek-window" id="gameweek-window" role="group" aria-label="Gameweek planning window">
-                        <span class="gameweek-window-loading">Loading events…</span>
+                        <span class="gameweek-window-loading">Loading Gameweeks…</span>
                     </div>
                     <div class="gameweek-selector" hidden>
-                        <select id="gameweek-select" aria-label="Select gameweek to view">
-                            <option value="">Loading official events…</option>
+                        <select id="gameweek-select" aria-label="Select a Gameweek to view">
+                            <option value="">Loading official Gameweeks…</option>
                         </select>
                     </div>
                     <button class="refresh-button" id="refresh-button" type="button" aria-label="Refresh official FPL data">
@@ -142,16 +234,16 @@
                 </div>
             </section>
 
-            <section class="official-pulse" aria-label="Official gameweek information">
+            <section class="official-pulse" aria-label="Official Gameweek information">
                 <article>
                     <span class="pulse-label">Deadline</span>
                     <strong id="pulse-deadline">—</strong>
-                    <small id="pulse-deadline-sub">Official deadline time</small>
+                    <small id="pulse-deadline-sub">90 minutes before first kick-off</small>
                 </article>
                 <article>
                     <span class="pulse-label">Fixtures</span>
                     <strong id="fixture-count">—</strong>
-                    <small>Official fixtures loaded</small>
+                    <small>Premier League fixtures this GW</small>
                 </article>
                 <article>
                     <span class="pulse-label">Gameweek status</span>
@@ -161,22 +253,24 @@
                 <article>
                     <span class="pulse-label">Last update</span>
                     <strong id="last-sync">—</strong>
-                    <small>Cached for quick updates</small>
+                    <small>Official FPL API sync</small>
                 </article>
             </section>
 
-            <aside class="disclaimer" aria-label="Availability disclaimer">
+            <aside class="disclaimer" aria-label="Team news disclaimer">
                 <span class="disclaimer-icon" aria-hidden="true">!</span>
-                <p><strong>Team-news check</strong> — The AI ranks what is known. Check late injuries, suspensions and press conference updates before confirming your squad.</p>
+                <p><strong>Team-news check</strong> — The AI ranks what has already been published. Check late
+                    injuries, flagged players, suspensions, rotation risk and press conferences before you confirm
+                    your squad and captain.</p>
             </aside>
 
-            <section class="stats-section" aria-label="Squad intelligence">
+            <section class="stats-section" aria-label="FPL player predictions">
                 <div class="section-heading">
                     <div>
                         <span class="section-index">02</span>
                         <div>
-                            <p>Scout's verdict</p>
-                            <small>ML forecasts built from historical form and live official FPL signals</small>
+                            <h2>FPL player predictions</h2>
+                            <small>Expected points (xPts) from form, minutes, FDR and live official FPL data</small>
                         </div>
                     </div>
                     <span class="live-label"><i></i> <span id="signal-state">Computing</span></span>
@@ -185,57 +279,57 @@
                 <div class="stats-grid" id="stats-grid">
                     <article class="stat-card stat-primary">
                         <div class="stat-topline"><span class="stat-icon">xPts</span><small>01</small></div>
-                        <div class="stat-value" id="total-points" aria-label="Total expected points">—</div>
-                        <div class="stat-label">Projected squad total</div>
+                        <div class="stat-value" id="total-points" aria-label="Projected Gameweek points">—</div>
+                        <div class="stat-label">Projected Gameweek points</div>
                     </article>
                     <article class="stat-card">
-                        <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small id="captain-points">— xP</small></div>
+                        <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small id="captain-points">— xPts</small></div>
                         <div class="stat-value stat-name" id="captain-name">—</div>
-                        <div class="stat-label">Captaincy pick</div>
+                        <div class="stat-label">Captain (armband)</div>
                     </article>
                     <article class="stat-card">
                         <div class="stat-topline"><span class="stat-icon">£</span><small>15 players</small></div>
                         <div class="stat-value" id="squad-value">—</div>
-                        <div class="stat-label">Official squad value</div>
+                        <div class="stat-label">Squad value (£m)</div>
                     </article>
                     <article class="stat-card">
-                        <div class="stat-topline"><span class="stat-icon">Δ</span><small>&lt;10% selected</small></div>
+                        <div class="stat-topline"><span class="stat-icon">Δ</span><small>&lt;10% TSB</small></div>
                         <div class="stat-value" id="differential-count">—</div>
                         <div class="stat-label">Differential picks</div>
                     </article>
                     <article class="stat-card engine-card" title="Private machine-learning inference runs inside OpenFPL's own runtime">
-                        <div class="stat-topline"><span class="stat-icon">AI</span><small>Historical + live</small></div>
-                        <div class="engine-grid" aria-label="AI prediction and squad optimisation workflow">
-                            <span>Past seasons</span><span>Live FPL data</span><span>Player forecasts</span><span>Squad optimiser</span>
+                        <div class="stat-topline"><span class="stat-icon">AI</span><small>Past + live</small></div>
+                        <div class="engine-grid" aria-label="Signals behind every xPts projection">
+                            <span>Form &amp; minutes</span><span>Fixtures &amp; FDR</span><span>Price &amp; ownership</span><span>xPts model</span>
                         </div>
-                        <div class="stat-label">Private ML models · one optimised squad</div>
+                        <div class="stat-label">Ridge · XGBoost · CatBoost · MLP ensemble</div>
                     </article>
                 </div>
             </section>
 
-            <section class="fixture-section" aria-label="Official fixtures">
+            <section class="fixture-section" aria-label="Premier League fixtures and difficulty">
                 <div class="section-heading">
                     <div>
                         <span class="section-index">03</span>
                         <div>
-                            <p>Fixture watch</p>
-                            <small>Kick-off, venue and official difficulty at a glance</small>
+                            <h2>Premier League fixtures &amp; FDR</h2>
+                            <small>Kick-off, home or away, and official Fixture Difficulty Rating at a glance</small>
                         </div>
                     </div>
                     <span class="fixture-source">OFFICIAL / FIXTURES</span>
                 </div>
                 <div class="fixture-rail" id="fixture-rail">
-                    <div class="rail-loading">Loading official fixtures…</div>
+                    <div class="rail-loading">Loading Premier League fixtures…</div>
                 </div>
             </section>
 
-            <section class="squad-section" aria-label="AI squad selection">
+            <section class="squad-section" aria-label="AI FPL squad selection">
                 <div class="section-heading squad-heading">
                     <div>
                         <span class="section-index">04</span>
                         <div>
-                            <p>AI squad selection</p>
-                            <small id="squad-subtitle">15 picks ranked for the selected Gameweek</small>
+                            <h2>AI squad selection</h2>
+                            <small id="squad-subtitle">15 picks, captain and vice-captain for the selected Gameweek</small>
                         </div>
                     </div>
                     <div class="squad-tools" id="squad-tools">
@@ -250,12 +344,12 @@
                 <div class="squad-mode-picker" role="group" aria-label="Choose squad analysis mode">
                     <button class="squad-mode-button active" type="button" data-squad-mode="scout" aria-pressed="true">
                         <span class="mode-number">01</span>
-                        <span><strong>AI Scout Team</strong><small>See OpenFPL's 15 recommended picks</small></span>
+                        <span><strong>AI Scout Team</strong><small>The 15 recommended FPL picks, plus the armband</small></span>
                         <span class="mode-arrow" aria-hidden="true">→</span>
                     </button>
                     <button class="squad-mode-button" type="button" data-squad-mode="rating" aria-pressed="false">
                         <span class="mode-number">02</span>
-                        <span><strong>Rate Your Team</strong><small>Score your published squad with the same AI</small></span>
+                        <span><strong>Rate Your Team</strong><small>Score your FPL squad out of 100 against the AI</small></span>
                         <span class="mode-arrow" aria-hidden="true">→</span>
                     </button>
                 </div>
@@ -264,7 +358,7 @@
                     <form class="team-rating-form" id="team-rating-form">
                         <div>
                             <label for="team-id-input">Your FPL team ID</label>
-                            <small>Enter the number from your “Points” page URL.</small>
+                            <small>The number in your FPL “Points” page URL.</small>
                         </div>
                         <div class="team-id-control">
                             <input id="team-id-input" name="entry_id" type="text" inputmode="numeric"
@@ -274,7 +368,8 @@
                         </div>
                     </form>
                     <p class="team-rating-note" id="team-rating-note">
-                        OpenFPL reads only public, post-deadline picks. For an upcoming Gameweek, your latest published squad is scored against that Gameweek's forecast.
+                        OpenFPL reads only public, post-deadline picks. For an upcoming Gameweek, your latest
+                        published squad is scored against that Gameweek's xPts forecast.
                     </p>
                     <div class="team-rating-error" id="team-rating-error" role="alert" hidden></div>
 
@@ -291,7 +386,7 @@
                                 <small id="rating-picks-label">Latest published squad</small>
                             </div>
                             <div class="rating-metrics">
-                                <span><small>Your projection</small><strong id="rating-projection">—</strong></span>
+                                <span><small>Your xPts</small><strong id="rating-projection">—</strong></span>
                                 <span><small>AI benchmark</small><strong id="rating-benchmark">—</strong></span>
                                 <span><small>Projected gap</small><strong id="rating-gap">—</strong></span>
                             </div>
@@ -314,7 +409,7 @@
                         <div class="pitch" id="pitch" role="region" aria-label="Squad formation display">
                             <div class="loading" role="status" aria-live="polite">
                                 <span class="loading-ball" aria-hidden="true"></span>
-                                Running local AI inference…
+                                Projecting the Gameweek…
                             </div>
                         </div>
                     </div>
@@ -322,15 +417,15 @@
                     <div class="squad-view" id="table-view" hidden>
                         <div class="table-shell">
                             <table class="squad-table">
-                                <caption class="sr-only">FPL squad with official player information</caption>
+                                <caption class="sr-only">FPL scout squad with official player price, ownership and availability</caption>
                                 <thead>
                                     <tr>
                                         <th scope="col">Rank / player</th>
                                         <th scope="col">Pos</th>
-                                        <th scope="col">Fixture</th>
+                                        <th scope="col">Opponent</th>
                                         <th scope="col">Price</th>
-                                        <th scope="col">Selected by</th>
-                                        <th scope="col">Status</th>
+                                        <th scope="col">TSB %</th>
+                                        <th scope="col">Availability</th>
                                         <th scope="col">xPts</th>
                                     </tr>
                                 </thead>
@@ -346,7 +441,7 @@
                     <div>
                         <span class="section-index">05</span>
                         <div>
-                            <p>How the model works</p>
+                            <h2>How the FPL model works</h2>
                             <small>Data, validation, measured accuracy, and known limits</small>
                         </div>
                     </div>
@@ -358,8 +453,8 @@
                         <p>
                             OpenFPL was measured on a full Premier League season held out of training —
                             29,747 player-gameweeks. The report documents the four-model ensemble, how it
-                            was validated, exactly how accurate it proved to be, and where it is known to
-                            be weak.
+                            was validated, exactly how accurate its expected points proved to be, and where
+                            it is known to be weak.
                         </p>
                         <div class="report-actions">
                             <a class="report-button primary" href="/static/report/index.html">
@@ -371,7 +466,7 @@
                             </a>
                         </div>
                     </div>
-                    <dl class="report-stats" aria-label="Headline results from the held-out season">
+                    <dl class="report-stats" aria-label="Headline results from the held-out Premier League season">
                         <div>
                             <dt>Holdout RMSE</dt>
                             <dd>1.92</dd>
@@ -416,6 +511,85 @@
                     </a>
                 </div>
             </section>
+
+            <section class="faq-section" id="faq" aria-label="Fantasy Premier League questions">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-index">06</span>
+                        <div>
+                            <h2>FPL questions, answered</h2>
+                            <small>xPts, captaincy, differentials, flags and how the team rating is scored</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="faq-grid">
+                    <details class="faq-item">
+                        <summary>How does OpenFPL predict FPL points?</summary>
+                        <p>
+                            An ensemble of four models — Ridge, XGBoost, CatBoost and an MLP — reads each player's
+                            recent form, minutes, availability, ownership, price and fixture context from the
+                            official FPL API, then projects expected points for the upcoming Gameweek. The squad
+                            selector applies the official rules: two goalkeepers, five defenders, five midfielders,
+                            three forwards, and a maximum of three players per Premier League club.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>What does xPts mean in FPL?</summary>
+                        <p>
+                            xPts is expected points — the average FPL score a player is projected to return in a
+                            Gameweek, before the captain's double. It blends the chance of starting, appearance
+                            points, attacking returns, clean sheets and bonus points into one number you can rank
+                            players by.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Who should I captain this Gameweek?</summary>
+                        <p>
+                            The armband goes to the highest projected starter in the scout squad, shown on the
+                            Captain card with the vice-captain marked VC on the pitch. Captain points are doubled,
+                            so the pick is the single biggest swing in your Gameweek — always confirm the player is
+                            fit and starting before the deadline.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>What is a differential in FPL?</summary>
+                        <p>
+                            A differential is a player owned by less than 10% of managers (TSB). Differentials gain
+                            rank when they return and cost you little when they blank, because most of the field
+                            does not own them. OpenFPL counts the differentials inside the recommended squad each
+                            Gameweek.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Does OpenFPL account for injuries and flagged players?</summary>
+                        <p>
+                            Yes. Availability comes straight from official FPL, so injured, suspended and doubtful
+                            players carry their flag and are filtered out of selection. The model can only rank what
+                            has already been published, so check late team news and press conferences before the
+                            deadline.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Does OpenFPL consider my budget, transfers and chips?</summary>
+                        <p>
+                            No. Squad selection is deliberately budget-free: prices and team value are shown for
+                            context but do not affect projections or picks. Transfers, hits, and chips such as
+                            Wildcard, Bench Boost, Triple Captain and Free Hit are your call — use the projections
+                            to inform them.
+                        </p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>How is my FPL team rated out of 100?</summary>
+                        <p>
+                            Enter your public FPL team ID and OpenFPL reads your latest published picks, projects
+                            them for the selected Gameweek, and scores them against the AI benchmark squad. The
+                            rating combines your starting XI, your captaincy call and the availability of your
+                            players.
+                        </p>
+                    </details>
+                </div>
+            </section>
         </main>
 
         <footer class="credits" id="credits">
@@ -435,18 +609,18 @@
         </div>
         <div class="dialog-score">
             <strong id="dialog-points">0.00</strong>
-            <span>Projected<br>points</span>
+            <span>Expected<br>points</span>
         </div>
         <dl class="dialog-details">
             <div><dt>Fixture</dt><dd id="dialog-fixture">—</dd></div>
             <div><dt>Venue</dt><dd id="dialog-venue">—</dd></div>
-            <div><dt>Official price</dt><dd id="dialog-price">—</dd></div>
-            <div><dt>Ownership</dt><dd id="dialog-ownership">—</dd></div>
+            <div><dt>Price</dt><dd id="dialog-price">—</dd></div>
+            <div><dt>Ownership (TSB)</dt><dd id="dialog-ownership">—</dd></div>
             <div><dt>Season points</dt><dd id="dialog-total-points">—</dd></div>
             <div><dt>Squad role</dt><dd id="dialog-role">Squad</dd></div>
         </dl>
         <div class="dialog-news" id="dialog-news" hidden></div>
-        <p class="dialog-source">Identity, price, ownership and availability from official FPL.</p>
+        <p class="dialog-source">Player, club, price, ownership and availability from the official FPL API.</p>
     </dialog>
 
     <script src="/static/script.js"></script>
