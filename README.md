@@ -9,7 +9,8 @@ responsive web dashboard and FastAPI service.
 
 [Live app](https://openfpl.kassem.dev) ·
 [API reference](https://openfpl.kassem.dev/redoc) ·
-[Route catalog](https://openfpl.kassem.dev/api)
+[Route catalog](https://openfpl.kassem.dev/api) ·
+[RapidAPI](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
 
 ## Highlights
 
@@ -112,6 +113,24 @@ curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
+
+### RapidAPI
+
+OpenFPL is also available through the
+[OpenFPL API listing on RapidAPI](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
+with **Basic**, **Pro**, **Ultra**, and **Mega** subscription plans. RapidAPI
+consumers use the gateway base URL and the credentials supplied by their
+RapidAPI application:
+
+```bash
+curl --request GET \
+  --url "https://openfpl-api.p.rapidapi.com/api/scout?gameweek=1" \
+  --header "X-RapidAPI-Key: <rapidapi-key>" \
+  --header "X-RapidAPI-Host: openfpl-api.p.rapidapi.com"
+```
+
+See the [RapidAPI guide](RAPIDAPI.md) for authentication, examples, response
+formats, errors, prediction notes, and the complete endpoint catalog.
 
 | Area | Coverage |
 |---|---|

@@ -5,12 +5,14 @@ from unittest.mock import patch
 import pandas as pd
 
 from main import (
+    RAPIDAPI_PRICING_URL,
     _api_catalog,
     _documentation_config,
     _documentation_links,
     _is_production_environment,
     app,
     rate_public_manager_team,
+    redirect_to_rapidapi,
 )
 
 
@@ -77,6 +79,18 @@ class FakeRatingScout:
 
 
 class APISchemaTests(unittest.TestCase):
+    def test_rapidapi_redirect_tracks_placement_without_caching(self):
+        with patch("main.logger.info") as log_info:
+            response = asyncio.run(redirect_to_rapidapi(placement="topbar"))
+
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], RAPIDAPI_PRICING_URL)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        log_info.assert_called_once_with(
+            "outbound_click destination=rapidapi placement=%s",
+            "topbar",
+        )
+
     def test_public_team_rating_combines_manager_picks_and_predictions(self):
         with patch("main.scout", FakeRatingScout(), create=True):
             result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
