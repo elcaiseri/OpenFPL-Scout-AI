@@ -9,7 +9,7 @@ from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -30,6 +30,11 @@ from src.team_rating import rate_manager_team
 from src.utils import load_config
 
 logger = get_logger(__name__)
+
+RAPIDAPI_PRICING_URL = (
+    "https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api/pricing"
+    "?utm_source=openfpl&utm_medium=website&utm_campaign=build_with_api"
+)
 
 config = load_config("config/config.yaml")
 scout: FPLScout
@@ -198,6 +203,22 @@ async def serve_index():
         raise HTTPException(
             status_code=500, detail="Failed to read index.html"
         ) from error
+
+
+@app.get("/go/rapidapi", include_in_schema=False)
+async def redirect_to_rapidapi(
+    placement: Literal["topbar"] = Query("topbar"),
+) -> RedirectResponse:
+    """Record an outbound API CTA click and continue to RapidAPI pricing."""
+    logger.info(
+        "outbound_click destination=rapidapi placement=%s",
+        placement,
+    )
+    return RedirectResponse(
+        url=RAPIDAPI_PRICING_URL,
+        status_code=307,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get(

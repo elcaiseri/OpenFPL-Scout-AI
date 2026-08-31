@@ -118,8 +118,9 @@ curl -H "Authorization: Bearer <token>" \
 
 OpenFPL is also available through the
 [OpenFPL API listing on RapidAPI](https://rapidapi.com/elcaiseri-elcaiseri-default/api/openfpl-api)
-with **BASIC** and **SEASON** subscription plans. RapidAPI consumers use the
-gateway base URL and the credentials supplied by their RapidAPI application:
+with **Basic**, **Pro**, **Ultra**, and **Mega** subscription plans. RapidAPI
+consumers use the gateway base URL and the credentials supplied by their
+RapidAPI application:
 
 ```bash
 curl --request GET \
