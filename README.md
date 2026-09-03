@@ -63,8 +63,9 @@ FPL_DATA_INFERENCE_ENABLED=false
 
 ## Docker
 
-The image intentionally excludes generated data and model artifacts. Mount both
-directories read-only at their configured runtime paths:
+The image intentionally excludes generated data and model artifacts. Mount the
+data directory read-write and the model directory read-only at their configured
+runtime paths:
 
 ```bash
 docker build --platform linux/amd64 -t openfpl-scout-ai .
@@ -72,7 +73,7 @@ docker run --rm \
   --name openfpl-scout-ai \
   -p 8000:8000 \
   -e VALID_API_KEYS=local-development-token \
-  --mount type=bind,src="${PWD}/data",dst=/app/data,readonly \
+  --mount type=bind,src="${PWD}/data",dst=/app/data \
   --mount type=bind,src="${PWD}/models",dst=/app/models,readonly \
   openfpl-scout-ai
 ```
@@ -80,7 +81,9 @@ docker run --rm \
 The container defaults to port `8000` and honors the `PORT` environment
 variable supplied by Cloud Run. A Cloud Run revision must expose equivalent
 volumes at `/app/data` and `/app/models`; local Docker bind mounts are not
-transferred with the image.
+transferred with the image. The model volume can be read-only, but the data
+volume and its bucket permissions must allow the service to create and replace
+objects.
 
 For a low-traffic Cloud Run service, start with request-based billing, 1 vCPU,
 512 MiB, concurrency 4, scale-to-zero, and a three-instance cost cap:
@@ -132,6 +135,39 @@ Runtime data flows from official FPL through the shared feature pipeline, model
 ensemble, and squad selector. The optional enrichment layer accepts only the
 configured season, fills missing values only, rejects stale or poorly matched
 data, and falls back to official-only inference on failure.
+
+Every successful scout inference also maintains a durable, season-scoped
+archive under `data/archive/<season>/`. The archive is fail-open, so a temporary
+storage failure is reported in `/api/health` without taking predictions down.
+Set `OPENFPL_DATA_ARCHIVE_ENABLED=false` to disable it or
+`OPENFPL_DATA_ROOT=/data` when the Cloud Run volume is mounted at `/data`
+instead of `/app/data`. This single override relocates both the archive and the
+durable enrichment source. `OPENFPL_DATA_ARCHIVE_ROOT` can override only the
+archive location when needed.
+
+```text
+data/
+├── external/                         # durable complete FPL Data source + metadata
+└── archive/2026-2027/
+    ├── official/
+    │   ├── snapshots/gw_03/          # raw bootstrap and fixture payloads
+    │   ├── live/gw_02.json           # complete event-live player payload
+    │   ├── history/before_gw_03.csv  # cumulative official history
+    │   └── player-stats/gw_02.csv    # one training table per played GW
+    ├── enriched/
+    │   ├── history/before_gw_03.csv
+    │   └── player-stats/gw_02.csv
+    ├── predictions/gw_03.csv
+    ├── squads/gw_03.json
+    └── metadata/gw_03.json
+```
+
+Official history CSVs retain the normalized model fields and every raw
+gameweek-history field with an `official_` prefix. Completed live files are
+immutable; the current gameweek, upcoming predictions, and snapshots are
+refreshed as new requests arrive. Invoke `/api/scout` at least once after each
+gameweek is finalized (for example with Cloud Scheduler) to guarantee a
+complete season even when the service otherwise receives no traffic.
 
 Archive active-season official history for future training:
 
