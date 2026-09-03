@@ -77,11 +77,18 @@ fpl_data_inference:
   start_gameweek: 2
   season: "2026_27"
   local_path: "data/external/fpl-data-stats-2027.csv"
-  runtime_cache_path: "/data/openfpl/fpl-data-stats-2027.csv"
+  runtime_cache_path: "data/external/fpl-data-stats-2027.csv"
   refresh_ttl_seconds: 21600
   minimum_match_ratio: 0.8
   timeout_seconds: 60
   permission_status: "pending"
+
+# Durable artifacts for future training. In Cloud Run, the data root must be a
+# writable bucket volume. Set OPENFPL_DATA_ROOT=/data for a /data mount.
+data_archive:
+  enabled: true
+  root_path: "data/archive"
+  season: "auto"
 
 # Model Information
 models:

@@ -19,6 +19,7 @@ from src.features import (
     normalize_fpl_columns,
     prepare_recent_player_features,
 )
+from src.data_archive import DataArchive
 from src.fpl_data_inference import FPLDataHistoryProvider
 from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
@@ -36,6 +37,20 @@ def _environment_bool(name: str) -> Optional[bool]:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be true or false")
+
+
+def _mounted_data_path(configured_path: Any) -> Any:
+    """Relocate configured data/* paths when the runtime mount differs."""
+    data_root = os.environ.get("OPENFPL_DATA_ROOT")
+    if not data_root or configured_path is None:
+        return configured_path
+    relative_path = Path(str(configured_path))
+    if relative_path.is_absolute():
+        return relative_path
+    parts = relative_path.parts
+    if parts and parts[0] == "data":
+        parts = parts[1:]
+    return Path(data_root).joinpath(*parts)
 
 
 class InferenceError(RuntimeError):
@@ -72,6 +87,7 @@ class FPLScout:
         model_loader: Callable[[str], Any] = joblib.load,
         official_client: Optional[OfficialFPLClient] = None,
         fpl_data_provider: Optional[FPLDataHistoryProvider] = None,
+        data_archive: Optional[DataArchive] = None,
     ) -> None:
         self.config = dict(config)
         official_config = self.config.get("official_fpl", {})
@@ -121,6 +137,7 @@ class FPLScout:
         if self.fpl_data_start_gameweek < 2:
             raise ValueError("fpl_data_inference.start_gameweek must be at least 2")
         self.fpl_data_provider = fpl_data_provider
+        self.data_archive = data_archive or DataArchive.from_config(self.config)
         self.last_data_enrichment: Dict[str, Any] = {
             "provider": "fpl-data",
             "status": "not-attempted",
@@ -128,8 +145,10 @@ class FPLScout:
         if self.fpl_data_enabled and self.fpl_data_provider is None:
             self.fpl_data_provider = FPLDataHistoryProvider(
                 season_value=self.fpl_data_season,
-                local_path=fpl_data_config.get("local_path"),
-                runtime_cache_path=fpl_data_config.get("runtime_cache_path"),
+                local_path=_mounted_data_path(fpl_data_config.get("local_path")),
+                runtime_cache_path=_mounted_data_path(
+                    fpl_data_config.get("runtime_cache_path")
+                ),
                 refresh_ttl_seconds=int(
                     fpl_data_config.get("refresh_ttl_seconds", 21600)
                 ),
@@ -550,8 +569,9 @@ class FPLScout:
         """Generate predictions from official history plus guarded enrichment."""
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
-        history = self.official_client.player_history(resolved_gameweek)
-        logger.info("Loaded %d official FPL history rows", len(history))
+        official_history = self.official_client.player_history(resolved_gameweek)
+        history = official_history
+        logger.info("Loaded %d official FPL history rows", len(official_history))
 
         enrichment = {
             "provider": "fpl-data",
@@ -583,6 +603,25 @@ class FPLScout:
             if enrichment.get("status") == "applied"
             else "official-fpl"
         )
+        archive_result = self.data_archive.capture_inference(
+            official_client=self.official_client,
+            prediction_gameweek=resolved_gameweek,
+            official_history=official_history,
+            enriched_history=history,
+            predictions=result,
+            source=str(result.attrs["source"]),
+            enrichment=enrichment,
+            model_versions={
+                name: {
+                    key: value
+                    for key, value in metadata.items()
+                    if key in {"version", "last_trained", "year", "weight", "path"}
+                }
+                for name, metadata in self.config.get("models", {}).items()
+                if isinstance(metadata, Mapping)
+            },
+        )
+        result.attrs["archive"] = archive_result
         return result
 
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:

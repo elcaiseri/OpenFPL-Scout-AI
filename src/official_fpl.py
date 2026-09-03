@@ -154,9 +154,13 @@ class OfficialFPLClient:
         """Return the official bonus-processing and league update state."""
         return self._mapping_resource("event-status/")
 
+    def event_live(self, gameweek: int) -> Mapping[str, Any]:
+        """Return the complete official live payload for one gameweek."""
+        return self._mapping_resource(f"event/{gameweek}/live/")
+
     def mapped_event_live(self, gameweek: int) -> Dict[str, Any]:
         """Map live official player scoring for a gameweek."""
-        payload = self._mapping_resource(f"event/{gameweek}/live/")
+        payload = self.event_live(gameweek)
         players = {player["id"]: player for player in self.mapped_players()}
         elements = []
         for element in payload.get("elements", []):
@@ -834,7 +838,15 @@ class OfficialFPLClient:
         history: Mapping[str, Any],
         teams: Mapping[int, str],
     ) -> Dict[str, Any]:
-        return OfficialFPLClient._common_player_values(player, teams) | {
+        # Keep every upstream field for future feature engineering. Canonical
+        # model fields remain unprefixed; the raw contract is namespaced so a
+        # future Official FPL field cannot silently overwrite one of them.
+        raw_official_values = {
+            f"official_{key}": value for key, value in history.items()
+        }
+        return raw_official_values | OfficialFPLClient._common_player_values(
+            player, teams
+        ) | {
             "gameweek": int(history["round"]),
             "was_home": bool(history.get("was_home")),
             "opponent_team_name": teams.get(int(history["opponent_team"])),

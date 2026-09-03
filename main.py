@@ -237,6 +237,7 @@ async def check_health():
             "permission_status": scout.fpl_data_permission_status,
             "last_result": scout.last_data_enrichment,
         },
+        "data_archive": scout.data_archive.status(),
         "models": len(scout.model_artifacts),
     }
 
@@ -781,6 +782,7 @@ async def _generate_scout_response(
     try:
         predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
+        await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
         if public:
             logger.info(

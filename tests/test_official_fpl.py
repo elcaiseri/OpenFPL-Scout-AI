@@ -138,6 +138,8 @@ class OfficialFPLClientTests(unittest.TestCase):
                     "recoveries": 5,
                     "tackles": 1,
                     "defensive_contribution": 3,
+                    "bonus": 2,
+                    "bps": 31,
                 }
             ],
             "fixtures": [],
@@ -158,6 +160,8 @@ class OfficialFPLClientTests(unittest.TestCase):
         self.assertEqual(result.loc[0, "goals"], 1.0)
         self.assertEqual(result.loc[0, "expected_goals"], 0.71)
         self.assertEqual(result.loc[0, "clean_sheet"], 1.0)
+        self.assertEqual(result.loc[0, "official_bonus"], 2)
+        self.assertEqual(result.loc[0, "official_bps"], 31)
 
     def test_retains_players_without_prior_match_history(self):
         payload = add_player(bootstrap(finished=True))

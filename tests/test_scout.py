@@ -1,11 +1,12 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
 from src.features import MODEL_FEATURES
-from src.scout import FPLScout, InferenceError
+from src.scout import FPLScout, InferenceError, _mounted_data_path
 
 
 class ConstantModel:
@@ -144,6 +145,12 @@ class ScoutInferenceTests(unittest.TestCase):
             }
 
         self.fixtures = fixtures
+
+    def test_data_root_environment_relocates_relative_data_paths(self):
+        with patch.dict("os.environ", {"OPENFPL_DATA_ROOT": "/data"}, clear=False):
+            result = _mounted_data_path("data/external/source.csv")
+
+        self.assertEqual(result, Path("/data/external/source.csv"))
 
     def test_weighted_ensemble_preserves_output_contract_and_caches_fixtures(self):
         models = {
