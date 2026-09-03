@@ -217,4 +217,10 @@ uv run python -m scripts.download_fpl_data \
 
 [MIT](LICENSE)
 
+## Support OpenFPL
+
+If OpenFPL helps your FPL season, consider
+[sponsoring its development on GitHub](https://github.com/sponsors/elcaiseri).
+Sponsorship helps cover hosting, data infrastructure, and ongoing maintenance.
+
 Questions: [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
