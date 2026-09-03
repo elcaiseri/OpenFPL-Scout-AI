@@ -318,7 +318,7 @@ const playerRenderer = {
         return `
             <button class="player-card${roleClass}" type="button"
                 data-player="${this.dataAttribute(player)}"
-                aria-label="${name}, ${player.expected_points.toFixed(2)} expected points">
+                aria-label="${name}, ${player.expected_points.toFixed(2)} expected points (xPts)">
                 ${this.roleBadge(player)}${availability}
                 <div class="card-position">${player.position_code}</div>
                 <div class="player-name">${name}</div>
@@ -365,7 +365,7 @@ const dashboardRenderer = {
         this.statistics(data.scout_team);
         this.fixtures(data.fixtures);
         this.squad(data.scout_team);
-        dom.signalState.textContent = 'Verdict ready';
+        dom.signalState.textContent = 'Projections ready';
         dom.sourceState.textContent = 'Official data';
         if (data.credits) dom.credits.textContent = data.credits;
     },
@@ -417,15 +417,15 @@ const dashboardRenderer = {
         dom.totalPoints.textContent = total.toFixed(2);
         dom.captainName.textContent = captain?.web_name || '—';
         dom.captainPoints.textContent = captain
-            ? `${utils.number(captain.expected_points, 0).toFixed(2)} xP`
-            : '— xP';
+            ? `${utils.number(captain.expected_points, 0).toFixed(2)} xPts`
+            : '— xPts';
         dom.squadValue.textContent = value ? `£${value.toFixed(1)}m` : '—';
         dom.differentialCount.textContent = String(differentialCount);
     },
 
     fixtures(fixtures) {
         if (!fixtures.length) {
-            dom.fixtureRail.innerHTML = '<div class="rail-loading">No official fixtures have been published for this Gameweek.</div>';
+            dom.fixtureRail.innerHTML = '<div class="rail-loading">No Premier League fixtures have been published for this Gameweek.</div>';
             return;
         }
         dom.fixtureRail.innerHTML = fixtures.map(fixture => {
@@ -484,16 +484,16 @@ const dashboardRenderer = {
         ).join('');
         dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
         dom.squadSubtitle.textContent = options.subtitle
-            || `${players.length} official players · select any pick for the full briefing`;
+            || `${players.length} picks · tap a player for xPts, price and ownership`;
     },
 
-    loading(message = 'Running local AI inference…') {
+    loading(message = 'Projecting the Gameweek…') {
         dom.pitch.innerHTML = `
             <div class="loading" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
                 ${utils.escapeHtml(message)}
             </div>`;
-        dom.fixtureRail.innerHTML = '<div class="rail-loading">Syncing official fixtures…</div>';
+        dom.fixtureRail.innerHTML = '<div class="rail-loading">Syncing Premier League fixtures…</div>';
         dom.signalState.textContent = 'Computing';
         dom.sourceState.textContent = 'Syncing';
     },
@@ -598,7 +598,7 @@ const teamRating = {
             dom.squadTools.hidden = false;
             if (appState.currentData?.scout_team) {
                 dashboardRenderer.squad(appState.currentData.scout_team, {
-                    subtitle: '15 AI picks ranked for the selected Gameweek'
+                    subtitle: '15 AI picks ranked by xPts for the selected Gameweek'
                 });
             }
             return;
@@ -639,9 +639,9 @@ const teamRating = {
         dom.ratingPicksLabel.textContent = Number(data.picks_gameweek) === Number(data.gameweek)
             ? `Published Gameweek ${data.picks_gameweek} squad`
             : `Gameweek ${data.picks_gameweek} squad · scored for Gameweek ${data.gameweek}`;
-        dom.ratingProjection.textContent = `${utils.number(data.projected_points, 0).toFixed(2)} xP`;
-        dom.ratingBenchmark.textContent = `${utils.number(data.ai_projected_points, 0).toFixed(2)} xP`;
-        dom.ratingGap.textContent = `${utils.number(data.projected_gap, 0).toFixed(2)} xP`;
+        dom.ratingProjection.textContent = `${utils.number(data.projected_points, 0).toFixed(2)} xPts`;
+        dom.ratingBenchmark.textContent = `${utils.number(data.ai_projected_points, 0).toFixed(2)} xPts`;
+        dom.ratingGap.textContent = `${utils.number(data.projected_gap, 0).toFixed(2)} xPts`;
         dom.ratingStrengths.innerHTML = (data.strengths || [])
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
         dom.ratingRisks.innerHTML = (data.risks || [])
