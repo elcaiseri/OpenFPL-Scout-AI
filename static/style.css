@@ -474,8 +474,9 @@ select {
     gap: 12px;
     padding: 13px 17px;
     border-radius: var(--radius-sm);
-    color: var(--ink-950);
-    background: var(--lime);
+    color: var(--paper);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
     font-size: 0.78rem;
     font-weight: 900;
     text-decoration: none;
@@ -489,8 +490,10 @@ select {
     stroke-width: 2;
 }
 
-.community-link:hover {
-    box-shadow: 0 12px 30px rgba(200, 255, 50, 0.16);
+.community-link:hover,
+.community-link:focus-visible {
+    background: rgba(255, 255, 255, 0.11);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
     transform: translateY(-2px);
 }
 
