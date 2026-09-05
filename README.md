@@ -218,3 +218,6 @@ uv run python -m scripts.download_fpl_data \
 [MIT](LICENSE)
 
 Questions: [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
+
+Support OpenFPL's development and hosting on
+[Buy Me a Coffee](https://buymeacoffee.com/kassem.dev).
