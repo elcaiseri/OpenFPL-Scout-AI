@@ -40,7 +40,7 @@ Requirements: Python 3.9 or newer and
 `config/config.yaml`; generated models are not stored in Git.
 
 ```bash
-uv sync --all-groups
+uv sync
 uv run uvicorn main:app --reload
 ```
 
@@ -153,7 +153,7 @@ data/
     │   ├── snapshots/gw_03/          # raw bootstrap and fixture payloads
     │   ├── live/gw_02.json           # complete event-live player payload
     │   ├── history/before_gw_03.csv  # cumulative official history
-    │   └── player-stats/gw_02.csv    # one training table per played GW
+    │   └── player-stats/gw_02.csv    # normalized player stats per played GW
     ├── enriched/
     │   ├── history/before_gw_03.csv
     │   └── player-stats/gw_02.csv
@@ -168,27 +168,6 @@ immutable; the current gameweek, upcoming predictions, and snapshots are
 refreshed as new requests arrive. Invoke `/api/scout` at least once after each
 gameweek is finalized (for example with Cloud Scheduler) to guarantee a
 complete season even when the service otherwise receives no traffic.
-
-Archive active-season official history for future training:
-
-```bash
-uv run python -m scripts.collect_official_fpl --gameweek 39
-```
-
-Train all four pipelines with chronological cross-validation and an untouched
-latest-season holdout:
-
-```bash
-uv run --group train python trainer-booster.py \
-  --data-dir data/official \
-  --output-dir models \
-  --folds 5 \
-  --tune
-```
-
-Use `--quick` for a training smoke test. Runs write model pipelines, fold and
-holdout metrics, predictions, ensemble weights, metadata, and training history
-to the selected output directory.
 
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:
@@ -206,10 +185,9 @@ uv run python -m scripts.download_fpl_data \
 | `main.py` | FastAPI application, route catalog, and web entry point |
 | `src/official_fpl.py` | Official FPL client, caching, and schema mapping |
 | `src/scout.py` | Inference, cold start, and squad selection |
-| `src/features.py` | Shared training and runtime feature contract |
+| `src/features.py` | Shared model-inference feature contract |
 | `src/fpl_data_inference.py` | Guarded optional stat enrichment |
 | `static/` | Responsive dashboard |
-| `trainer-booster.py` | Time-aware model training and evaluation |
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |
 
