@@ -153,7 +153,7 @@ OpenFPL maps official FPL responses into stable, application-friendly JSON.
 | `GET` | `/api/fpl/players` | Search and filter players, prices, availability, and totals |
 | `GET` | `/api/fpl/players/{player_id}` | Get one player |
 | `GET` | `/api/fpl/players/{player_id}/history` | Get match history, upcoming fixtures, and past seasons |
-| `GET` | `/api/fpl/fixtures` | Filter fixtures by Gameweek, club, future state, or completion |
+| `GET` | `/api/fpl/fixtures` | Filter fixtures by Gameweek, club, future state, or completion *(public)* |
 | `GET` | `/api/fpl/fixtures/{fixture_id}/stats` | Get official per-player fixture statistics |
 
 `GET /api/fpl/players` supports:
