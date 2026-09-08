@@ -132,6 +132,38 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(report["selected"]["analysis"]["selection"]["pool"], 3)
         self.assertFalse(report["selected"]["is_points_forecast"])
         self.assertTrue(any("ownership" in warning for warning in report["warnings"]))
+        analytics = report['analytics']['all']
+        self.assertEqual(analytics['actual']['points'], 4)
+        self.assertEqual(analytics['actual']['count'], 3)
+        self.assertEqual(analytics['actual']['gameweeks'], 1)
+        self.assertEqual(analytics['clubs'][0]['actual']['points'], 4)
+        self.assertEqual(analytics['players'][0]['id'], 1)
+        self.assertEqual(analytics['players'][0]['actual']['points'], 6)
+        self.assertEqual(analytics['scout']['actual']['points'], 4)
+        self.assertEqual(self.dashboard.player_report(1)['actual']['points'], 6)
+
+    def test_retrospective_snapshot_keeps_original_timing_and_final_results(self):
+        self.bundle['metadata']['captured_at_utc'] = '2020-08-16T10:00:00Z'
+        self.bundle['metadata']['inference']['strategy'] = 'ownership-cold-start'
+        self.bundle['snapshot_kind'] = 'retrospective-import'
+        self.bundle['snapshot_created_at_utc'] = '2020-09-01T10:00:00Z'
+        self.bundle['actuals_snapshot'] = {
+            'season': '2020-2021', 'gameweek': 1, 'finalized': True,
+            'fetched_at_utc': '2020-08-16T10:00:00Z',
+            'source': 'official-fpl', 'payload': {'elements': self.client.elements},
+        }
+        self.save_bundle()
+        with patch.object(self.client, 'event_live', side_effect=RuntimeError('offline')):
+            report = self.dashboard.report()
+            self.assertEqual(report['selected']['forecast_state'], 'post-deadline')
+            self.assertEqual(report['selected']['result_state'], 'final')
+            self.assertEqual(report['selected']['snapshot_kind'], 'retrospective-import')
+            self.assertEqual(report['analytics']['all']['actual']['points'], 4)
+            self.assertEqual(report['analytics']['verified']['actual']['count'], 0)
+            self.assertEqual(report['summary']['count'], 0)
+            self.bundle['actuals_snapshot']['season'] = '2019-2020'
+            self.save_bundle()
+            self.assertEqual(self.dashboard.report()['analytics']['all']['actual']['count'], 0)
 
     def test_player_dossier_is_season_scoped_and_retains_model_predictions(self):
         self.bundle["model_predictions"] = {"ridge": {"1": 8}}

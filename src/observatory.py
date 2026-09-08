@@ -25,6 +25,13 @@ def total(values):
     return sum(values) if values and all(v is not None for v in values) else None
 
 
+def actual_summary(players):
+    """Available official returns, including runs that did not forecast points."""
+    values = [numeric(p.get("actual_points")) for p in players]
+    values = [v for v in values if v is not None]
+    return {"count": len(values), "points": total(values), "mean": sum(values) / len(values) if values else None}
+
+
 def point_metrics(players):
     pairs = [(numeric(p.get("expected_points")), numeric(p.get("actual_points"))) for p in players]
     pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
@@ -127,7 +134,7 @@ def grouped_metrics(players, field):
     groups = defaultdict(list)
     for p in players:
         groups[str(p.get(field) or "Unknown")].append(p)
-    return [{"name": name, **point_metrics(group)} for name, group in sorted(groups.items())]
+    return [{"name": name, **point_metrics(group), "actual": actual_summary(group)} for name, group in sorted(groups.items())]
 
 
 def model_comparison(players):
@@ -174,10 +181,13 @@ def scout_season_analysis(weeks, verified=False):
             "gameweek": week["gameweek"], "forecast_state": week["forecast_state"],
             "selected_count": len(picks),
             "is_points_forecast": week.get("is_points_forecast", True),
+            "expected_points": total(p.get("expected_points") for p in picks),
+            "actual_points": total(p.get("actual_points") for p in picks),
+            "actual": actual_summary(picks),
             **point_metrics(picks),
         })
     return {
-        "metrics": point_metrics(players), "timeline": timeline,
+        "metrics": point_metrics(players), "timeline": timeline, "actual": actual_summary(players),
         "positions": grouped_metrics(players, "position"),
     }
 
@@ -192,16 +202,17 @@ def season_analysis(weeks, verified=False):
     leaders = []
     for player_id, history in by_player.items():
         last = history[-1]
-        leaders.append({"id": player_id, "name": last["name"], "team": last["team"], "position": last["position"], "gameweeks": len(history), **point_metrics(history), "scored_points": sum(p["actual_points"] for p in history if p.get("actual_points") is not None)})
-    leaders.sort(key=lambda p: (-(p["actual_total"] or 0), p["id"]))
+        leaders.append({"id": player_id, "name": last["name"], "team": last["team"], "position": last["position"], "gameweeks": len(history), **point_metrics(history), "actual": actual_summary(history), "scored_points": actual_summary(history)["points"]})
+    leaders.sort(key=lambda p: (-(p["scored_points"] or 0), p["id"]))
     ranked_weeks = [w for w in completed if w["players"] and any(p.get("actual_points") is not None for p in w["players"])]
     return {
         "metrics": point_metrics(players), "calibration": calibration(players),
+        "actual": {**actual_summary(players), "gameweeks": len(ranked_weeks)},
         "scout": scout_season_analysis(weeks, verified),
         "positions": grouped_metrics(players, "position"), "clubs": grouped_metrics(players, "team"),
         "models": model_comparison(players), "players": leaders,
         "selection": [{"gameweek": w["gameweek"], **{k: v for k, v in selection_metrics(w["players"]).items() if k not in ("our_top", "actual_top")}} for w in ranked_weeks],
-        "timeline": [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], "result_state": w["result_state"], "is_points_forecast": w.get("is_points_forecast", True), **point_metrics(w["players"])} for w in completed if w["prediction_count"]],
+        "timeline": [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], "result_state": w["result_state"], "is_points_forecast": w.get("is_points_forecast", True), **point_metrics(w["players"]), "actual": actual_summary(w["players"])} for w in completed if w["prediction_count"]],
         "decisions": [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], **{k: v for k, v in w["analysis"]["squad"].items() if k not in ("xi", "bench")}, "official_average": w["analysis"]["average_manager_score"]} for w in completed if w["prediction_count"] and (not verified or w["squad"]["eligible"])],
     }
 

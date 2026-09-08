@@ -125,6 +125,20 @@ They are evaluated through ranking quality and realized squad returns, and
 excluded from MAE/RMSE, calibration, and matched points totals. Unknown values
 stay missing; they are never substituted with zero.
 
+**All actual pts** includes finalized returns from GW1 onward, including
+ownership-ranking runs, in season, Scout, player, club and position totals.
+Player leaders are ordered by these full available returns. **Matched xPts/pts**
+compares only rows with both a real points forecast and an official result.
+Scout gameweek charts show full-shortlist totals, including GW1's actual points;
+missing xPts or incomplete actual totals remain gaps. Both views honor the
+selected evidence scope.
+
+A preserved retrospective snapshot may include `snapshot_kind`,
+`snapshot_created_at_utc`, and a season/gameweek-bound `actuals_snapshot` of
+final official results. The original forecast capture timestamp is retained.
+Saving such a snapshot after the deadline never grants pre-deadline eligibility.
+Its final results can still be read if the separate live-score cache is missing.
+
 Successful scout runs now save an atomic forecast bundle at
 `data/archive/<season>/evaluation/gw_XX.json`. It can be refreshed before the
 official deadline, and is preserved after that deadline. The matching squad is

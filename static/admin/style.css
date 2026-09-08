@@ -83,3 +83,5 @@ main section, #capture-form { scroll-margin-top: 100px; }
   .heading .filters button { grid-column: 1 / -1; }
 }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto !important; } }
+
+#season-actuals { margin-top: 18px; margin-bottom: 0; }

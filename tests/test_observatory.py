@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.model_lab import ModelLab
-from src.observatory import best_xi, calibration, model_comparison, point_metrics, selection_metrics, squad_analysis, scout_analysis, scout_season_analysis
+from src.observatory import actual_summary, best_xi, calibration, model_comparison, point_metrics, selection_metrics, squad_analysis, scout_analysis, scout_season_analysis
 
 
 def squad():
@@ -20,6 +20,15 @@ def squad():
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_actual_totals_include_ranking_only_returns_without_imputing_missing(self):
+        players = [{'expected_points': None, 'actual_points': value} for value in (6, 0, -2, None)]
+        actual = actual_summary(players)
+        self.assertEqual(actual['count'], 3)
+        self.assertEqual(actual['points'], 4)
+        self.assertAlmostEqual(actual['mean'], 4 / 3)
+        self.assertEqual(point_metrics(players)['count'], 0)
+        self.assertIsNone(actual_summary([])['points'])
+
     def test_metric_denominators_exclude_missing_nonfinite_but_keep_zero_and_negative(self):
         values = [
             {'expected_points': 1, 'actual_points': -1},
@@ -155,6 +164,11 @@ class ScoutComparisonTests(unittest.TestCase):
         self.assertEqual(report['metrics']['count'], 0)
         season = scout_season_analysis([week])
         self.assertIsNone(season['metrics']['actual_total'])
+        self.assertEqual(season['actual']['points'], 90)
+        self.assertEqual(season['actual']['count'], 15)
+        self.assertEqual(season['timeline'][0]['actual_points'], 90)
+        self.assertIsNone(season['timeline'][0]['expected_points'])
+        self.assertEqual(sum(p['actual']['points'] for p in season['positions']), 90)
         self.assertFalse(season['timeline'][0]['is_points_forecast'])
 
     def test_missing_or_mismatched_shortlist_does_not_reconstruct_picks(self):

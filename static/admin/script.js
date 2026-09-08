@@ -55,7 +55,7 @@
     state.pending.forEach(t => t.controller.abort()); state.pending.clear();
     $('owner-key').value = ''; $('dashboard').hidden = true; $('login').hidden = false; $('lock').hidden = true;
     $('player-dialog').close();
-    ['scout-pair','scout-metrics','scout-captain','scout-vice','scout-player-chart','scout-players','scout-season-metrics','scout-season-chart','scout-history','scout-positions','summary','season-pair','season-chart','trend','week-map','insights','season-clubs','week-overview','fixtures','football-stats','our-leaders','actual-leaders','ranking-metrics','scatter','gw-calibration','underperform','overperform','positions','week-clubs','decision-metrics','pitch','bench','captain-audit','hindsight','decision-bars','decision-history','players','season-players','live-models','training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','pipeline','model-status','feature-coverage','archive-ledger','runtime','warnings','player-detail-metrics','player-history-chart','player-history-table','player-components'].forEach(id => $(id).replaceChildren());
+    ['season-actuals','season-rankings','scout-pair','scout-metrics','scout-captain','scout-vice','scout-player-chart','scout-players','scout-season-metrics','scout-season-chart','scout-history','scout-positions','summary','season-pair','season-chart','trend','week-map','insights','season-clubs','week-overview','fixtures','football-stats','our-leaders','actual-leaders','ranking-metrics','scatter','gw-calibration','underperform','overperform','positions','week-clubs','decision-metrics','pitch','bench','captain-audit','hindsight','decision-bars','decision-history','players','season-players','live-models','training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','pipeline','model-status','feature-coverage','archive-ledger','runtime','warnings','player-detail-metrics','player-history-chart','player-history-table','player-components'].forEach(id => $(id).replaceChildren());
     ['season','gameweek','training-model','capture-gameweek'].forEach(id => $(id).replaceChildren());
     ['scout-context','scout-population','scout-result','scout-season-context','search','player-title','player-subtitle','capture-result','training-context','evaluation-context','updated','season-population','season-bias','week-context','result-badge','fixture-progress','decision-context','formation-title','player-count','page-count','official-badge','model-context','runtime-scope'].forEach(id => {if ($(id).tagName === 'INPUT') $(id).value = ''; else $(id).textContent = '';});
     $('evaluation-mode').value = 'all'; $('scope').value = 'all'; $('position').value = '';
@@ -104,7 +104,9 @@
     $('season-pair').replaceChildren(pair('OUR MEAN FORECAST',m.predicted_mean,'ours'),el('span','vs','versus'),pair('OFFICIAL MEAN RETURN',m.actual_mean,'actual'));
     $('season-bias').textContent = m.bias == null ? 'No finalized points comparisons in this evidence scope yet.' : `We ${m.bias >= 0 ? 'overpredicted' : 'underpredicted'} by ${fmt(Math.abs(m.bias))} points per matched player on average.`;
     $('summary').replaceChildren(metric('MEAN ABSOLUTE ERROR',fmt(m.mae),'Average distance from the official score','ours'),metric('ROOT MEAN SQUARED ERROR',fmt(m.rmse),'Larger misses receive more weight'),metric('WITHIN TWO POINTS',percent(m.within_two_pct),'Share of matched points forecasts','actual'),metric('RANK CORRELATION',fmt(m.rank_correlation),'Spearman · −1 to +1; higher is better'));
-    lineChart('season-chart',weeks,'gameweek',[['predicted_mean','Our mean forecast','ours'],['actual_mean','Official mean return','actual']],{label:'Mean predicted and actual points by gameweek',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
+    $('season-actuals').replaceChildren(metric('ALL ACTUAL POINTS',fmt(a.actual.points,0),'Available official returns, including ranking-only runs','actual'),metric('OFFICIAL RETURNS',fmt(a.actual.count,0),'Scored archived player-gameweeks'),metric('COMPLETED GAMEWEEKS',fmt(a.actual.gameweeks,0),'Gameweeks contributing actual returns'),metric('ACTUAL MEAN RETURN',fmt(a.actual.mean),'Across all available official returns','actual'));
+    table('season-rankings',['GW','Our top 10 · actual pts','Actual top 10 · pts','Overlap','Haul rate','NDCG'],a.selection.map(w=>[gwButton(w.gameweek),fmt(w.chosen_actual,0),fmt(w.best_actual,0),percent(w.top10_overlap_pct),percent(w.haul_rate_pct),fmt(w.ndcg)]));
+    lineChart('season-chart',a.timeline.map(w=>({...w,actual_mean:w.actual.mean})),'gameweek',[['predicted_mean','Our mean forecast','ours'],['actual_mean','Official mean return','actual']],{label:'Mean predicted and actual points by gameweek; ranking-only weeks show actual points with no invented prediction',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
     $('trend-context').textContent = 'Mean absolute error in points. Includes only final points comparisons within the selected evidence scope.';
     lineChart('trend',weeks,'gameweek',[['mae','Mean absolute error','ours']],{label:'Prediction error by gameweek',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
     $('week-map').replaceChildren(...r.gameweeks.map(w=>{const b=el('button',String(w.gameweek));b.type='button';b.dataset.state=!w.prediction_count?'missing':w.result_state==='final'?(w.eligible?'final':'retrospective'):w.result_state==='awaiting-results'?'upcoming':'retrospective';b.classList.toggle('active',w.gameweek===r.selected?.gameweek);b.title=`GW${w.gameweek} · ${human(w.forecast_state)} · ${human(w.result_state)}`;b.setAttribute('aria-label',b.title);b.addEventListener('click',()=>selectWeek(w.gameweek));return b;}));
@@ -164,23 +166,23 @@
     }));
     $('scout-export').disabled = !players.length;
     const pointWeeks = season.timeline.filter(g => g.count);
-    $('scout-season-context').textContent = `${fmt(m.count, 0)} matched Scout player-gameweeks across ${pointWeeks.length} completed gameweeks · ${$('evaluation-mode').selectedOptions[0].textContent}. Both totals use the same saved picks with xPts and finalized pts. Ownership rankings, missing results and mismatched shortlists are excluded. Captains count once.`;
+    $('scout-season-context').textContent = `${season.actual.count} official Scout returns across ${season.timeline.length} completed gameweeks · ${$('evaluation-mode').selectedOptions[0].textContent}. All actual pts includes ranking-only weeks such as GW1. Matched xPts/pts and MAE use ${m.count} points forecasts across ${pointWeeks.length} gameweeks. Captains count once. Full gameweek totals stay unknown if any pick is missing a score.`;
     $('scout-season-metrics').replaceChildren(
       metric('SEASON SCOUT · xPts', fmt(m.predicted_total), 'Expected points for matched saved picks', 'ours'),
-      metric('SEASON SCOUT · PTS', fmt(m.actual_total), 'Official points for those same picks', 'actual'),
-      metric('SEASON SCOUT · MAE', fmt(m.mae), 'Average absolute error per matched pick'),
-      metric('SEASON SCOUT · WITHIN TWO', percent(m.within_two_pct), 'Share of matched picks within 2 points')
+      metric('SCOUT · MATCHED PTS', fmt(m.actual_total), 'Official points for those same picks', 'actual'),
+      metric('SCOUT · ALL ACTUAL PTS', fmt(season.actual.points), 'All available final returns, including GW1', 'actual'),
+      metric('SEASON SCOUT · MAE', fmt(m.mae), 'Average absolute error per matched pick')
     );
-    lineChart('scout-season-chart', season.timeline, 'gameweek', [['predicted_total', 'Scout xPts', 'ours'], ['actual_total', 'Scout pts', 'actual']], {
+    lineChart('scout-season-chart', season.timeline, 'gameweek', [['expected_points', 'Scout xPts', 'ours'], ['actual_points', 'Scout pts', 'actual']], {
       label: 'Scout xPts versus official pts across completed gameweeks', tick: g => `GW${g.gameweek}`, click: g => selectWeek(g.gameweek, 'scout'),
     });
-    table('scout-history', ['GW', 'Forecast', 'Matched / saved', 'xPts', 'Pts', 'Error', 'MAE'], season.timeline.map(g => [
-      gwButton(g.gameweek, 'scout'), `${human(g.forecast_state)}${g.is_points_forecast ? '' : ' · ownership ranking'}`, `${g.count} / ${g.selected_count}`,
-      value(g.predicted_total, 'ours'), value(g.actual_total, 'actual'), signed(g.count ? g.predicted_total - g.actual_total : null), fmt(g.mae),
+    table('scout-history', ['GW', 'Forecast', 'Scores / saved', 'xPts', 'Pts', 'Error', 'MAE'], season.timeline.map(g => [
+      gwButton(g.gameweek, 'scout'), `${human(g.forecast_state)}${g.is_points_forecast ? '' : ' · ownership ranking'}`, `${g.actual.count} / ${g.selected_count}`,
+      value(g.expected_points, 'ours'), value(g.actual_points, 'actual'), signed(g.expected_points!=null&&g.actual_points!=null ? g.expected_points - g.actual_points : null), fmt(g.mae),
     ]));
-    table('scout-positions', ['Position', 'Matched picks', 'xPts', 'Pts', 'MAE', 'Mean error'], season.positions.filter(p => p.count).map(p => [p.name, p.count, value(p.predicted_total, 'ours'), value(p.actual_total, 'actual'), fmt(p.mae), signed(p.bias)]));
+    comparisonTable('scout-positions', season.positions, 'Position');
   }
-  function comparisonTable(id, rows, label = 'Group') { table(id,[label,'Matched','Our pts','Actual pts','MAE','Bias'],rows.filter(r=>r.count).map(r=>[r.name,fmt(r.count,0),value(r.predicted_total,'ours'),value(r.actual_total,'actual'),fmt(r.mae),signed(r.bias)])); }
+  function comparisonTable(id, rows, label = 'Group') { table(id,[label,'Matched','Matched xPts','Matched pts','All actual pts','Official returns','MAE','Bias'],rows.filter(r=>r.count||r.actual?.count).map(r=>[r.name,fmt(r.count,0),value(r.predicted_total,'ours'),value(r.actual_total,'actual'),value(r.actual?.points,'actual'),fmt(r.actual?.count,0),fmt(r.mae),signed(r.bias)])); }
   async function selectWeek(gw, tab = 'gameweek') { $('gameweek').value=gw;state.page=0;setTab(tab);await refresh(); }
   function leaderboard(id, players, limit = 7) { table(id,['Player','Our pts / score','Actual','Minutes'],players.slice(0,limit).map(p=>[playerName(p),p.expected_points==null?el('span',`Score ${fmt(p.selection_score)}`,'ours'):value(p.expected_points,'ours'),value(p.actual_points,'actual',0),fmt(p.minutes,0)])); }
   function renderGameweek() {
@@ -231,7 +233,7 @@
     $('players').replaceChildren(...players.slice(state.page*pagesize,(state.page+1)*pagesize).map(p=>{const row=el('tr');[playerName(p),p.position,p.expected_points==null?el('span',`Score ${fmt(p.selection_score)}`,'ours'):value(p.expected_points,'ours'),value(p.actual_points,'actual',0),el('span',signed(p.error),p.error>0?'over':'under'),fmt(p.minutes,0),fmt(p.goals,0),fmt(p.assists,0),fmt(p.bonus,0),human(p.role|| (p.in_squad?'shortlist':'—'))].forEach(v=>{const cell=el('td');cell.append(v instanceof Node?v:document.createTextNode(v));row.append(cell);});return row;}));
     if(!players.length){const row=el('tr'),cell=el('td','No players match these filters.','empty');cell.colSpan=10;row.append(cell);$('players').append(row);}
     $('page-count').textContent=`Page ${state.page+1} of ${pageCount}`;$('previous-page').disabled=state.page===0;$('next-page').disabled=state.page>=pageCount-1;$('export').disabled=!players.length;
-    table('season-players',['Player','GWs','Matched','Our pts','Actual pts','MAE','Bias'],currentAnalytics().players.filter(p=>p.count).slice(0,20).map(p=>[playerName(p),p.gameweeks,p.count,value(p.predicted_total,'ours'),value(p.actual_total,'actual'),fmt(p.mae),signed(p.bias)]));
+    table('season-players',['Player','GWs','Matched','Matched xPts','Matched pts','All actual pts','MAE'],currentAnalytics().players.filter(p=>p.actual.count).slice(0,20).map(p=>[playerName(p),p.gameweeks,p.count,value(p.predicted_total,'ours'),value(p.actual_total,'actual'),value(p.actual.points,'actual'),fmt(p.mae)]));
   }
   function modelTable(id, models) {
     table(id,['Model / baseline','Matched','Our mean','Actual mean','MAE ↓','RMSE ↓','Bias','R²','Rank ρ'],models.map(m=>[human(m.name),fmt(m.count,0),value(m.predicted_mean,'ours'),value(m.actual_mean,'actual'),fmt(m.mae),fmt(m.rmse),signed(m.bias),fmt(m.r2),fmt(m.rank_correlation)]));
@@ -289,7 +291,7 @@
     options('capture-gameweek',upcoming.map(w=>[w.gameweek,`GW ${w.gameweek} · ${date(w.deadline_time)}`]),upcoming.some(w=>String(w.gameweek)===selected)?selected:upcoming[0]?.gameweek);
     $('capture').disabled=!upcoming.length||state.pending.has('capture');
     if(!upcoming.length)$('capture-result').textContent='No upcoming deadline in the selected season. Select the current season to capture a forecast.';
-    table('archive-ledger',['GW','Forecast','Saved at','Official deadline','Results','Matched','Points MAE'],r.gameweeks.map(w=>[gwButton(w.gameweek),human(w.forecast_state),w.captured_at_utc?date(w.captured_at_utc):'—',date(w.deadline_time),human(w.result_state),`${w.matched_actuals} / ${w.prediction_count}`,fmt(w.metrics.mae)]));
+    table('archive-ledger',['GW','Forecast','Saved at','Snapshot','Official deadline','Results','Matched','Points MAE'],r.gameweeks.map(w=>[gwButton(w.gameweek),human(w.forecast_state),w.captured_at_utc?date(w.captured_at_utc):'—',w.snapshot_kind?`${human(w.snapshot_kind)} · ${date(w.snapshot_created_at_utc)}`:w.preserved?'Preserved':'Latest run',date(w.deadline_time),human(w.result_state),`${w.matched_actuals} / ${w.prediction_count}`,fmt(w.metrics.mae)]));
     $('runtime').replaceChildren(metric('UPTIME',`${fmt((t.uptime_seconds||0)/3600,1)} h`,'Since this process started'),metric('REQUESTS',fmt(t.requests,0),'Excludes dashboard activity'),metric('SERVER ERRORS',fmt(t.server_errors,0),'HTTP 5xx responses'),metric('P95 LATENCY',`${fmt(t.p95_latency_ms,0)} ms`,`${t.latency_sample_size||0} recent request samples`));
     $('runtime-scope').textContent=t.scope||'';
   }
@@ -314,7 +316,7 @@
       const p=data.player,m=data.metrics;
       $('player-title').textContent=p.name;
       $('player-subtitle').textContent=`${p.team} · ${p.position} · ${data.season} · ${p.price==null?'Price not archived':`£${fmt(p.price,1)}m`} · ${p.ownership==null?'Ownership not archived':`${percent(p.ownership)} ownership`}. Profile context is from the latest saved forecast. Metrics include final points comparisons across all archived runs, including late runs.`;
-      $('player-detail-metrics').replaceChildren(metric('OUR MATCHED POINTS',fmt(m.predicted_total),`${m.count} player-gameweek points forecasts`,'ours'),metric('ACTUAL MATCHED POINTS',fmt(m.actual_total),'Same matched gameweeks','actual'),metric('MEAN ABSOLUTE ERROR',fmt(m.mae),'Ownership scores excluded'),metric('MEAN BIAS',signed(m.bias),'Predicted minus actual'));
+      $('player-detail-metrics').replaceChildren(metric('OUR MATCHED POINTS',fmt(m.predicted_total),`${m.count} player-gameweek points forecasts`,'ours'),metric('ACTUAL MATCHED POINTS',fmt(m.actual_total),'Same matched gameweeks','actual'),metric('MEAN ABSOLUTE ERROR',fmt(m.mae),'Ownership scores excluded'),metric('ALL ACTUAL POINTS',fmt(data.actual.points),`${data.actual.count} final returns, including ranking-only weeks`,'actual'));
       lineChart('player-history-chart',data.history,'gameweek',[['expected_points','Our points','ours'],['actual_points','Actual points','actual']],{label:`${p.name}: predicted and actual points`,tick:w=>`GW${w.gameweek}`});
       table('player-history-table',['GW','Evidence','Results','Our points / score','Actual','Minutes','Goals','Assists','Bonus'],data.history.map(w=>[w.gameweek,human(w.forecast_state),human(w.result_state),w.expected_points==null?`Score ${fmt(w.selection_score)}`:value(w.expected_points,'ours'),value(w.actual_points,'actual',0),fmt(w.minutes,0),fmt(w.goals,0),fmt(w.assists,0),fmt(w.bonus,0)]));
       const components=data.history.flatMap(w=>Object.entries(w.model_predictions||{}).map(([name,prediction])=>[w.gameweek,human(name),value(prediction,'ours'),value(w.actual_points,'actual',0),signed(prediction!=null&&w.actual_points!=null?prediction-w.actual_points:null)]));

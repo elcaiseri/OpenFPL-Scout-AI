@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 
 from src.data_archive import _json_safe, utc_datetime
-from src.observatory import gameweek_analysis, point_metrics, season_analysis
+from src.observatory import actual_summary, gameweek_analysis, point_metrics, season_analysis
 from src.model_lab import ModelLab
 
 SEASON_PATTERN = re.compile(r"^\d{4}-\d{4}$")
@@ -122,7 +122,8 @@ class AdminDashboard:
                 history.append({**player, "gameweek": week["gameweek"], "forecast_state": week["forecast_state"], "result_state": week["result_state"], "captured_at_utc": week["captured_at_utc"]})
         if not history:
             raise ValueError("This player has no archived forecasts in the selected season")
-        return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics([p for p in history if p["result_state"] == "final"])})
+        finalized = [p for p in history if p["result_state"] == "final"]
+        return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics(finalized), "actual": actual_summary(finalized)})
 
     def _system(self, report):
         metadata = report.get("latest_metadata", {})
@@ -289,6 +290,18 @@ class AdminDashboard:
                             break
                     except (OSError, ValueError):
                         warnings.append(f"GW{gw}: saved official results are unreadable.")
+            # A retrospective snapshot can retain official results independently
+            # of the live cache, without changing the original forecast timing.
+            snapshot_actuals = (forecasts.get(gw) or {}).get("actuals_snapshot")
+            if (
+                (not result or not result.get("finalized"))
+                and isinstance(snapshot_actuals, dict)
+                and snapshot_actuals.get("season") == season
+                and snapshot_actuals.get("gameweek") == gw
+                and snapshot_actuals.get("finalized")
+                and utc_datetime(snapshot_actuals.get("fetched_at_utc"))
+            ):
+                result = snapshot_actuals
             try:
                 weeks.append(self._week(gw, season, events.get(gw, {}), forecasts.get(gw), result))
             except (ValueError, KeyError, TypeError):
@@ -401,10 +414,12 @@ class AdminDashboard:
                 else "unverified"
             ),
             "preserved": forecast.get("preserved", False), "result_state": state,
+            "snapshot_kind": forecast.get("snapshot_kind"),
+            "snapshot_created_at_utc": forecast.get("snapshot_created_at_utc"),
             "is_points_forecast": is_points_forecast,
             "official_stats": actual_by_id,
             "metrics": metrics(players), "players": players, "metadata": metadata,
-            "positions": [{"position": position, **metrics([p for p in players if p["position"] == position])} for position in POSITIONS.values()],
+            "positions": [{"position": position, **metrics([p for p in players if p["position"] == position]), "actual": actual_summary([p for p in players if p["position"] == position])} for position in POSITIONS.values()],
             "squad": {
                 "eligible": bool(squad_valid), "count": len(selected_players),
                 "captured_at_utc": squad.get("captured_at_utc"),
