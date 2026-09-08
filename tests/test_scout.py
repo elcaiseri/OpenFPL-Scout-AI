@@ -174,6 +174,9 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(first.attrs["inference"]["failed_models"], {})
         expected_columns = scout_config()["categorical_columns"] + ["expected_points"]
         self.assertEqual(list(first.columns), expected_columns)
+        self.assertEqual(set(first.attrs["model_predictions"]), {"one", "two", "three", "four"})
+        first_id = str(int(first.iloc[0]["id"]))
+        self.assertEqual(first.attrs["model_predictions"]["four"][first_id], 4)
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))
 
@@ -272,6 +275,7 @@ class ScoutInferenceTests(unittest.TestCase):
         result = scout.predict_players(player_history(), gameweek=3)
 
         self.assertTrue((result.expected_points == 0).all())
+        self.assertTrue(all(value == -2 for values in result.attrs["model_predictions"].values() for value in values.values()))
 
     def test_gameweek_one_uses_ownership_when_no_preseason_history_exists(self):
         model = RecordingModel(9)

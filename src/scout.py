@@ -301,7 +301,7 @@ class FPLScout:
         return result
 
     def _predict_ensemble(
-        self, features: pd.DataFrame
+        self, features: pd.DataFrame, *, components: Optional[dict] = None
     ) -> tuple[np.ndarray, Dict[str, Any]]:
         predictions: List[np.ndarray] = []
         weights: List[float] = []
@@ -348,6 +348,8 @@ class FPLScout:
             "weights": dict(zip(successful_models, weights)),
             "mean_model_spread": float(prediction_matrix.std(axis=0).mean()),
         }
+        if components is not None:
+            components.update(zip(successful_models, predictions))
         return ensemble, diagnostics
 
     def predict_players(
@@ -396,7 +398,8 @@ class FPLScout:
             len(entirely_missing_features),
             ", ".join(entirely_missing_features) or "none",
         )
-        ensemble, diagnostics = self._predict_ensemble(model_input)
+        components = {}
+        ensemble, diagnostics = self._predict_ensemble(model_input, components=components)
         diagnostics["strategy"] = "model-ensemble"
         diagnostics["feature_coverage"] = {
             "total": len(MODEL_FEATURES),
@@ -426,6 +429,11 @@ class FPLScout:
         result = players[list(output_columns)].copy()
         result.attrs["gameweek"] = resolved_gameweek
         result.attrs["inference"] = diagnostics
+        if "id" in players.columns:
+            result.attrs["model_predictions"] = {
+                name: {str(int(player_id)): float(value) for player_id, value in zip(players["id"], values)}
+                for name, values in components.items()
+            }
 
         self.gameweek = resolved_gameweek
         logger.info(

@@ -271,8 +271,28 @@ class DataArchive:
         deadline = utc_datetime(event.get("deadline_time"))
         saved_at = datetime.now(timezone.utc)
         predictions.attrs["archive_season"] = season
+        context = {
+            str(player["id"]): {
+                key: player.get(key) for key in (
+                    "now_cost", "selected_by_percent", "status", "news",
+                    "chance_of_playing_next_round", "team", "element_type",
+                )
+            }
+            for player in bootstrap.get("elements", [])
+        }
+        diagnostics = {
+            "metadata": metadata,
+            "model_predictions": predictions.attrs.get("model_predictions", {}),
+            "player_context": context,
+        }
+        self._record_write(
+            written, season_root,
+            season_root / "diagnostics" / f"{gameweek_name}.json",
+            self._json_bytes(diagnostics),
+        )
         if deadline is not None and saved_at < deadline:
             bundle = {
+                **diagnostics,
                 "metadata": {**metadata, "captured_at_utc": saved_at.isoformat()},
                 "deadline_time": deadline.isoformat(),
                 "predictions": predictions.to_dict(orient="records"),
