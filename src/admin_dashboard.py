@@ -20,6 +20,8 @@ from typing import Any
 import pandas as pd
 
 from src.data_archive import _json_safe, utc_datetime
+from src.observatory import gameweek_analysis, point_metrics, season_analysis
+from src.model_lab import ModelLab
 
 SEASON_PATTERN = re.compile(r"^\d{4}-\d{4}$")
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
@@ -41,16 +43,7 @@ def number(value: Any):
 
 
 def metrics(players: list[dict]) -> dict:
-    matched = [p for p in players if p["actual_points"] is not None]
-    errors = [p["expected_points"] - p["actual_points"] for p in matched]
-    count = len(errors)
-    return {
-        "count": count,
-        "mae": sum(abs(e) for e in errors) / count if count else None,
-        "rmse": math.sqrt(sum(e * e for e in errors) / count) if count else None,
-        "bias": sum(errors) / count if count else None,
-        "within_two_pct": 100 * sum(abs(e) <= 2 for e in errors) / count if count else None,
-    }
+    return point_metrics(players)
 
 
 class RuntimeMonitor:
@@ -89,8 +82,9 @@ class AdminDashboard:
         self.cache_seconds = cache_seconds
         self.cache = {}
         self.lock = RLock()
+        self.model_lab = ModelLab(scout.config)
 
-    def report(self, season=None, gameweek=None):
+    def _season_report(self, season=None):
         if season is not None and not SEASON_PATTERN.fullmatch(season):
             raise ValueError("Invalid season")
         with self.lock:
@@ -100,20 +94,35 @@ class AdminDashboard:
                 self.cache[season] = (time.monotonic(), report)
             else:
                 report = cached[1]
+        return report
+
+    def report(self, season=None, gameweek=None):
+        report = self._season_report(season)
         weeks = report["gameweeks"]
         selected = next((w for w in weeks if w["gameweek"] == gameweek), None)
         if gameweek is not None and selected is None:
             raise ValueError("Gameweek is unavailable in this season")
         if selected is None:
             predicted = [w for w in weeks if w["prediction_count"]]
-            scored = [w for w in predicted if w["metrics"]["count"]]
+            scored = [w for w in predicted if any(p["actual_points"] is not None for p in w["players"])]
             selected = (scored or predicted or [w for w in weeks if w["is_current"]] or weeks or [None])[-1]
         return _json_safe({
             **report,
-            "gameweeks": [{k: v for k, v in w.items() if k not in {"players", "metadata", "squad"}} for w in weeks],
-            "selected": selected,
+            "gameweeks": [{k: v for k, v in w.items() if k not in {"players", "metadata", "squad", "official_stats", "analysis"}} for w in weeks],
+            "selected": {k: v for k, v in selected.items() if k != "official_stats"} if selected else None,
             "system": self._system(report),
         })
+
+    def player_report(self, player_id, season=None):
+        report = self._season_report(season)
+        history = []
+        for week in report["gameweeks"]:
+            player = next((p for p in week["players"] if p["id"] == player_id), None)
+            if player:
+                history.append({**player, "gameweek": week["gameweek"], "forecast_state": week["forecast_state"], "result_state": week["result_state"], "captured_at_utc": week["captured_at_utc"]})
+        if not history:
+            raise ValueError("This player has no archived forecasts in the selected season")
+        return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics([p for p in history if p["result_state"] == "final"])})
 
     def _system(self, report):
         metadata = report.get("latest_metadata", {})
@@ -170,6 +179,20 @@ class AdminDashboard:
                 except (OSError, ValueError):
                     warnings.append("An official bootstrap snapshot could not be read.")
         events = {int(e["id"]): e for e in (bootstrap or {}).get("events", [])}
+        fixtures = []
+        if season == current_season and hasattr(self.scout.official_client, "fixtures"):
+            try:
+                fixtures = self.scout.official_client.fixtures()
+            except Exception:
+                warnings.append("Fixture refresh failed; saved fixtures are shown when available.")
+        if not fixtures and season_root:
+            for path in sorted((season_root / "official/snapshots").glob("gw_*/fixtures.json"), reverse=True):
+                try:
+                    fixtures = json.loads(path.read_text())
+                    break
+                except (OSError, ValueError):
+                    continue
+        teams = {t["id"]: t.get("name", str(t["id"])) for t in (bootstrap or {}).get("teams", [])}
         forecasts = {}
         latest_metadata = {}
         if season_root:
@@ -198,12 +221,17 @@ class AdminDashboard:
                             "deadline_time": events.get(gw, {}).get("deadline_time"),
                             "preserved": False,
                         }
+                        diagnostics_path = season_root / "diagnostics" / f"{name}.json"
+                        if diagnostics_path.is_file():
+                            diagnostics = read_json(diagnostics_path)
+                            if diagnostics.get("metadata", {}).get("captured_at_utc") == latest.get("captured_at_utc"):
+                                forecasts[gw].update({k: diagnostics.get(k, {}) for k in ("model_predictions", "player_context")})
                 except (OSError, ValueError, KeyError):
                     warnings.append(f"GW{gw}: forecast archive is unreadable; excluded from evaluation.")
 
         now = datetime.now(timezone.utc)
-        # Only fetch event totals for archived forecasts whose deadlines passed.
-        to_fetch = [gw for gw in forecasts if season == current_season and utc_datetime(events.get(gw, {}).get("deadline_time")) and utc_datetime(events[gw]["deadline_time"]) <= now]
+        # Football results remain useful even when we did not save a forecast.
+        to_fetch = [gw for gw in events if season == current_season and utc_datetime(events[gw].get("deadline_time")) and utc_datetime(events[gw]["deadline_time"]) <= now]
 
         def actuals(gw):
             path = season_root / "evaluation/actuals" / f"gw_{gw:02d}.json"
@@ -265,6 +293,10 @@ class AdminDashboard:
             except (ValueError, KeyError, TypeError):
                 warnings.append(f"GW{gw}: invalid or duplicate player data; excluded from evaluation.")
                 weeks.append(self._week(gw, season, events.get(gw, {}), None, None))
+            weeks[-1]["analysis"] = gameweek_analysis(weeks[-1], events.get(gw, {}), fixtures, teams)
+        cold_starts = [w["gameweek"] for w in weeks if w["prediction_count"] and not w["is_points_forecast"]]
+        if cold_starts:
+            warnings.append("GW " + ", ".join(map(str, cold_starts)) + ": ownership selection scores are assessed by ranking and realized squad returns, not by points-error metrics.")
         evaluated = [w for w in weeks if w["eligible"] and w["result_state"] == "final"]
         all_players = [p for w in evaluated for p in w["players"]]
         compared = [w for w in weeks if w["result_state"] == "final" and w["metrics"]["count"]]
@@ -282,6 +314,7 @@ class AdminDashboard:
             "gameweeks": weeks, "latest_metadata": latest_metadata,
             "summary": {**metrics(all_players), "evaluated_gameweeks": len([w for w in evaluated if w["metrics"]["count"]]), "archived_gameweeks": len(forecasts)},
             "comparison_summary": comparison_summary,
+            "analytics": {"all": season_analysis(weeks), "verified": season_analysis(weeks, verified=True)},
             "warnings": warnings,
         }
 
@@ -296,6 +329,7 @@ class AdminDashboard:
             raise ValueError("Forecast metadata does not match its season and gameweek")
         deadline = utc_datetime(event.get("deadline_time") or forecast.get("deadline_time"))
         captured = utc_datetime(metadata.get("captured_at_utc"))
+        is_points_forecast = metadata.get("inference", {}).get("strategy") != "ownership-cold-start"
         eligible = bool(captured and deadline and captured < deadline and metadata.get("season") == season and metadata.get("prediction_gameweek") == gw)
         state = "final" if actual and actual.get("finalized") else "provisional" if actual else "awaiting-results"
         actual_by_id = {}
@@ -315,28 +349,40 @@ class AdminDashboard:
             if raw_id is None or raw_id <= 0 or not raw_id.is_integer():
                 raise ValueError("Invalid player ID")
             player_id = int(raw_id)
-            predicted = number(row.get("expected_points"))
-            if player_id in seen or predicted is None or number(row.get("gameweek")) != gw:
+            selection_score = number(row.get("expected_points"))
+            predicted = selection_score if is_points_forecast else None
+            if player_id in seen or selection_score is None or number(row.get("gameweek")) != gw:
                 raise ValueError("Invalid forecast")
             seen.add(player_id)
             stats = actual_by_id.get(player_id, {})
             points = number(stats.get("total_points"))
             selected = squad_by_id.get(player_id)
             position = row.get("element_type")
+            context = forecast.get("player_context", {}).get(str(player_id), {})
             players.append({
                 "id": player_id, "name": row["web_name"] if isinstance(row.get("web_name"), str) else str(player_id),
                 "team": row["team_name"] if isinstance(row.get("team_name"), str) else "—",
                 "position": POSITIONS.get(number(position), position if isinstance(position, str) else "—"),
                 "expected_points": predicted, "actual_points": points,
-                "error": predicted - points if points is not None else None,
+                "selection_score": selection_score,
+                "error": predicted - points if points is not None and predicted is not None else None,
                 "minutes": number(stats.get("minutes")),
+                "goals": number(stats.get("goals_scored")), "assists": number(stats.get("assists")),
+                "bonus": number(stats.get("bonus")), "clean_sheets": number(stats.get("clean_sheets")),
+                "xg": number(stats.get("expected_goals")), "xa": number(stats.get("expected_assists")),
+                "price": number(context.get("now_cost")) / 10 if number(context.get("now_cost")) is not None else None,
+                "ownership": number(context.get("selected_by_percent", row.get("selected_by_percent"))),
+                "availability": context.get("status", row.get("status")),
+                "opponent": row.get("opponent_team_name"),
+                "model_predictions": {name: number(values.get(str(player_id))) for name, values in forecast.get("model_predictions", {}).items()},
                 "in_squad": selected is not None,
                 "role": selected.get("role", "") if selected else "",
             })
-        players.sort(key=lambda p: p["expected_points"], reverse=True)
+        players.sort(key=lambda p: p["selection_score"], reverse=True)
         selected_players = [p for p in players if p["in_squad"]]
         # Reject a separately overwritten squad that no longer matches its forecast.
-        squad_valid = squad_valid and bool(selected_players) and len(selected_players) == len(squad_by_id) and all(number(squad_by_id[p["id"]].get("expected_points")) == p["expected_points"] for p in selected_players)
+        squad_matches = bool(selected_players) and len(selected_players) == len(squad_by_id) == len(squad.get("players", [])) and all(number(squad_by_id[p["id"]].get("expected_points")) == p["selection_score"] for p in selected_players) and squad.get("season") == season and squad.get("prediction_gameweek") == gw
+        squad_valid = squad_valid and squad_matches
         captain = next((p for p in selected_players if p["role"] == "captain"), None)
         complete = bool(selected_players) and all(p["actual_points"] is not None for p in selected_players)
         return {
@@ -346,17 +392,22 @@ class AdminDashboard:
             "actuals_at_utc": (actual or {}).get("fetched_at_utc"),
             "actuals_source": (actual or {}).get("source"),
             "prediction_count": len(players), "eligible": eligible and bool(players),
+            "matched_actuals": sum(p["actual_points"] is not None for p in players),
+            "official_player_count": len(actual_by_id),
             "forecast_state": (
                 "missing" if not players else "pre-deadline" if eligible
                 else "post-deadline" if captured and deadline and captured >= deadline
                 else "unverified"
             ),
             "preserved": forecast.get("preserved", False), "result_state": state,
+            "is_points_forecast": is_points_forecast,
+            "official_stats": actual_by_id,
             "metrics": metrics(players), "players": players, "metadata": metadata,
             "positions": [{"position": position, **metrics([p for p in players if p["position"] == position])} for position in POSITIONS.values()],
             "squad": {
                 "eligible": bool(squad_valid), "count": len(selected_players),
-                "expected_points": sum(p["expected_points"] for p in selected_players) if selected_players else None,
+                "matches_forecast": squad_matches,
+                "expected_points": sum(p["expected_points"] for p in selected_players) if selected_players and is_points_forecast else None,
                 "actual_points": sum(p["actual_points"] for p in selected_players) if complete else None,
                 "matched": sum(p["actual_points"] is not None for p in selected_players),
                 "captain": captain,

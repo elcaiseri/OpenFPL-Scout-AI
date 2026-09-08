@@ -94,6 +94,46 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(report["selected"]["squad"]["eligible"])
         json.dumps(report, allow_nan=False)
 
+    def test_cold_start_has_actual_returns_and_rankings_but_no_points_error(self):
+        self.bundle["metadata"]["inference"]["strategy"] = "ownership-cold-start"
+        self.save_bundle()
+        report = self.dashboard.report()
+        self.assertEqual(report["summary"]["count"], 0)
+        self.assertEqual(report["comparison_summary"]["count"], 0)
+        self.assertEqual(report["selected"]["matched_actuals"], 3)
+        self.assertEqual(report["selected"]["analysis"]["selection"]["pool"], 3)
+        self.assertFalse(report["selected"]["is_points_forecast"])
+        self.assertTrue(any("ownership" in warning for warning in report["warnings"]))
+
+    def test_player_dossier_is_season_scoped_and_retains_model_predictions(self):
+        self.bundle["model_predictions"] = {"ridge": {"1": 8}}
+        self.bundle["player_context"] = {"1": {"now_cost": 55, "selected_by_percent": "3.4"}}
+        self.save_bundle()
+        report = self.dashboard.player_report(1, "2020-2021")
+        self.assertEqual(report["player"]["price"], 5.5)
+        self.assertEqual(report["player"]["model_predictions"], {"ridge": 8})
+        self.assertEqual(report["metrics"]["actual_total"], 6)
+        self.assertEqual(len(report["history"]), 1)
+        with self.assertRaises(ValueError):
+            self.dashboard.player_report(999, "2020-2021")
+        with self.assertRaises(ValueError):
+            self.dashboard.player_report(1, "2021-2022")
+
+    def test_football_results_are_available_without_a_saved_forecast(self):
+        (self.root / "2020-2021/evaluation/gw_01.json").unlink()
+        report = self.dashboard.report()
+        self.assertEqual(report["selected"]["prediction_count"], 0)
+        self.assertEqual(report["selected"]["official_player_count"], 3)
+        self.assertEqual(report["selected"]["result_state"], "final")
+
+    def test_overwritten_squad_is_not_used_for_derived_decisions(self):
+        self.bundle["squad"]["players"][0]["expected_points"] = 99
+        self.save_bundle()
+        report = self.dashboard.report()
+        self.assertFalse(report["selected"]["squad"]["matches_forecast"])
+        self.assertEqual(report["selected"]["analysis"]["squad"]["xi"], [])
+        self.assertEqual(report["analytics"]["verified"]["decisions"], [])
+
     def test_late_unknown_or_wrong_season_forecasts_are_not_accuracy(self):
         for changes in [
             {"captured_at_utc": "2020-08-15T10:00:00Z"},
@@ -247,6 +287,7 @@ class SnapshotTests(unittest.TestCase):
             official.player_history = lambda *args, **kwargs: pd.DataFrame()
             predictions = pd.DataFrame(forecast_bundle()["predictions"])
             predictions.attrs["gameweek"] = 1
+            predictions.attrs["model_predictions"] = {"ridge": {"1": 8.25}}
             args = dict(official_client=official, prediction_gameweek=1, official_history=pd.DataFrame(), enriched_history=pd.DataFrame(), predictions=predictions, source="official-fpl", enrichment={}, model_versions={})
             class FrozenDateTime(datetime):
                 current = datetime(2020, 8, 14, tzinfo=timezone.utc)
@@ -267,6 +308,8 @@ class SnapshotTests(unittest.TestCase):
                 saved = json.loads(before)
                 self.assertEqual(saved["predictions"][0]["expected_points"], 7)
                 self.assertIsNotNone(saved["squad"])
+                self.assertEqual(saved["model_predictions"]["ridge"]["1"], 8.25)
+                predictions.attrs["model_predictions"] = {"ridge": {"1": 100}}
                 predictions.loc[0, "expected_points"] = 99
                 FrozenDateTime.current = datetime(2020, 8, 16, tzinfo=timezone.utc)
                 archive.capture_inference(**args)
@@ -274,7 +317,7 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(target.read_bytes(), before)
 
 
-async def asgi_get(path, key=None):
+async def asgi_get(path, key=None, method="GET"):
     """Exercise real routing, dependencies and middleware without a test client dependency."""
     parts = urlsplit(path)
     messages = []
@@ -292,7 +335,7 @@ async def asgi_get(path, key=None):
 
     await main.app({
         "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
-        "http_version": "1.1", "method": "GET", "scheme": "http", "path": parts.path,
+        "http_version": "1.1", "method": method, "scheme": "http", "path": parts.path,
         "raw_path": parts.path.encode(), "query_string": parts.query.encode(), "root_path": "",
         "headers": [(b"authorization", f"Bearer {key}".encode())] if key else [],
         "client": ("127.0.0.1", 123), "server": ("test", 80),
@@ -303,6 +346,27 @@ async def asgi_get(path, key=None):
 
 
 class AccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_owner_routes_fail_closed_and_stay_out_of_public_schema(self):
+        paths = [("/api/admin/players/1", "GET"), ("/api/admin/models", "GET"), ("/api/admin/capture?gameweek=4", "POST")]
+        for path, method in paths:
+            with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}):
+                status, headers, _ = await asgi_get(path, "shared-api-key", method)
+                self.assertEqual(status, 401)
+                self.assertEqual(headers[b"cache-control"], b"no-store")
+            with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": ""}):
+                status, _, _ = await asgi_get(path, "owner-test-key", method)
+                self.assertEqual(status, 503)
+        self.assertFalse(any(path.startswith("/api/admin") for path in main.app.openapi()["paths"]))
+
+    async def test_capture_rejects_past_deadline_and_new_queries_are_validated(self):
+        fake = SimpleNamespace(official_client=OfficialClient())
+        with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}), patch.object(main, "scout", fake, create=True):
+            status, _, _ = await asgi_get("/api/admin/capture?gameweek=1", "owner-test-key", "POST")
+            self.assertEqual(status, 422)
+            for path in ["/api/admin/models?dataset=private", "/api/admin/players/0", "/api/admin/players/1?season=private"]:
+                status, _, _ = await asgi_get(path, "owner-test-key")
+                self.assertEqual(status, 422)
+
     async def test_owner_endpoint_fails_closed_and_does_not_accept_shared_keys(self):
         with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}):
             for path, key in [("/api/admin/dashboard", None), ("/api/admin/dashboard", "shared-api-key"), ("/api/admin/dashboard?token=owner-test-key", None)]:

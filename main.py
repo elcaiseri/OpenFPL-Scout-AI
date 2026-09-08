@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Mapping, Optional
 
@@ -17,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from src.auth import verify_admin_key, verify_api_key
 from src.admin_dashboard import AdminDashboard, RuntimeMonitor
+from src.data_archive import utc_datetime
 from src.logger import get_logger
 from src.models import (
     APICatalogModel,
@@ -199,6 +201,41 @@ async def get_admin_dashboard(
         logger.exception("Owner dashboard archive is unavailable")
         raise HTTPException(status_code=503, detail="Dashboard archive is unavailable") from error
     return {**result, "runtime": runtime_monitor.snapshot()}
+
+
+@app.get("/api/admin/players/{player_id}", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_player(
+    player_id: int = Path(..., ge=1),
+    season: Optional[str] = Query(None, pattern=r"^\d{4}-\d{4}$"),
+):
+    try:
+        return await run_in_threadpool(admin_dashboard.player_report, player_id, season)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/admin/models", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_models(dataset: Literal["holdout", "cross-validation"] = "holdout"):
+    return await run_in_threadpool(admin_dashboard.model_lab.report, dataset)
+
+
+@app.post("/api/admin/capture", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def capture_admin_forecast(gameweek: int = Query(..., ge=1, le=38)):
+    """Explicit owner action: save an upcoming forecast and matching shortlist."""
+    bootstrap = await _official_call(scout.official_client.bootstrap)
+    event = next((e for e in bootstrap.get("events", []) if e["id"] == gameweek), {})
+    deadline = utc_datetime(event.get("deadline_time"))
+    if deadline is None or deadline <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail="Choose a gameweek whose official deadline has not passed.")
+    try:
+        predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
+        team = await run_in_threadpool(scout.select_optimal_team, predictions)
+        squad_result = await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
+        with admin_dashboard.lock:
+            admin_dashboard.cache.clear()
+        return {"gameweek": gameweek, "archive": predictions.attrs.get("archive", {}), "squad": squad_result}
+    except (InferenceError, ValueError, OfficialFPLAPIError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 def _uses_bearer_auth(dependency) -> bool:

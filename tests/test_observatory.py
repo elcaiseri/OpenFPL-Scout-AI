@@ -1,0 +1,146 @@
+import json
+import math
+import tempfile
+import unittest
+from pathlib import Path
+
+import pandas as pd
+
+from src.model_lab import ModelLab
+from src.observatory import best_xi, calibration, model_comparison, point_metrics, selection_metrics, squad_analysis
+
+
+def squad():
+    positions = ['GK'] * 2 + ['DEF'] * 5 + ['MID'] * 5 + ['FWD'] * 3
+    return [{
+        'id': i + 1, 'name': f'Player {i+1}', 'position': position,
+        'in_squad': True, 'selection_score': 16 - i,
+        'expected_points': 16 - i, 'actual_points': i - 1,
+    } for i, position in enumerate(positions)]
+
+
+class ComparisonTests(unittest.TestCase):
+    def test_metric_denominators_exclude_missing_nonfinite_but_keep_zero_and_negative(self):
+        values = [
+            {'expected_points': 1, 'actual_points': -1},
+            {'expected_points': 0, 'actual_points': 0},
+            {'expected_points': None, 'actual_points': 10},
+            {'expected_points': math.inf, 'actual_points': 8},
+        ]
+        result = point_metrics(values)
+        self.assertEqual(result['count'], 2)
+        self.assertEqual(result['mae'], 1)
+        self.assertEqual(result['predicted_total'], 1)
+        self.assertEqual(result['actual_total'], -1)
+        self.assertAlmostEqual(result['rank_correlation'], -1)
+        json.dumps(result, allow_nan=False)
+
+    def test_degenerate_metrics_do_not_invent_correlation(self):
+        result = point_metrics([{'expected_points': 2, 'actual_points': 2}] * 4)
+        self.assertEqual(result['mae'], 0)
+        self.assertIsNone(result['r2'])
+        self.assertIsNone(result['rank_correlation'])
+        self.assertIsNone(point_metrics([])['actual_total'])
+
+    def test_calibration_uses_identical_matched_population(self):
+        bins = calibration([{'expected_points': 1, 'actual_points': 3}, {'expected_points': 0, 'actual_points': None}, {'expected_points': 2, 'actual_points': -1}])
+        self.assertEqual(bins[0]['count'], 1)
+        self.assertEqual(bins[0]['predicted_mean'], 1)
+        self.assertEqual(bins[0]['actual_mean'], 3)
+        self.assertEqual(bins[1]['actual_mean'], -1)
+        self.assertIsNone(bins[-1]['mae'])
+
+    def test_component_models_have_their_own_explicit_coverage(self):
+        values = [
+            {'expected_points': 4, 'actual_points': 5, 'model_predictions': {'ridge': 6}},
+            {'expected_points': 2, 'actual_points': 0},
+            {'expected_points': 8, 'actual_points': None, 'model_predictions': {'ridge': 10}},
+        ]
+        models = {m['name']: m for m in model_comparison(values)}
+        self.assertEqual(models['ensemble']['count'], 2)
+        self.assertEqual(models['ridge']['count'], 1)
+        self.assertEqual(models['ridge']['actual_mean'], 5)
+
+    def test_ownership_scores_evaluate_rankings_without_becoming_points(self):
+        values = [{'id': i, 'selection_score': i, 'expected_points': None, 'actual_points': i * 2} for i in range(1, 16)]
+        ranking = selection_metrics(values)
+        self.assertEqual(ranking['top10_overlap_pct'], 100)
+        self.assertEqual(ranking['ndcg'], 1)
+        self.assertEqual(ranking['our_top'][0]['id'], 15)
+        self.assertEqual(point_metrics(values)['count'], 0)
+
+    def test_xi_is_legal_and_fixed_captain_actual_is_doubled_once(self):
+        players = squad()
+        result = squad_analysis(players)
+        xi = result['xi']
+        self.assertEqual(len(xi), 11)
+        self.assertEqual(len(result['bench']), 4)
+        self.assertEqual(sum(p['position'] == 'GK' for p in xi), 1)
+        self.assertGreaterEqual(sum(p['position'] == 'DEF' for p in xi), 3)
+        self.assertGreaterEqual(sum(p['position'] == 'FWD' for p in xi), 1)
+        captain = next(p for p in xi if p['is_captain'])
+        self.assertEqual(captain['id'], 1)
+        self.assertEqual(result['actual_points'], sum(p['actual_points'] for p in xi) - 1)
+        best = best_xi(players, 'actual_points')
+        self.assertEqual(result['hindsight_points'], sum(p['actual_points'] for p in best) + 13)
+        self.assertGreaterEqual(result['selection_gap'], 0)
+
+    def test_missing_bench_score_blocks_hindsight_but_not_complete_xi(self):
+        players = squad()
+        bench_id = squad_analysis(players)['bench'][0]['id']
+        next(p for p in players if p['id'] == bench_id)['actual_points'] = None
+        result = squad_analysis(players)
+        self.assertIsNotNone(result['actual_points'])
+        self.assertIsNone(result['hindsight_points'])
+        self.assertIsNone(result['selection_gap'])
+
+    def test_missing_starter_score_or_incomplete_squad_stays_unknown(self):
+        players = squad()
+        players[0]['actual_points'] = None
+        self.assertIsNone(squad_analysis(players)['actual_points'])
+        self.assertEqual(squad_analysis(players[:-1])['xi'], [])
+        self.assertIsNone(squad_analysis([])['predicted_points'])
+        for p in players:
+            p['expected_points'] = None
+        self.assertIsNone(squad_analysis(players)['predicted_points'])
+        self.assertEqual(len(squad_analysis(players)['xi']), 11)
+
+
+class ModelLabTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.lab = ModelLab({'models': {'ridge': {'path': str(self.root / 'ridge.pkl')}}})
+
+    def test_missing_artifacts_are_explicit_and_dataset_is_whitelisted(self):
+        self.assertFalse(self.lab.report()['available'])
+        with self.assertRaises(ValueError):
+            self.lab.report('../private')
+
+    def test_recorded_models_and_baselines_compare_with_actual_labels(self):
+        pd.DataFrame([
+            {'season': 2025, 'gameweek': 1, 'actual': 4, 'ridge': 6, 'baseline_last': 0},
+            {'season': 2025, 'gameweek': 2, 'actual': 0, 'ridge': 1, 'baseline_last': 3},
+            {'season': 2025, 'gameweek': 2, 'actual': -2, 'ridge': float('nan'), 'baseline_last': -2},
+        ]).to_csv(self.root / 'holdout_predictions.csv', index=False)
+        report = self.lab.report()
+        self.assertTrue(report['available'])
+        self.assertTrue(report['warnings'])  # Missing metadata is disclosed.
+        models = {m['name']: m for m in report['models']}
+        self.assertEqual(models['ridge']['count'], 2)
+        self.assertEqual(models['ridge']['mae'], 1.5)
+        self.assertEqual(models['baseline_last']['count'], 3)
+        self.assertAlmostEqual(models['baseline_last']['mae'], 7/3)
+        self.assertEqual(len(models['ridge']['timeline']), 2)
+        self.assertEqual(models['ridge']['outliers'][0]['actual_points'], 4)
+        self.assertFalse(self.lab.report('cross-validation')['available'])
+        json.dumps(report, allow_nan=False)
+
+    def test_absent_actual_label_is_not_an_evaluation(self):
+        (self.root / 'holdout_predictions.csv').write_text('ridge\n2\n')
+        self.assertFalse(self.lab.report()['available'])
+
+
+if __name__ == '__main__':
+    unittest.main()
