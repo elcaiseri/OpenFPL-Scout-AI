@@ -29,6 +29,8 @@ responsive web dashboard and FastAPI service.
   with separate starting-XI, captaincy, and availability signals.
 - Optional FPL Data enrichment can fill missing historical statistics from GW2
   without replacing official values.
+- An owner dashboard compares archived forecasts with official results and
+  tracks model status, feature coverage, enrichment, storage, and service activity.
 
 Squad selection is intentionally budget-free. Prices are returned for context
 but do not affect player projections or selection.
@@ -60,6 +62,63 @@ Optional FPL Data enrichment can be disabled immediately with:
 ```dotenv
 FPL_DATA_INFERENCE_ENABLED=false
 ```
+
+## Private owner dashboard
+
+Open `/admin` to review the system. Set a dedicated secret in `.env` locally,
+or in the deployment environment, then enter it on the dashboard:
+
+```dotenv
+OPENFPL_ADMIN_KEY=<a-long-random-owner-secret>
+```
+
+Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Existing `VALID_API_KEYS` do not grant owner access. Without an owner key,
+the dashboard data endpoint is disabled. Use HTTPS for a hosted deployment.
+The browser keeps the key only in memory; locking the dashboard or reloading
+clears it. Owner responses use `Cache-Control: no-store`. The login shell
+contains no system data, and owner routes are omitted from the public API
+catalog, OpenAPI, and sitemap.
+
+The dashboard includes:
+
+- MAE, RMSE, prediction bias, and the share of forecasts within two points of
+  final scores, plus a gameweek trend and player scatter plot. The default
+  **All archived runs** view includes retrospective comparisons of late runs.
+  **Verified pre-deadline only** reports forecasting accuracy separately.
+- Gameweek and season selection, player/club search, position and squad filters,
+  and CSV export of the filtered comparison with provenance timestamps.
+- The archived 15-player shortlist and captain's return. Shortlist totals count
+  each player once; they are not a playing-XI score with substitutions or chips.
+- Loaded model status, last archived inference outcomes, feature coverage,
+  enrichment coverage, archive status, and request/error/latency telemetry.
+  Request telemetry covers only the current process since startup, with latency
+  sampled from its latest 200 non-dashboard requests.
+
+Successful scout runs now save an atomic forecast bundle at
+`data/archive/<season>/evaluation/gw_XX.json`. It can be refreshed before the
+official deadline, and is preserved after that deadline. The matching squad is
+attached only while the same forecast is still current and before the deadline.
+Legacy archives remain visible, with capture timestamps checked for eligibility.
+Unknown or late forecasts populate the archive comparison cards and trend, with
+their timing clearly labeled. They are excluded from verified pre-deadline
+accuracy; rerunning a past gameweek cannot create a verified historical forecast.
+The gameweek review opens on the latest archived gameweek with matched scores;
+upcoming forecasts can still be selected explicitly.
+
+Scores are joined by official player ID within the same season and gameweek.
+Missing scores stay missing, and event-live totals already include double
+gameweeks. Results remain provisional until official FPL reports both `finished`
+and `data_checked`. The first finalized score fetch bypasses the live cache and
+is stored under `evaluation/actuals/`. Old live files without finalization
+provenance remain provisional. Upstream failures retain saved scores with a
+visible warning. The dashboard refreshes every 60 seconds while visible; current
+official data uses the shared FPL cache. It never reruns inference itself.
+
+To build a complete record, schedule `/api/scout` before each deadline and open
+the dashboard (or call `GET /api/admin/dashboard` with
+`Authorization: Bearer <owner-key>`) after results finalize. Continue mounting
+the data directory read-write. No sample results are used in the dashboard.
 
 ## Docker
 
