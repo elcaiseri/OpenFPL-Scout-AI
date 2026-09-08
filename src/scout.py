@@ -398,6 +398,11 @@ class FPLScout:
         )
         ensemble, diagnostics = self._predict_ensemble(model_input)
         diagnostics["strategy"] = "model-ensemble"
+        diagnostics["feature_coverage"] = {
+            "total": len(MODEL_FEATURES),
+            "populated": populated_features,
+            "entirely_missing": entirely_missing_features,
+        }
         players["expected_points"] = ensemble
 
         output_columns: Sequence[str] = [

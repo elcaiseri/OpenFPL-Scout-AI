@@ -83,12 +83,14 @@ class OfficialFPLClient:
         )
         return session
 
-    def _get_json(self, path: str, ttl: Optional[int] = None) -> Any:
+    def _get_json(
+        self, path: str, ttl: Optional[int] = None, *, refresh: bool = False
+    ) -> Any:
         cache_key = path.lstrip("/")
         now = time.monotonic()
         with self._cache_lock:
             cached = self._cache.get(cache_key)
-            if cached is not None and cached.expires_at > now:
+            if not refresh and cached is not None and cached.expires_at > now:
                 return cached.value
 
         url = f"{self.base_url}/{cache_key}"
@@ -154,9 +156,15 @@ class OfficialFPLClient:
         """Return the official bonus-processing and league update state."""
         return self._mapping_resource("event-status/")
 
-    def event_live(self, gameweek: int) -> Mapping[str, Any]:
+    def event_live(self, gameweek: int, *, refresh: bool = False) -> Mapping[str, Any]:
         """Return the complete official live payload for one gameweek."""
-        return self._mapping_resource(f"event/{gameweek}/live/")
+        path = f"event/{gameweek}/live/"
+        if not refresh:
+            return self._mapping_resource(path)
+        payload = self._get_json(path, refresh=True)
+        if not isinstance(payload, Mapping):
+            raise OfficialFPLAPIError("Official live response has an invalid schema")
+        return payload
 
     def mapped_event_live(self, gameweek: int) -> Dict[str, Any]:
         """Map live official player scoring for a gameweek."""

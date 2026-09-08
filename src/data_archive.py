@@ -20,6 +20,15 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 
+def utc_datetime(value: Any) -> Optional[datetime]:
+    """Parse a timezone-aware timestamp; unknown times cannot prove eligibility."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _environment_bool(name: str) -> Optional[bool]:
     value = os.environ.get(name)
     if value is None:
@@ -252,6 +261,27 @@ class DataArchive:
             season_root / "metadata" / f"{gameweek_name}.json",
             self._json_bytes(metadata),
         )
+        # One atomic bundle keeps predictions and provenance together. Only
+        # forecasts actually saved before the deadline may replace this file.
+        event = next(
+            (item for item in bootstrap.get("events", [])
+             if int(item["id"]) == prediction_gameweek),
+            {},
+        )
+        deadline = utc_datetime(event.get("deadline_time"))
+        saved_at = datetime.now(timezone.utc)
+        predictions.attrs["archive_season"] = season
+        if deadline is not None and saved_at < deadline:
+            bundle = {
+                "metadata": {**metadata, "captured_at_utc": saved_at.isoformat()},
+                "deadline_time": deadline.isoformat(),
+                "predictions": predictions.to_dict(orient="records"),
+                "squad": None,
+            }
+            target = season_root / "evaluation" / f"{gameweek_name}.json"
+            with self._lock:
+                self._record_write(written, season_root, target, self._json_bytes(bundle))
+            predictions.attrs["evaluation_snapshot"] = saved_at.isoformat()
         result = {
             "status": "saved",
             "season": season,
@@ -277,7 +307,8 @@ class DataArchive:
         try:
             prediction_gameweek = int(predictions.attrs["gameweek"])
             season = str(
-                self.last_result.get("season") or self.configured_season
+                predictions.attrs.get("archive_season")
+                or self.last_result.get("season") or self.configured_season
             )
             if season == "auto":
                 raise ValueError("Season is unavailable before inference is archived")
@@ -297,6 +328,19 @@ class DataArchive:
                 "players": squad.to_dict(orient="records"),
             }
             updated = self._write_bytes(target, self._json_bytes(payload))
+            evaluation_path = target.parent.parent / "evaluation" / target.name
+            snapshot_id = predictions.attrs.get("evaluation_snapshot")
+            if snapshot_id and evaluation_path.is_file():
+                with self._lock:
+                    bundle = json.loads(evaluation_path.read_text(encoding="utf-8"))
+                    deadline = utc_datetime(bundle.get("deadline_time"))
+                    if (
+                        bundle["metadata"]["captured_at_utc"] == snapshot_id
+                        and deadline is not None
+                        and datetime.now(timezone.utc) < deadline
+                    ):
+                        bundle["squad"] = payload
+                        self._write_bytes(evaluation_path, self._json_bytes(bundle))
             return {
                 "status": "saved",
                 "path": str(target),
