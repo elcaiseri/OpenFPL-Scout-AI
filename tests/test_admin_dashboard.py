@@ -106,6 +106,22 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(report['analytics']['verified']['scout']['timeline'][0]['count'], 3)
         self.assertEqual(report['selected']['squad']['captured_at_utc'], self.bundle['squad']['captured_at_utc'])
 
+    def test_legacy_csv_preserves_float_precision_when_matching_json_scout_picks(self):
+        expected = 0.30000000000000004
+        self.bundle['predictions'][0]['expected_points'] = expected
+        self.bundle['squad']['players'][0]['expected_points'] = expected
+        root = self.root / '2020-2021'
+        (root / 'evaluation/gw_01.json').unlink()
+        for folder in ('predictions', 'metadata', 'squads'):
+            (root / folder).mkdir()
+        pd.DataFrame(self.bundle['predictions']).to_csv(root / 'predictions/gw_01.csv', index=False)
+        (root / 'metadata/gw_01.json').write_text(json.dumps(self.bundle['metadata']))
+        (root / 'squads/gw_01.json').write_text(json.dumps(self.bundle['squad']))
+        report = self.dashboard.report()
+        self.assertTrue(report['selected']['squad']['matches_forecast'])
+        self.assertEqual(report['selected']['analysis']['scout']['captain']['expected_points'], expected)
+        self.assertEqual(report['selected']['analysis']['scout']['count'], 4)
+
     def test_cold_start_has_actual_returns_and_rankings_but_no_points_error(self):
         self.bundle["metadata"]["inference"]["strategy"] = "ownership-cold-start"
         self.save_bundle()

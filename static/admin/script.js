@@ -358,7 +358,7 @@
   function exportCSV(){ exportPlayers(filteredPlayers()); }
   function exportPlayers(rows, prefix = 'openfpl'){
     const w=state.report.selected;if(!w||!rows.length)return;
-    const fields=['id','name','team','position','expected_points','selection_score','actual_points','error','minutes','goals','assists','bonus','in_squad'];
+    const fields=['id','name','team','position','expected_points','selection_score','actual_points','error','minutes','goals','assists','bonus','in_squad','role'];
     const cell=v=>{let s=v==null?'':String(v);if(typeof v==='string'&&/^[=+\-@\t\r]/.test(s))s=`'${s}`;return `"${s.replaceAll('"','""')}"`;};
     const content=[['season','gameweek','forecast_state','result_state','captured_at_utc','deadline_time','actuals_at_utc',...fields],...rows.map(p=>[state.report.season,w.gameweek,w.forecast_state,w.result_state,w.captured_at_utc,w.deadline_time,w.actuals_at_utc,...fields.map(f=>p[f])])].map(row=>row.map(cell).join(',')).join('\r\n');
     const url=URL.createObjectURL(new Blob(['\uFEFF'+content],{type:'text/csv;charset=utf-8'})),link=el('a');link.href=url;link.download=`${prefix}-${state.report.season}-gw${w.gameweek}.csv`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -370,6 +370,9 @@
   $('gameweek').addEventListener('change',()=>{state.page=0;refresh();});
   $('evaluation-mode').addEventListener('change',()=>{if(state.report)render();});
   Object.keys(views).forEach(tab=>$(`tab-${tab}`).addEventListener('click',()=>setTab(tab)));
+  const compactNavigation = window.matchMedia('(max-width: 950px)');
+  const orientNavigation = () => $('navigation').setAttribute('aria-orientation', compactNavigation.matches ? 'horizontal' : 'vertical');
+  compactNavigation.addEventListener('change', orientNavigation); orientNavigation();
   $('navigation').addEventListener('keydown',e=>{const keys=Object.keys(views),i=keys.indexOf(state.tab);let next;if(['ArrowDown','ArrowRight'].includes(e.key))next=keys[(i+1)%keys.length];if(['ArrowUp','ArrowLeft'].includes(e.key))next=keys[(i-1+keys.length)%keys.length];if(e.key==='Home')next=keys[0];if(e.key==='End')next=keys.at(-1);if(next){e.preventDefault();setTab(next,true);}});
   ['search','position','scope','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',()=>{state.page=0;if(state.report)renderPlayers();}));
   $('previous-page').addEventListener('click',()=>{state.page--;renderPlayers();});$('next-page').addEventListener('click',()=>{state.page++;renderPlayers();});

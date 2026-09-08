@@ -216,7 +216,8 @@ class AdminDashboard:
                         squad_path = season_root / "squads" / f"{name}.json"
                         forecasts[gw] = {
                             "metadata": latest,
-                            "predictions": pd.read_csv(season_root / "predictions" / f"{name}.csv").to_dict("records"),
+                            # Preserve exact archived floats when matching the JSON shortlist.
+                            "predictions": pd.read_csv(season_root / "predictions" / f"{name}.csv", float_precision="round_trip").to_dict("records"),
                             "squad": read_json(squad_path) if squad_path.is_file() else None,
                             "deadline_time": events.get(gw, {}).get("deadline_time"),
                             "preserved": False,
