@@ -80,25 +80,51 @@ clears it. Owner responses use `Cache-Control: no-store`. The login shell
 contains no system data, and owner routes are omitted from the public API
 catalog, OpenAPI, and sitemap.
 
-The dashboard includes:
+The Observatory is a system admin workspace. No FPL manager ID or linked
+personal entry is required. Six views share season and gameweek selectors:
 
-- MAE, RMSE, prediction bias, and the share of forecasts within two points of
-  final scores, plus a gameweek trend and player scatter plot. The default
-  **All archived runs** view includes retrospective comparisons of late runs.
-  **Verified pre-deadline only** reports forecasting accuracy separately.
-- Gameweek and season selection, player/club search, position and squad filters,
-  and CSV export of the filtered comparison with provenance timestamps.
-- The archived 15-player shortlist and captain's return. Shortlist totals count
-  each player once; they are not a playing-XI score with substitutions or chips.
-- Loaded model status, last archived inference outcomes, feature coverage,
-  enrichment coverage, archive status, and request/error/latency telemetry.
-  Request telemetry covers only the current process since startup, with latency
-  sampled from its latest 200 non-dashboard requests.
+- **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
+  within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
+  map, and club comparisons. **All archived runs** includes retrospective
+  comparisons; **Verified pre-deadline only** isolates advance forecasts.
+- **Gameweek centre:** official fixtures and football statistics, forecast vs
+  actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
+  scatter plots, surprises, and position/club breakdowns. Club totals are FPL
+  player points, not predicted match scores. Fixture scores are official only.
+- **Manager decisions:** a legal XI derived from the saved 15-player shortlist,
+  captain, bench, fixed-XI predicted/actual returns, and hindsight opportunity.
+  This budget-free benchmark doubles the captain and applies no autosubs or
+  chips. Hindsight optimizes the same complete shortlist using actual results;
+  it is not an achievable forecast. The official manager average is context,
+  since real entries operate under different constraints. Incomplete or
+  mismatched squads do not generate a derived XI.
+- **Player intelligence:** searchable, filtered, paginated comparisons, CSV
+  exports with timing provenance, and player dossiers with gameweek histories
+  and saved component-model outputs. Dossier metrics include all final saved
+  points comparisons, with timing shown for every row.
+- **Model lab:** live-season ensemble/component results, recorded holdout and
+  out-of-fold model/baseline leaderboards, calibration, scatter samples, error
+  trends, validation folds, and input features. Training artifacts are read
+  from beside configured models (`holdout_predictions.csv`,
+  `oof_predictions.csv`, `training_metadata.json`). Their season identifiers,
+  populations and model versions remain distinct from live-season accuracy.
+- **System health:** model loading/inference status, feature coverage,
+  enrichment, archive ledger, an explicit upcoming forecast capture action,
+  and service telemetry. Telemetry covers this process since startup; latency
+  uses its latest 200 non-dashboard requests.
+
+GW1 ownership cold-start scores are ranking inputs, not predicted points.
+They are evaluated through ranking quality and realized squad returns, and
+excluded from MAE/RMSE, calibration, and matched points totals. Unknown values
+stay missing; they are never substituted with zero.
 
 Successful scout runs now save an atomic forecast bundle at
 `data/archive/<season>/evaluation/gw_XX.json`. It can be refreshed before the
 official deadline, and is preserved after that deadline. The matching squad is
 attached only while the same forecast is still current and before the deadline.
+New captures also save raw individual model outputs and player context in the
+bundle and in `diagnostics/gw_XX.json`. Legacy runs retain their original
+evidence: missing model outputs are not reconstructed after results are known.
 Legacy archives remain visible, with capture timestamps checked for eligibility.
 Unknown or late forecasts populate the archive comparison cards and trend, with
 their timing clearly labeled. They are excluded from verified pre-deadline
@@ -113,12 +139,17 @@ and `data_checked`. The first finalized score fetch bypasses the live cache and
 is stored under `evaluation/actuals/`. Old live files without finalization
 provenance remain provisional. Upstream failures retain saved scores with a
 visible warning. The dashboard refreshes every 60 seconds while visible; current
-official data uses the shared FPL cache. It never reruns inference itself.
+official data uses the shared FPL cache. Reading or refreshing views never runs
+inference. **Capture forecast** explicitly runs inference for an upcoming
+official deadline and records the real capture time.
 
 To build a complete record, schedule `/api/scout` before each deadline and open
 the dashboard (or call `GET /api/admin/dashboard` with
 `Authorization: Bearer <owner-key>`) after results finalize. Continue mounting
 the data directory read-write. No sample results are used in the dashboard.
+The same owner authorization protects `GET /api/admin/players/{player_id}`,
+`GET /api/admin/models?dataset=holdout|cross-validation`, and
+`POST /api/admin/capture?gameweek=4`. Capture rejects expired deadlines.
 
 ## Docker
 
