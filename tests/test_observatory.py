@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.model_lab import ModelLab
-from src.observatory import best_xi, calibration, model_comparison, point_metrics, selection_metrics, squad_analysis
+from src.observatory import best_xi, calibration, model_comparison, point_metrics, selection_metrics, squad_analysis, scout_analysis, scout_season_analysis
 
 
 def squad():
@@ -104,6 +104,85 @@ class ComparisonTests(unittest.TestCase):
             p['expected_points'] = None
         self.assertIsNone(squad_analysis(players)['predicted_points'])
         self.assertEqual(len(squad_analysis(players)['xi']), 11)
+
+
+class ScoutComparisonTests(unittest.TestCase):
+    def week(self, gw=1):
+        players = squad()
+        players[0]['role'] = 'captain'
+        players[1]['role'] = 'vice'
+        players.append({'id': 99, 'name': 'Not selected', 'position': 'MID', 'in_squad': False, 'expected_points': 50, 'actual_points': 60})
+        return {
+            'gameweek': gw, 'players': players, 'eligible': True,
+            'forecast_state': 'pre-deadline', 'result_state': 'final',
+            'is_points_forecast': True,
+            'squad': {'count': 15, 'matches_forecast': True, 'eligible': True},
+        }
+
+    def test_xpts_vs_points_uses_saved_picks_and_counts_captains_once(self):
+        report = scout_analysis(self.week())
+        self.assertEqual(report['count'], 15)
+        self.assertEqual(report['matched_actuals'], 15)
+        self.assertEqual(report['expected_points'], 135)
+        self.assertEqual(report['actual_points'], 90)
+        self.assertEqual(report['error'], 45)
+        self.assertEqual(report['metrics']['predicted_total'], 135)
+        self.assertEqual(report['metrics']['actual_total'], 90)
+        self.assertEqual(report['captain']['id'], 1)
+        self.assertEqual(report['vice']['actual_points'], 0)
+        self.assertEqual(sum(p['count'] for p in report['positions']), 15)
+
+    def test_missing_actual_keeps_full_total_unknown_and_pairs_metrics(self):
+        week = self.week()
+        week['players'][0]['actual_points'] = None
+        report = scout_analysis(week)
+        self.assertEqual(report['expected_points'], 135)
+        self.assertIsNone(report['actual_points'])
+        self.assertIsNone(report['error'])
+        self.assertEqual(report['metrics']['count'], 14)
+        self.assertEqual(report['metrics']['predicted_total'], 119)
+        self.assertEqual(report['metrics']['actual_total'], 91)
+
+    def test_cold_start_keeps_actual_returns_without_inventing_xpts(self):
+        week = self.week()
+        week['is_points_forecast'] = False
+        for player in week['players']:
+            player['expected_points'] = None
+        report = scout_analysis(week)
+        self.assertEqual(report['actual_points'], 90)
+        self.assertIsNone(report['expected_points'])
+        self.assertIsNone(report['error'])
+        self.assertEqual(report['metrics']['count'], 0)
+        season = scout_season_analysis([week])
+        self.assertIsNone(season['metrics']['actual_total'])
+        self.assertFalse(season['timeline'][0]['is_points_forecast'])
+
+    def test_missing_or_mismatched_shortlist_does_not_reconstruct_picks(self):
+        week = self.week()
+        week['squad']['matches_forecast'] = False
+        report = scout_analysis(week)
+        self.assertEqual(report['archive_state'], 'mismatched')
+        self.assertEqual(report['players'], [])
+        self.assertIsNone(report['captain'])
+        self.assertIsNone(report['expected_points'])
+        self.assertEqual(scout_season_analysis([week])['timeline'], [])
+        week['squad']['count'] = 0
+        self.assertEqual(scout_analysis(week)['archive_state'], 'missing')
+
+    def test_season_weights_picks_and_requires_final_results_and_squad_timing(self):
+        first, late, upcoming = self.week(1), self.week(2), self.week(3)
+        late['players'] = [{'id': 30, 'name': 'Late selection', 'position': 'FWD', 'in_squad': True, 'expected_points': 10, 'actual_points': 0}]
+        late['squad'].update(count=1, eligible=False)
+        upcoming['result_state'] = 'provisional'
+        all_runs = scout_season_analysis([first, late, upcoming])
+        self.assertEqual(all_runs['metrics']['count'], 16)
+        self.assertEqual(all_runs['metrics']['predicted_total'], 145)
+        self.assertEqual(all_runs['metrics']['actual_total'], 90)
+        self.assertAlmostEqual(all_runs['metrics']['mae'], (scout_analysis(first)['metrics']['mae'] * 15 + 10) / 16)
+        self.assertEqual([w['gameweek'] for w in all_runs['timeline']], [1, 2])
+        verified = scout_season_analysis([first, late, upcoming], verified=True)
+        self.assertEqual(verified['metrics']['count'], 15)
+        self.assertEqual([w['gameweek'] for w in verified['timeline']], [1])
 
 
 class ModelLabTests(unittest.TestCase):

@@ -28,11 +28,12 @@
       <span class="eyebrow nav-label">EXPLORE THE SYSTEM</span>
       <nav id="navigation" role="tablist" aria-label="Observatory views" aria-orientation="vertical">
         <button id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" data-tab="overview"><span>01</span> Season overview</button>
-        <button id="tab-gameweek" role="tab" aria-selected="false" aria-controls="view-gameweek" data-tab="gameweek" tabindex="-1"><span>02</span> Gameweek centre</button>
-        <button id="tab-decisions" role="tab" aria-selected="false" aria-controls="view-decisions" data-tab="decisions" tabindex="-1"><span>03</span> Manager decisions</button>
-        <button id="tab-players" role="tab" aria-selected="false" aria-controls="view-players" data-tab="players" tabindex="-1"><span>04</span> Player intelligence</button>
-        <button id="tab-models" role="tab" aria-selected="false" aria-controls="view-models" data-tab="models" tabindex="-1"><span>05</span> Model lab</button>
-        <button id="tab-system" role="tab" aria-selected="false" aria-controls="view-system" data-tab="system" tabindex="-1"><span>06</span> System health</button>
+        <button id="tab-scout" role="tab" aria-selected="false" aria-controls="view-scout" data-tab="scout" tabindex="-1"><span>02</span> Scout</button>
+        <button id="tab-gameweek" role="tab" aria-selected="false" aria-controls="view-gameweek" data-tab="gameweek" tabindex="-1"><span>03</span> Gameweek centre</button>
+        <button id="tab-decisions" role="tab" aria-selected="false" aria-controls="view-decisions" data-tab="decisions" tabindex="-1"><span>04</span> Manager decisions</button>
+        <button id="tab-players" role="tab" aria-selected="false" aria-controls="view-players" data-tab="players" tabindex="-1"><span>05</span> Player intelligence</button>
+        <button id="tab-models" role="tab" aria-selected="false" aria-controls="view-models" data-tab="models" tabindex="-1"><span>06</span> Model lab</button>
+        <button id="tab-system" role="tab" aria-selected="false" aria-controls="view-system" data-tab="system" tabindex="-1"><span>07</span> System health</button>
       </nav>
       <div class="nav-foot"><span class="signal"></span><strong>Evidence, always.</strong><p>Lime is our estimate.<br>Blue is the official result.<br>Gaps stay visible.</p></div>
     </aside>
@@ -48,6 +49,31 @@
         <section class="panel"><div class="section-title"><div><span class="eyebrow">THE SEASON AT A GLANCE</span><h2>Gameweek coverage</h2></div><span class="fine">Select a gameweek to investigate ↗</span></div><div id="week-map" class="week-map"></div><p class="fine">Blue: finalized results · Lime: saved upcoming forecast · Amber: provisional or retrospective · Empty: no forecast. Ownership cold starts are evaluated through rankings, not points error.</p></section>
         <div id="insights" class="insights"></div>
         <section class="panel"><span class="eyebrow">CLUB-LEVEL PERFORMANCE</span><h2>Where our points landed</h2><p class="fine">Totals across matched player-gameweeks, including non-starters. These are FPL points, not match-score predictions.</p><div id="season-clubs" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-scout" role="tabpanel" aria-labelledby="tab-scout" hidden>
+        <div class="section-title context-title"><p id="scout-context" class="fine"></p><button id="scout-capture" class="quiet">Save a Scout forecast ↗</button></div>
+        <section class="hero panel scout-hero">
+          <div><span class="eyebrow">OUR FLAGSHIP FEATURE, UNDER REVIEW</span><h2>The picks. The points.</h2><p id="scout-population"></p><div id="scout-result" class="hero-note"></div></div>
+          <div id="scout-pair" class="hero-pair"></div>
+        </section>
+        <p class="fine scout-definition"><strong class="ours">xPts = OpenFPL expected points.</strong> <strong class="actual">Pts = official FPL gameweek points.</strong> Shortlist totals count every saved pick once, including captain and vice-captain. No multipliers, autosubs or chips; the Scout is budget-free.</p>
+        <div id="scout-metrics" class="metrics"></div>
+        <div class="grid-two">
+          <section class="panel"><span class="eyebrow">THE SCOUT’S CAPTAIN</span><h2>The first choice</h2><div id="scout-captain"></div></section>
+          <section class="panel"><span class="eyebrow">THE SCOUT’S VICE-CAPTAIN</span><h2>The backup choice</h2><div id="scout-vice"></div></section>
+        </div>
+        <section class="panel">
+          <div class="section-title"><div><span class="eyebrow">EVERY SAVED PICK</span><h2>xPts vs pts, player by player</h2></div><button id="scout-export" class="quiet">Export Scout CSV ↓</button></div>
+          <p class="fine">Saved Scout order. Select a player for their season dossier. A dash means unknown; zero is a real return. Error = xPts − pts.</p>
+          <div id="scout-player-chart" class="chart"></div><div id="scout-players" class="table-scroll"></div>
+        </section>
+        <section class="panel">
+          <div class="section-title"><div><span class="eyebrow">THE SCOUT ACROSS THE SEASON</span><h2>Did the picks deliver?</h2></div><span class="comparison-legend"><i class="our-dot"></i> xPts <i class="actual-dot"></i> Pts</span></div>
+          <p id="scout-season-context" class="fine"></p><div id="scout-season-metrics" class="metrics compact"></div>
+          <div id="scout-season-chart" class="chart"></div><div id="scout-history" class="table-scroll"></div>
+        </section>
+        <section class="panel"><span class="eyebrow">WHERE THE SCOUT FINDS ITS POINTS</span><h2>Season returns by position</h2><p class="fine">The same matched Scout picks on both sides, within the selected evidence scope.</p><div id="scout-positions" class="table-scroll"></div></section>
       </section>
 
       <section id="view-gameweek" role="tabpanel" aria-labelledby="tab-gameweek" hidden>

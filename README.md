@@ -81,12 +81,19 @@ contains no system data, and owner routes are omitted from the public API
 catalog, OpenAPI, and sitemap.
 
 The Observatory is a system admin workspace. No FPL manager ID or linked
-personal entry is required. Six views share season and gameweek selectors:
+personal entry is required. Seven views share season and gameweek selectors:
 
 - **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
   within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
   map, and club comparisons. **All archived runs** includes retrospective
   comparisons; **Verified pre-deadline only** isolates advance forecasts.
+- **Scout:** the actual saved shortlist, captain and vice-captain, with explicit
+  expected points (**xPts**) vs official gameweek points (**pts**) for every
+  pick and the full shortlist. Includes errors, season totals/trends,
+  positional comparisons, player dossiers and a Scout-only CSV. Every pick
+  counts once; season metrics compare the same matched picks with finalized
+  scores and honor the evidence scope. A missing return keeps the full
+  shortlist's actual total unknown. Missing or mismatched squads are excluded.
 - **Gameweek centre:** official fixtures and football statistics, forecast vs
   actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
   scatter plots, surprises, and position/club breakdowns. Club totals are FPL

@@ -94,6 +94,18 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(report["selected"]["squad"]["eligible"])
         json.dumps(report, allow_nan=False)
 
+    def test_scout_report_exposes_archived_picks_and_season_xpts_comparisons(self):
+        report = self.dashboard.report()
+        scout = report['selected']['analysis']['scout']
+        self.assertEqual(scout['expected_points'], 12)
+        self.assertIsNone(scout['actual_points'])
+        self.assertEqual(scout['captain']['actual_points'], 6)
+        self.assertEqual(scout['metrics']['predicted_total'], 7)
+        self.assertEqual(scout['metrics']['actual_total'], 4)
+        self.assertEqual(report['analytics']['all']['scout']['metrics'], scout['metrics'])
+        self.assertEqual(report['analytics']['verified']['scout']['timeline'][0]['count'], 3)
+        self.assertEqual(report['selected']['squad']['captured_at_utc'], self.bundle['squad']['captured_at_utc'])
+
     def test_cold_start_has_actual_returns_and_rankings_but_no_points_error(self):
         self.bundle["metadata"]["inference"]["strategy"] = "ownership-cold-start"
         self.save_bundle()

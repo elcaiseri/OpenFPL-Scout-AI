@@ -406,6 +406,7 @@ class AdminDashboard:
             "positions": [{"position": position, **metrics([p for p in players if p["position"] == position])} for position in POSITIONS.values()],
             "squad": {
                 "eligible": bool(squad_valid), "count": len(selected_players),
+                "captured_at_utc": squad.get("captured_at_utc"),
                 "matches_forecast": squad_matches,
                 "expected_points": sum(p["expected_points"] for p in selected_players) if selected_players and is_points_forecast else None,
                 "actual_points": sum(p["actual_points"] for p in selected_players) if complete else None,

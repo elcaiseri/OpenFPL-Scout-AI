@@ -139,6 +139,49 @@ def model_comparison(players):
     return output
 
 
+def scout_analysis(week):
+    """Audit the saved Scout output, without reconstructing or rescoring picks."""
+    squad = week["squad"]
+    players = [p for p in week["players"] if p.get("in_squad")] if squad["matches_forecast"] else []
+    expected = total(p.get("expected_points") for p in players)
+    actual = total(p.get("actual_points") for p in players)
+    return {
+        "players": players,
+        "count": len(players),
+        "matched_actuals": sum(p.get("actual_points") is not None for p in players),
+        "expected_points": expected,
+        "actual_points": actual,
+        "error": expected - actual if expected is not None and actual is not None else None,
+        "metrics": point_metrics(players),
+        "positions": grouped_metrics(players, "position"),
+        "captain": next((p for p in players if p.get("role") == "captain"), None),
+        "vice": next((p for p in players if p.get("role") == "vice"), None),
+        "archive_state": "matching" if squad["matches_forecast"] else "mismatched" if squad["count"] else "missing",
+    }
+
+
+def scout_season_analysis(weeks, verified=False):
+    completed = [
+        w for w in weeks
+        if w["result_state"] == "final" and w["squad"]["matches_forecast"]
+        and (not verified or (w["eligible"] and w["squad"]["eligible"]))
+    ]
+    players = [p for w in completed for p in w["players"] if p.get("in_squad")]
+    timeline = []
+    for week in completed:
+        picks = [p for p in week["players"] if p.get("in_squad")]
+        timeline.append({
+            "gameweek": week["gameweek"], "forecast_state": week["forecast_state"],
+            "selected_count": len(picks),
+            "is_points_forecast": week.get("is_points_forecast", True),
+            **point_metrics(picks),
+        })
+    return {
+        "metrics": point_metrics(players), "timeline": timeline,
+        "positions": grouped_metrics(players, "position"),
+    }
+
+
 def season_analysis(weeks, verified=False):
     completed = [w for w in weeks if w["result_state"] == "final" and (not verified or w["eligible"])]
     players = [p for w in completed for p in w["players"]]
@@ -154,6 +197,7 @@ def season_analysis(weeks, verified=False):
     ranked_weeks = [w for w in completed if w["players"] and any(p.get("actual_points") is not None for p in w["players"])]
     return {
         "metrics": point_metrics(players), "calibration": calibration(players),
+        "scout": scout_season_analysis(weeks, verified),
         "positions": grouped_metrics(players, "position"), "clubs": grouped_metrics(players, "team"),
         "models": model_comparison(players), "players": leaders,
         "selection": [{"gameweek": w["gameweek"], **{k: v for k, v in selection_metrics(w["players"]).items() if k not in ("our_top", "actual_top")}} for w in ranked_weeks],
@@ -183,6 +227,7 @@ def gameweek_analysis(week, event, fixtures, teams):
         })
     return {
         "selection": selection_metrics(players),
+        "scout": scout_analysis(week),
         "squad": squad_analysis(players if week["squad"]["matches_forecast"] else []),
         "calibration": calibration(players), "models": model_comparison(players),
         "clubs": grouped_metrics(players, "team"), "fixtures": match_rows,
