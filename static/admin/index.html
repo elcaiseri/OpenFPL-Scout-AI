@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="theme-color" content="#0d0a13">
+    <title>Owner dashboard · OpenFPL</title>
+    <link rel="icon" href="/assets/openfpl-predictive-lion-frameless-2026-512.png">
+    <link rel="stylesheet" href="/static/admin/style.css">
+    <script src="/static/admin/script.js" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/"><img src="/assets/openfpl-predictive-lion-frameless-2026-512.png" alt="" width="42" height="42"><span>OpenFPL <small>OWNER WORKSPACE</small></span></a>
+        <div class="top-actions"><span class="private-badge">PRIVATE ACCESS</span><button id="lock" class="quiet" hidden>Lock dashboard</button></div>
+    </header>
+    <main>
+        <section id="login" class="login panel">
+            <span class="eyebrow">YOUR SYSTEM, IN FOCUS</span>
+            <h1>From forecast<br>to final whistle.</h1>
+            <p>Track how your predictions perform against official FPL results, and see what’s happening across the system.</p>
+            <form id="login-form">
+                <label for="owner-key">Owner access key</label>
+                <input id="owner-key" name="owner-key" type="password" autocomplete="off" required placeholder="Enter your private key" spellcheck="false">
+                <button id="unlock" type="submit">Open dashboard <span aria-hidden="true">↗</span></button>
+            </form>
+            <p class="fine">Your key stays in this tab’s memory. Reloading or locking the dashboard clears access.</p>
+        </section>
+        <p id="message" role="status" aria-live="polite" hidden></p>
+        <div id="dashboard" hidden>
+            <section class="heading">
+                <div><span class="eyebrow">SYSTEM OBSERVATORY</span><h1>Forecast meets reality<span class="lime">.</span></h1><p id="updated">Loading your archive…</p></div>
+                <div class="filters"><label>Season<select id="season" aria-label="Season"></select></label><label>Gameweek<select id="gameweek" aria-label="Gameweek"></select></label><button id="refresh" class="quiet">↻ Refresh</button></div>
+            </section>
+            <div id="warnings" class="notice" hidden></div>
+            <section class="evaluation-controls" aria-label="Season comparison settings">
+                <div><span class="eyebrow" id="evaluation-label">ARCHIVED RUNS VS FINAL RESULTS</span><p id="evaluation-context" class="fine" role="status" aria-live="polite"></p></div>
+                <label for="evaluation-mode">Season view<select id="evaluation-mode"><option value="all">All archived runs</option><option value="verified">Verified pre-deadline only</option></select></label>
+            </section>
+            <section aria-label="Season comparison metrics" class="metrics" id="summary"></section>
+            <div class="grid-two">
+                <section class="panel"><div class="section-title"><div><span class="eyebrow">SEASON PERFORMANCE</span><h2>Error over time</h2></div><span class="legend"><i></i> Mean absolute error</span></div><p id="trend-context" class="fine"></p><div id="trend" class="chart"></div></section>
+                <section class="panel"><div class="section-title"><div><span class="eyebrow" id="week-label">GAMEWEEK REVIEW</span><h2>Predicted vs actual</h2></div><span id="result-badge" class="badge"></span></div><p id="week-context" class="fine"></p><div id="scatter" class="chart"></div></section>
+            </div>
+            <section id="week-overview" class="metrics compact" aria-label="Selected gameweek metrics"></section>
+            <div class="grid-two lower-grid">
+                <section class="panel"><div class="section-title"><div><span class="eyebrow">THE SCOUT’S SELECTION</span><h2>Squad &amp; captain</h2></div><span id="squad-badge" class="badge"></span></div><div id="squad"></div></section>
+                <section class="panel"><span class="eyebrow">WHERE THE ERROR LIVES</span><h2>Accuracy by position</h2><div id="positions"></div></section>
+            </div>
+            <section class="panel player-panel">
+                <div class="section-title"><div><span class="eyebrow">PLAYER AUDIT</span><h2>Every forecast, every return</h2></div><button id="export" class="quiet">Export CSV ↓</button></div>
+                <div class="table-controls"><label class="search-label" for="search">Find a player<input id="search" type="search" placeholder="Search player or club…"></label><label>Position<select id="position"><option value="">All positions</option><option>GK</option><option>DEF</option><option>MID</option><option>FWD</option></select></label><label>Show<select id="scope"><option value="all">All players</option><option value="squad">Scout squad</option><option value="matched">With actual scores</option><option value="missing">Missing actual scores</option></select></label><label>Sort by<select id="sort"><option value="error">Largest miss</option><option value="expected_points">Predicted points</option><option value="actual_points">Actual points</option><option value="name">Player name</option></select></label></div>
+                <p id="player-count" class="fine"></p>
+                <div class="table-scroll"><table><thead><tr><th scope="col">Player</th><th scope="col">Position</th><th scope="col">Predicted</th><th scope="col">Actual</th><th scope="col">Error</th><th scope="col">Minutes</th><th scope="col">Selection</th></tr></thead><tbody id="players"></tbody></table></div>
+                <p class="fine table-note">Error = predicted − actual. Positive means overprediction. A dash means missing data; zero is a real score. Live scores can change.</p>
+            </section>
+            <section class="panel"><div class="section-title"><div><span class="eyebrow">PIPELINE HEALTH</span><h2>Behind the predictions</h2></div><span id="official-badge" class="badge"></span></div><div id="pipeline" class="pipeline"></div><div class="table-scroll"><table><thead><tr><th scope="col">Model</th><th scope="col">Version</th><th scope="col">Loaded now</th><th scope="col">Last archived run</th><th scope="col">Weight</th><th scope="col">Trained</th></tr></thead><tbody id="models"></tbody></table></div><p id="model-context" class="fine"></p></section>
+            <section class="panel runtime-panel"><div><span class="eyebrow">SERVICE ACTIVITY</span><h2>This running instance</h2><p id="runtime-scope" class="fine"></p></div><div id="runtime" class="runtime"></div></section>
+            <footer>Official FPL results · Saved runs retain their original timestamps · Late runs are labeled as retrospective comparisons.<br>Refreshes every 60 seconds while this tab is visible. Upstream FPL responses follow the service’s shared cache.</footer>
+        </div>
+    </main>
+</body>
+</html>
