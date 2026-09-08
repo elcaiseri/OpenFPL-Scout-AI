@@ -93,7 +93,7 @@
     const verified = $('evaluation-mode').value === 'verified', summary = verified ? r.summary : r.comparison_summary;
     $('evaluation-context').textContent = verified
       ? `${summary.evaluated_gameweeks} completed gameweeks with pre-deadline points forecasts. Other saved runs remain available in the gameweek review.`
-      : `${summary.evaluated_gameweeks} completed gameweeks with points forecasts · ${r.comparison_summary.post_deadline_gameweeks} late runs. Retrospective comparisons are not proof of advance accuracy.`;
+      : `${summary.evaluated_gameweeks} completed gameweeks with points estimates · ${r.comparison_summary.post_deadline_gameweeks} late or retrospective runs. Retrospective comparisons are not proof of advance accuracy.`;
     renderOverview(); renderScout(); renderGameweek(); renderDecisions(); renderPlayers(); renderLiveModels(); renderSystem();
     if (state.tab === 'models' && !state.training && !state.pending.has('models')) loadTraining();
   }
@@ -127,7 +127,7 @@
       return card;
     };
     $('scout-context').textContent = w
-      ? `GW${w.gameweek} · ${human(w.forecast_state)} forecast · ${human(w.result_state)} results · shortlist saved ${date(w.squad.captured_at_utc)}. Selected-gameweek review includes the saved run regardless of season evidence scope.`
+      ? `GW${w.gameweek} · ${w.replay ? `retrospective model xPts computed ${date(w.replay.generated_at_utc)}` : `${human(w.forecast_state)} forecast`} · ${human(w.result_state)} results · shortlist saved ${date(w.squad.captured_at_utc)}. Selected-gameweek review includes the saved run regardless of season evidence scope.`
       : 'No saved Scout run is available for this season.';
     $('scout-population').textContent = players.length
       ? `GW${w.gameweek} · ${players.length} / 15 Scout picks saved · ${scout.matched_actuals} official scores matched. Review the shortlist produced by our Scout and the returns of those exact players.`
@@ -139,6 +139,7 @@
       : !w.is_points_forecast ? 'This run used ownership rankings. It has no xPts forecast; actual points remain visible and points-error metrics exclude it.'
       : scout.error == null ? `${scout.matched_actuals} / ${players.length} official returns available. The full pts total stays unknown until every saved pick has a score.`
       : `The saved picks returned ${fmt(Math.abs(scout.error))} points ${scout.error > 0 ? 'below' : 'above'} their xPts. Error (xPts − pts): ${signed(scout.error)}.`;
+    if (w?.replay && players.length) $('scout-result').textContent += ' Retrospective model estimates for the original ownership-selected picks; missing prior-match statistics use trained imputation. Excluded from verified advance accuracy.';
     $('scout-metrics').replaceChildren(
       metric('SCOUT · MATCHED FORECASTS', `${metrics.count || 0} / ${players.length}`, 'Saved picks with both xPts and official pts'),
       metric('SCOUT · MAE', fmt(metrics.mae), 'Average absolute xPts − pts error', 'ours'),
@@ -158,15 +159,16 @@
     roleCard('scout-captain', scout?.captain); roleCard('scout-vice', scout?.vice);
     pairedBars('scout-player-chart', players, 'name', 'expected_points', 'actual_points');
     const headers = ['Pick', 'Player', 'Position', 'Scout role', 'xPts', 'Pts', 'Error', 'Minutes'];
-    if (w && !w.is_points_forecast) headers.push('Ownership score');
+    if (w && (!w.is_points_forecast || w.replay)) headers.push('Original ownership score');
     table('scout-players', headers, players.map((p, i) => {
       const row = [i + 1, playerName(p), p.position, p.role ? human(p.role === 'vice' ? 'Vice-captain' : p.role) : 'Squad pick', value(p.expected_points, 'ours'), value(p.actual_points, 'actual', 0), signed(p.error), fmt(p.minutes, 0)];
-      if (!w.is_points_forecast) row.push(fmt(p.selection_score));
+      if (!w.is_points_forecast || w.replay) row.push(fmt(p.selection_score));
       return row;
     }));
     $('scout-export').disabled = !players.length;
     const pointWeeks = season.timeline.filter(g => g.count);
-    $('scout-season-context').textContent = `${season.actual.count} official Scout returns across ${season.timeline.length} completed gameweeks · ${$('evaluation-mode').selectedOptions[0].textContent}. All actual pts includes ranking-only weeks such as GW1. Matched xPts/pts and MAE use ${m.count} points forecasts across ${pointWeeks.length} gameweeks. Captains count once. Full gameweek totals stay unknown if any pick is missing a score.`;
+    const replayWeeks = season.timeline.filter(g => g.forecast_state === 'retrospective-model').length;
+    $('scout-season-context').textContent = `${season.actual.count} official Scout returns across ${season.timeline.length} completed gameweeks · ${$('evaluation-mode').selectedOptions[0].textContent}. Matched xPts/pts and MAE use ${m.count} points estimates across ${pointWeeks.length} gameweeks${replayWeeks ? `, including ${replayWeeks} retrospective model replay` : ''}. All actual pts also includes returns without xPts. Captains count once. Full gameweek totals stay unknown if any pick is missing a score.`;
     $('scout-season-metrics').replaceChildren(
       metric('SEASON SCOUT · xPts', fmt(m.predicted_total), 'Expected points for matched saved picks', 'ours'),
       metric('SCOUT · MATCHED PTS', fmt(m.actual_total), 'Official points for those same picks', 'actual'),
@@ -188,7 +190,7 @@
   function renderGameweek() {
     const w = state.report.selected, a = w?.analysis;
     badge('result-badge',human(w?.result_state),w?.result_state==='final');
-    $('week-context').textContent = w ? `GW${w.gameweek} · ${w.is_points_forecast?'Points forecast':'Ownership ranking, not a points forecast'} · ${human(w.forecast_state)} · saved ${date(w.captured_at_utc)} · deadline ${date(w.deadline_time)} · results observed ${date(w.actuals_at_utc)}` : 'No archived gameweek yet.';
+    $('week-context').textContent = w ? `GW${w.gameweek} · ${w.replay?'Retrospective model xPts':w.is_points_forecast?'Points forecast':'Ownership ranking, not a points forecast'} · ${human(w.forecast_state)} · computed / saved ${date(w.captured_at_utc)} · deadline ${date(w.deadline_time)} · results observed ${date(w.actuals_at_utc)}` : 'No archived gameweek yet.';
     const m=w?.metrics||{};
     $('week-overview').replaceChildren(metric('OUR MEAN POINTS',fmt(m.predicted_mean),'Matched points forecasts only','ours'),metric('ACTUAL MEAN POINTS',fmt(m.actual_mean),'Same matched player population','actual'),metric('ACTUAL SCORES MATCHED',`${w?.matched_actuals||0} / ${w?.prediction_count||0}`,'Missing results remain unknown'),metric('OFFICIAL MANAGER AVERAGE',fmt(a?.average_manager_score,0),'Official FPL score, not a player average','actual'));
     badge('fixture-progress',`${a?.finished_fixtures||0} / ${a?.fixture_count||0} finished`,!!a?.fixture_count && a.finished_fixtures===a.fixture_count);
@@ -362,7 +364,7 @@
     const w=state.report.selected;if(!w||!rows.length)return;
     const fields=['id','name','team','position','expected_points','selection_score','actual_points','error','minutes','goals','assists','bonus','in_squad','role'];
     const cell=v=>{let s=v==null?'':String(v);if(typeof v==='string'&&/^[=+\-@\t\r]/.test(s))s=`'${s}`;return `"${s.replaceAll('"','""')}"`;};
-    const content=[['season','gameweek','forecast_state','result_state','captured_at_utc','deadline_time','actuals_at_utc',...fields],...rows.map(p=>[state.report.season,w.gameweek,w.forecast_state,w.result_state,w.captured_at_utc,w.deadline_time,w.actuals_at_utc,...fields.map(f=>p[f])])].map(row=>row.map(cell).join(',')).join('\r\n');
+    const content=[['season','gameweek','forecast_state','result_state','captured_at_utc','selection_captured_at_utc','replay_note','deadline_time','actuals_at_utc',...fields],...rows.map(p=>[state.report.season,w.gameweek,w.forecast_state,w.result_state,w.captured_at_utc,w.selection_captured_at_utc,w.replay?.note,w.deadline_time,w.actuals_at_utc,...fields.map(f=>p[f])])].map(row=>row.map(cell).join(',')).join('\r\n');
     const url=URL.createObjectURL(new Blob(['\uFEFF'+content],{type:'text/csv;charset=utf-8'})),link=el('a');link.href=url;link.download=`${prefix}-${state.report.season}-gw${w.gameweek}.csv`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   $('login-form').addEventListener('submit',e=>{e.preventDefault();state.key=$('owner-key').value.trim();$('owner-key').value='';refresh(true);});

@@ -133,6 +133,21 @@ Scout gameweek charts show full-shortlist totals, including GW1's actual points;
 missing xPts or incomplete actual totals remain gaps. Both views honor the
 selected evidence scope.
 
+To compute retrospective GW1 model xPts for the original ownership-selected
+shortlist, run `.venv/bin/python -m scripts.replay_gw1 --season 2026-2027`.
+This explicitly runs the configured models against the archived GW0 roster and
+GW1 fixture context. Official scores and match statistics are excluded from
+inputs; unavailable prior-match features use the models' trained imputation.
+The archived roster itself was observed after the deadline. These estimates
+are retrospective comparisons, not recovered pre-deadline forecasts.
+
+The separate `evaluation/replays/gw_01.json` records its generation time, input
+and model hashes, and the immutable source snapshot's SHA-256. The dashboard
+uses a matching replay for xPts comparisons across Scout, season, gameweek,
+manager decisions, player dossiers and model components. Original shortlist
+order, ownership scores and captain roles remain intact. Replay estimates are
+excluded from the verified evidence scope; refresh never runs models.
+
 A preserved retrospective snapshot may include `snapshot_kind`,
 `snapshot_created_at_utc`, and a season/gameweek-bound `actuals_snapshot` of
 final official results. The original forecast capture timestamp is retained.

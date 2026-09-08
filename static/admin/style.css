@@ -51,8 +51,10 @@ dialog { background: #1b1324; color: var(--text); border: 1px solid #5b446d; bor
 .context-title p { min-width: 0; flex: 1; }
 .context-title button { flex-shrink: 0; }
 .filters label { min-width: 0; }
-.hero-pair { min-width: 0; flex-shrink: 1; }
-.hero-pair > div { min-width: 0; }
+.hero { flex-wrap: wrap; }
+.hero > :first-child { min-width: 0; flex: 1 1 340px; }
+.hero-pair { min-width: 0; flex-shrink: 0; }
+.hero-pair > div { min-width: max-content; }
 #scout-player-chart { display: block; overflow-x: auto; }
 #scout-player-chart svg { min-width: 760px; }
 main section, #capture-form { scroll-margin-top: 100px; }
@@ -71,6 +73,9 @@ main section, #capture-form { scroll-margin-top: 100px; }
 }
 @media(max-width:650px) {
   .sidebar { top: 70px; }
+  .hero > :first-child { flex-basis: auto; }
+  .context-title { align-items: stretch; }
+  .context-title p { flex-basis: 100%; }
   .hero-pair { gap: 8px; }
   .hero-pair strong { font-size: clamp(26px, 8.2vw, 42px); }
   .filters select { width: 100%; }

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import math
 import tempfile
@@ -59,6 +60,38 @@ def forecast_bundle():
 
 
 class DashboardTests(unittest.TestCase):
+    def test_retrospective_model_points_keep_original_picks_and_never_become_verified(self):
+        self.bundle['metadata']['inference']['strategy'] = 'ownership-cold-start'
+        self.save_bundle()
+        path = self.root / '2020-2021/evaluation/gw_01.json'
+        before = path.read_bytes()
+        replay_path = path.parent / 'replays/gw_01.json'
+        replay_path.parent.mkdir()
+        replay_path.write_text(json.dumps({
+            'kind': 'retrospective-model', 'season': '2020-2021', 'gameweek': 1,
+            'generated_at_utc': '2020-09-01T10:00:00Z', 'note': 'Retrospective model scoring',
+            'source_snapshot_sha256': hashlib.sha256(before).hexdigest(),
+            'predictions': {str(p['id']): 2 for p in self.bundle['predictions']},
+            'model_predictions': {'ridge': {str(p['id']): 2 for p in self.bundle['predictions']}},
+        }))
+        report = self.dashboard.report()
+        week = report['selected']
+        self.assertEqual(week['forecast_state'], 'retrospective-model')
+        self.assertEqual(week['analysis']['scout']['expected_points'], 8)
+        self.assertEqual(week['analysis']['scout']['captain']['selection_score'], 4)
+        self.assertEqual(week['analysis']['scout']['captain']['expected_points'], 2)
+        self.assertTrue(week['squad']['matches_forecast'])
+        self.assertFalse(week['squad']['eligible'])
+        self.assertEqual(report['summary']['count'], 0)
+        self.assertEqual(report['comparison_summary']['count'], 3)
+        self.assertEqual(report['comparison_summary']['post_deadline_gameweeks'], 1)
+        self.assertEqual(path.read_bytes(), before)
+        self.bundle['metadata']['changed'] = True
+        self.save_bundle()
+        report = self.dashboard.report()
+        self.assertIsNone(report['selected']['analysis']['scout']['expected_points'])
+        self.assertTrue(any('do not match' in w for w in report['warnings']))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

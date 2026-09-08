@@ -22,6 +22,7 @@ import pandas as pd
 from src.data_archive import _json_safe, utc_datetime
 from src.observatory import actual_summary, gameweek_analysis, point_metrics, season_analysis
 from src.model_lab import ModelLab
+from src.scout_replay import load_replay
 
 SEASON_PATTERN = re.compile(r"^\d{4}-\d{4}$")
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
@@ -228,6 +229,12 @@ class AdminDashboard:
                             diagnostics = read_json(diagnostics_path)
                             if diagnostics.get("metadata", {}).get("captured_at_utc") == latest.get("captured_at_utc"):
                                 forecasts[gw].update({k: diagnostics.get(k, {}) for k in ("model_predictions", "player_context")})
+                    replay_path = season_root / "evaluation/replays" / f"{name}.json"
+                    if bundle_path.is_file() and replay_path.is_file() and forecasts[gw]["metadata"].get("inference", {}).get("strategy") == "ownership-cold-start":
+                        try:
+                            forecasts[gw]["replay"] = load_replay(replay_path, bundle_path.read_bytes(), season, gw)
+                        except (OSError, ValueError, KeyError, TypeError):
+                            warnings.append(f"GW{gw}: retrospective model estimates do not match the saved snapshot; original evidence is shown.")
                 except (OSError, ValueError, KeyError):
                     warnings.append(f"GW{gw}: forecast archive is unreadable; excluded from evaluation.")
 
@@ -311,6 +318,9 @@ class AdminDashboard:
         cold_starts = [w["gameweek"] for w in weeks if w["prediction_count"] and not w["is_points_forecast"]]
         if cold_starts:
             warnings.append("GW " + ", ".join(map(str, cold_starts)) + ": ownership selection scores are assessed by ranking and realized squad returns, not by points-error metrics.")
+        for week in weeks:
+            if week.get("replay"):
+                warnings.append(f"GW{week['gameweek']}: {week['replay']['note']}")
         evaluated = [w for w in weeks if w["eligible"] and w["result_state"] == "final"]
         all_players = [p for w in evaluated for p in w["players"]]
         compared = [w for w in weeks if w["result_state"] == "final" and w["metrics"]["count"]]
@@ -319,7 +329,7 @@ class AdminDashboard:
             "evaluated_gameweeks": len(compared),
             "archived_gameweeks": len(forecasts),
             "verified_gameweeks": sum(w["eligible"] for w in compared),
-            "post_deadline_gameweeks": sum(w["forecast_state"] == "post-deadline" for w in compared),
+            "post_deadline_gameweeks": sum(w["forecast_state"] in {"post-deadline", "retrospective-model"} for w in compared),
             "unknown_timing_gameweeks": sum(w["forecast_state"] == "unverified" for w in compared),
         }
         return {
@@ -336,15 +346,17 @@ class AdminDashboard:
     def _week(gw, season, event, forecast, actual):
         forecast = forecast or {}
         metadata = forecast.get("metadata", {})
+        replay = forecast.get("replay")
         if (
             metadata.get("season", season) != season
             or metadata.get("prediction_gameweek", gw) != gw
         ):
             raise ValueError("Forecast metadata does not match its season and gameweek")
         deadline = utc_datetime(event.get("deadline_time") or forecast.get("deadline_time"))
-        captured = utc_datetime(metadata.get("captured_at_utc"))
-        is_points_forecast = metadata.get("inference", {}).get("strategy") != "ownership-cold-start"
-        eligible = bool(captured and deadline and captured < deadline and metadata.get("season") == season and metadata.get("prediction_gameweek") == gw)
+        captured_at = replay["generated_at_utc"] if replay else metadata.get("captured_at_utc")
+        captured = utc_datetime(captured_at)
+        is_points_forecast = bool(replay) or metadata.get("inference", {}).get("strategy") != "ownership-cold-start"
+        eligible = bool(not replay and captured and deadline and captured < deadline and metadata.get("season") == season and metadata.get("prediction_gameweek") == gw)
         state = "final" if actual and actual.get("finalized") else "provisional" if actual else "awaiting-results"
         actual_by_id = {}
         for item in (actual or {}).get("payload", {}).get("elements", []):
@@ -364,7 +376,7 @@ class AdminDashboard:
                 raise ValueError("Invalid player ID")
             player_id = int(raw_id)
             selection_score = number(row.get("expected_points"))
-            predicted = selection_score if is_points_forecast else None
+            predicted = number(replay["predictions"].get(str(player_id))) if replay else selection_score if is_points_forecast else None
             if player_id in seen or selection_score is None or number(row.get("gameweek")) != gw:
                 raise ValueError("Invalid forecast")
             seen.add(player_id)
@@ -388,7 +400,7 @@ class AdminDashboard:
                 "ownership": number(context.get("selected_by_percent", row.get("selected_by_percent"))),
                 "availability": context.get("status", row.get("status")),
                 "opponent": row.get("opponent_team_name"),
-                "model_predictions": {name: number(values.get(str(player_id))) for name, values in forecast.get("model_predictions", {}).items()},
+                "model_predictions": {name: number(values.get(str(player_id))) for name, values in (replay or forecast).get("model_predictions", {}).items()},
                 "in_squad": selected is not None,
                 "role": selected.get("role", "") if selected else "",
             })
@@ -402,14 +414,16 @@ class AdminDashboard:
         return {
             "gameweek": gw, "is_current": bool(event.get("is_current")),
             "deadline_time": deadline.isoformat() if deadline else None,
-            "captured_at_utc": metadata.get("captured_at_utc"),
+            "captured_at_utc": captured_at,
+            "selection_captured_at_utc": metadata.get("captured_at_utc"),
+            "replay": {k: replay[k] for k in ("generated_at_utc", "note")} if replay else None,
             "actuals_at_utc": (actual or {}).get("fetched_at_utc"),
             "actuals_source": (actual or {}).get("source"),
             "prediction_count": len(players), "eligible": eligible and bool(players),
             "matched_actuals": sum(p["actual_points"] is not None for p in players),
             "official_player_count": len(actual_by_id),
             "forecast_state": (
-                "missing" if not players else "pre-deadline" if eligible
+                "missing" if not players else "retrospective-model" if replay else "pre-deadline" if eligible
                 else "post-deadline" if captured and deadline and captured >= deadline
                 else "unverified"
             ),
