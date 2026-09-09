@@ -18,6 +18,7 @@
   function value(v, cls = '', digits = 2) { return el('span', fmt(v, digits), cls); }
   function signed(v) { return v == null ? '—' : `${v > 0 ? '+' : ''}${fmt(v)}`; }
   function note(text) { return el('p', text, 'fine'); }
+  function money(v) { return v == null || !Number.isFinite(Number(v)) ? '—' : `${v < 0 ? '−' : v > 0 ? '+' : ''}£${fmt(Math.abs(v), 1)}m`; }
   function empty(id, text) { $(id).replaceChildren(el('p', text, 'empty')); }
   function message(text) { $('message').textContent = text; $('message').hidden = !text; }
   function badge(id, text, good = false) { $(id).textContent = text; $(id).className = `badge ${good ? 'good' : 'warn'}`; }
@@ -263,7 +264,6 @@
       metric('SHARED PICKS',`${r.our_squad_overlap} / ${r.squad.length}`,'Players in both their squad and our saved shortlist'),
       metric('THEIR SEASON POINTS',fmt(c.entry_points,0),`${c.gameweeks} gameweeks comparable with our archive`,'actual'),
       metric('OUR DERIVED XI',fmt(c.our_points,0),'Same gameweeks · budget-free benchmark','ours'));
-    $('manager-overlap').className='metrics compact';
     table('manager-squad',['Player','Pos','Mult','Our xPts','Actual pts','Difference','In our shortlist'],r.squad.map(p=>[playerName(p),p.position,p.multiplier>1?`×${p.multiplier}`:p.started?'Starting':'Bench',value(p.expected_points,'ours'),value(p.actual_points,'actual',0),el('span',signed(p.expected_points!=null&&p.actual_points!=null?p.expected_points-p.actual_points:null),''),p.in_our_squad?human(p.our_role||'shortlist'):'—']));
     table('manager-history',['GW','Their pts','Bench','Transfers','Hit','Our XI predicted','Our XI actual','FPL average','Overall rank'],data.timeline.map(t=>[gwButton(t.gameweek,'decisions'),value(t.official_points,'actual',0),fmt(t.bench_points,0),fmt(t.transfers,0),fmt(t.transfers_cost,0),value(t.our_predicted_points,'ours'),value(t.our_actual_points,'actual'),fmt(t.official_average,0),t.overall_rank==null?'—':Number(t.overall_rank).toLocaleString('en-GB')]));
     const upcoming=(state.report?.gameweeks||[]).filter(w=>w.deadline_time&&Date.parse(w.deadline_time)>Date.now());
@@ -287,7 +287,7 @@
     else plan.plans.forEach(p=>{
       const panel=el('div',null,'plan');
       panel.append(el('h3',`${p.transfers} transfer${p.transfers>1?'s':''}${p.hits?` · ${p.hits} hit${p.hits>1?'s':''} (−${fmt(p.hit_cost,0)})`:' · no hit'}${p.exhaustive?'':' · beam search'}`));
-      const rows=p.moves.map(m=>[`${m.out.name} (${m.out.team})`,`${m.in.name} (${m.in.team})`,`£${fmt(m.cost,1)}m`,signed(m.gain)]);
+      const rows=p.moves.map(m=>[`${m.out.name} (${m.out.team})`,`${m.in.name} (${m.in.team})`,money(m.cost),signed(m.gain)]);
       const holder=el('div',null,'table-scroll');panel.append(holder);holder.id=`plan-${p.transfers}`;$('optimize-plans').append(panel);
       table(`plan-${p.transfers}`,['Out','In','Net cost','xPts change'],rows);
       panel.append(note(`Predicted XI ${fmt(p.predicted_points)} · net of hits ${fmt(p.net_predicted_points)} · net gain ${signed(p.net_gain)} · bank left £${fmt(p.remaining_bank,1)}m.`));
