@@ -31,9 +31,10 @@
         <button id="tab-scout" role="tab" aria-selected="false" aria-controls="view-scout" data-tab="scout" tabindex="-1"><span>02</span> Scout</button>
         <button id="tab-gameweek" role="tab" aria-selected="false" aria-controls="view-gameweek" data-tab="gameweek" tabindex="-1"><span>03</span> Gameweek centre</button>
         <button id="tab-decisions" role="tab" aria-selected="false" aria-controls="view-decisions" data-tab="decisions" tabindex="-1"><span>04</span> Manager decisions</button>
-        <button id="tab-players" role="tab" aria-selected="false" aria-controls="view-players" data-tab="players" tabindex="-1"><span>05</span> Player intelligence</button>
-        <button id="tab-models" role="tab" aria-selected="false" aria-controls="view-models" data-tab="models" tabindex="-1"><span>06</span> Model lab</button>
-        <button id="tab-system" role="tab" aria-selected="false" aria-controls="view-system" data-tab="system" tabindex="-1"><span>07</span> System health</button>
+        <button id="tab-entry" role="tab" aria-selected="false" aria-controls="view-entry" data-tab="entry" tabindex="-1"><span>05</span> My FPL team</button>
+        <button id="tab-players" role="tab" aria-selected="false" aria-controls="view-players" data-tab="players" tabindex="-1"><span>06</span> Player intelligence</button>
+        <button id="tab-models" role="tab" aria-selected="false" aria-controls="view-models" data-tab="models" tabindex="-1"><span>07</span> Model lab</button>
+        <button id="tab-system" role="tab" aria-selected="false" aria-controls="view-system" data-tab="system" tabindex="-1"><span>08</span> System health</button>
       </nav>
       <div class="nav-foot"><span class="signal"></span><strong>Evidence, always.</strong><p>Lime is our estimate.<br>Blue is the official result.<br>Gaps stay visible.</p></div>
     </aside>
@@ -90,11 +91,15 @@
       </section>
 
       <section id="view-decisions" role="tabpanel" aria-labelledby="tab-decisions" hidden>
-        <section class="panel decision-intro"><span class="eyebrow">THE SYSTEM IN THE MANAGER’S SEAT</span><h2>Was the decision worth it?</h2><p>Audit the saved shortlist, the best starting XI implied by its rankings, and the captain’s return. Compare our choice with actual outcomes and the opportunities left on the bench.</p><p id="decision-context" class="fine"></p></section>
+        <section class="panel decision-intro"><span class="eyebrow">THE SYSTEM IN THE MANAGER’S SEAT</span><h2>Was the decision worth it?</h2><p>Audit the saved shortlist, the best starting XI implied by its rankings, and the captain’s return. Compare our choice with actual outcomes and the opportunities left on the bench. To score your own real team instead, open <strong>My FPL team</strong>.</p><p id="decision-context" class="fine"></p></section>
         <div id="decision-metrics" class="metrics"></div>
         <div class="decision-grid"><section class="panel pitch-panel"><div class="section-title"><div><span class="eyebrow">OUR DERIVED STARTING XI</span><h2 id="formation-title">The selection</h2></div><span class="comparison-legend"><i class="our-dot"></i> Predicted <i class="actual-dot"></i> Actual</span></div><div id="pitch" class="pitch"></div><div id="bench" class="bench"></div></section><div><section class="panel"><span class="eyebrow">THE ARMBAND</span><h2>Captaincy audit</h2><div id="captain-audit"></div></section><section class="panel"><span class="eyebrow">WITH HINDSIGHT</span><h2>The same squad’s ceiling</h2><div id="hindsight"></div><p class="fine">Hindsight uses actual scores after the matches. It is an opportunity measure, not an achievable advance prediction.</p></section></div></div>
         <section class="panel"><span class="eyebrow">CALL BY CALL</span><h2>The XI’s predicted and actual return</h2><div id="decision-bars" class="chart tall"></div></section>
         <section class="panel"><span class="eyebrow">SQUAD PERFORMANCE OVER THE SEASON</span><h2>Our decisions vs results</h2><div id="decision-history" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-entry" role="tabpanel" aria-labelledby="tab-entry" hidden>
+        <section class="panel decision-intro"><span class="eyebrow">YOUR OWN TEAM, MEASURED</span><h2>How is your side actually doing?</h2><p>Link a public FPL team ID to score its real picks with our models, compare them with the official results, and plan the next set of transfers. This view is optional: every other part of the Observatory works without it.</p><p class="fine">The team ID stays in this tab&rsquo;s memory, is never written to disk, and clears when you lock or reload &mdash; exactly like your owner key.</p></section>
         <section class="panel capture-panel"><div><span class="eyebrow">LINK AN FPL ENTRY</span><h2>Score a real team with our models</h2><p class="fine">Enter a public FPL team ID to compare its actual picks with our forecasts and the official results. The ID stays in this tab&rsquo;s memory, is never written to disk, and clears when you lock or reload.</p></div><form id="manager-form"><label>FPL team ID<input id="manager-id" type="text" inputmode="numeric" pattern="[0-9]{1,9}" maxlength="9" placeholder="e.g. 1234567" autocomplete="off" required></label><button id="manager-load" type="submit">Load team &#8599;</button></form><p id="manager-status" class="fine" role="status"></p></section>
         <div id="manager-view" hidden>
           <div id="manager-summary" class="metrics"></div>

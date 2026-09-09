@@ -81,8 +81,8 @@ contains no system data, and owner routes are omitted from the public API
 catalog, OpenAPI, and sitemap.
 
 The Observatory is a system admin workspace. It runs without any FPL manager
-ID; linking one is optional and covered below. Seven views share season and
-gameweek selectors:
+ID; linking one is optional and confined to its own view. Eight views share
+season and gameweek selectors:
 
 - **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
   within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
@@ -105,8 +105,10 @@ gameweek selectors:
   chips. Hindsight optimizes the same complete shortlist using actual results;
   it is not an achievable forecast. The official manager average is context,
   since real entries operate under different constraints. Incomplete or
-  mismatched squads do not generate a derived XI. This view also hosts the
-  optional linked FPL entry and its transfer planner.
+  mismatched squads do not generate a derived XI.
+- **My FPL team:** an optional linked FPL entry. Scores its real picks with our
+  models against the official results, and plans the next transfers. Empty and
+  inert until you enter a team ID; see below.
 - **Player intelligence:** searchable, filtered, paginated comparisons, CSV
   exports with timing provenance, and player dossiers with gameweek histories
   and saved component-model outputs. Dossier metrics include all final saved
@@ -122,9 +124,9 @@ gameweek selectors:
   and service telemetry. Telemetry covers this process since startup; latency
   uses its latest 200 non-dashboard requests.
 
-### Linking an FPL entry
+### My FPL team
 
-Manager decisions accepts a public FPL team ID. It is kept in the browser tab's
+This view accepts a public FPL team ID. It is kept in the browser tab's
 memory only: it is never written to disk, never sent anywhere but this service,
 and clears when you lock the dashboard or reload, exactly like the owner key.
 

@@ -10,7 +10,8 @@
   const pagesize = 40;
   const views = {
     overview: ['THE BIG PICTURE', 'Season overview'], scout: ['THE OPENFPL SCOUT', 'Scout'], gameweek: ['EVERY MATCH. EVERY RETURN.', 'Gameweek centre'],
-    decisions: ['THE SYSTEM IN THE MANAGER’S SEAT', 'Manager decisions'], players: ['THE PEOPLE BEHIND THE POINTS', 'Player intelligence'],
+    decisions: ['THE SYSTEM IN THE MANAGER’S SEAT', 'Manager decisions'], entry: ['YOUR OWN TEAM, MEASURED', 'My FPL team'],
+    players: ['THE PEOPLE BEHIND THE POINTS', 'Player intelligence'],
     models: ['PUT THE MODELS TO THE TEST', 'Model lab'], system: ['THE ENGINE BEHIND THE CALLS', 'System health'],
   };
   function el(tag, text, cls) { const n = document.createElement(tag); if (text != null) n.textContent = text; if (cls) n.className = cls; return n; }
@@ -95,7 +96,7 @@
     $('evaluation-context').textContent = verified
       ? `${summary.evaluated_gameweeks} completed gameweeks with pre-deadline points forecasts. Other saved runs remain available in the gameweek review.`
       : `${summary.evaluated_gameweeks} completed gameweeks with points estimates · ${r.comparison_summary.post_deadline_gameweeks} late or retrospective runs. Retrospective comparisons are not proof of advance accuracy.`;
-    renderOverview(); renderScout(); renderGameweek(); renderDecisions(); renderPlayers(); renderLiveModels(); renderSystem();
+    renderOverview(); renderScout(); renderGameweek(); renderDecisions(); renderManager(); renderPlan(); renderPlayers(); renderLiveModels(); renderSystem();
     if (state.tab === 'models' && !state.training && !state.pending.has('models')) loadTraining();
   }
   function renderOverview() {
@@ -224,7 +225,6 @@
     $('hindsight').append(note(`Raw bench returns: ${fmt(benchTotal,0)} points. Bench points are not all recoverable within formation rules.`));
     pairedBars('decision-bars',xi,'name','expected_points','actual_points');
     table('decision-history',['GW','Evidence','Our XI pts','Actual XI pts','FPL average','Hindsight','Opportunity'],currentAnalytics().decisions.map(d=>[gwButton(d.gameweek),human(d.forecast_state),value(d.predicted_points,'ours'),value(d.actual_points,'actual'),fmt(d.official_average,0),fmt(d.hindsight_points),fmt(d.selection_gap)]));
-    renderManager(); renderPlan();
   }
   function squadCard(p){
     const b=el('button',null,'pitch-player');b.type='button';
