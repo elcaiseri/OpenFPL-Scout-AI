@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
-from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from src.auth import verify_api_key
+from src.auth import verify_admin_key, verify_api_key
+from src.admin_dashboard import AdminDashboard, RuntimeMonitor
+from src.data_archive import utc_datetime
 from src.logger import get_logger
 from src.models import (
     APICatalogModel,
@@ -33,6 +38,8 @@ logger = get_logger(__name__)
 
 config = load_config("config/config.yaml")
 scout: FPLScout
+admin_dashboard: AdminDashboard
+runtime_monitor = RuntimeMonitor()
 
 
 def _is_production_environment(
@@ -117,9 +124,11 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global scout
+    global scout, admin_dashboard, runtime_monitor
     logger.info("Initializing application with official FPL as the primary source")
     scout = FPLScout(config)
+    admin_dashboard = AdminDashboard(scout)
+    runtime_monitor = RuntimeMonitor()
     logger.info("FPLScout initialized and ready")
     yield
     logger.info("Shutting down application")
@@ -139,6 +148,150 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
+
+@app.middleware("http")
+async def monitor_requests(request: Request, call_next):
+    private = request.url.path == "/admin" or request.url.path.startswith(
+        ("/admin/", "/api/admin/", "/static/admin/")
+    )
+    started = time.monotonic()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        if private:
+            response.headers.update({
+                "Cache-Control": "no-store",
+                "X-Robots-Tag": "noindex, nofollow",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": (
+                    "default-src 'self'; script-src 'self'; style-src 'self'; "
+                    "img-src 'self'; connect-src 'self'; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+                ),
+            })
+        return response
+    finally:
+        if not private:
+            runtime_monitor.record(status, time.monotonic() - started)
+
+
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+async def serve_admin():
+    """Serve a data-free login shell; all owner data requires separate auth."""
+    async with aiofiles.open("static/admin/index.html", "r") as file:
+        return HTMLResponse(content=await file.read())
+
+
+@app.get(
+    "/api/admin/dashboard",
+    dependencies=[Depends(verify_admin_key)],
+    include_in_schema=False,
+)
+async def get_admin_dashboard(
+    season: Optional[str] = Query(None, pattern=r"^\d{4}-\d{4}$"),
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+):
+    try:
+        result = await run_in_threadpool(admin_dashboard.report, season, gameweek)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except OSError as error:
+        logger.exception("Owner dashboard archive is unavailable")
+        raise HTTPException(status_code=503, detail="Dashboard archive is unavailable") from error
+    return {**result, "runtime": runtime_monitor.snapshot()}
+
+
+@app.get("/api/admin/players/{player_id}", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_player(
+    player_id: int = Path(..., ge=1),
+    season: Optional[str] = Query(None, pattern=r"^\d{4}-\d{4}$"),
+):
+    try:
+        return await run_in_threadpool(admin_dashboard.player_report, player_id, season)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/admin/models", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_models(dataset: Literal["holdout", "cross-validation"] = "holdout"):
+    return await run_in_threadpool(admin_dashboard.model_lab.report, dataset)
+
+
+@app.get("/api/admin/manager/{entry_id}", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_manager(
+    entry_id: int = Path(..., ge=1),
+    season: Optional[str] = Query(None, pattern=r"^\d{4}-\d{4}$"),
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+):
+    """Review a public FPL entry against our archived forecasts. Runs no inference."""
+    try:
+        return await run_in_threadpool(
+            admin_dashboard.manager_review, entry_id, season, gameweek
+        )
+    except OfficialFPLNotFoundError as error:
+        raise HTTPException(status_code=404, detail="That FPL team ID was not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except OfficialFPLAPIError as error:
+        raise HTTPException(status_code=502, detail="Official FPL is unavailable.") from error
+
+
+@app.post("/api/admin/manager/{entry_id}/optimize", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def optimize_admin_manager(
+    entry_id: int = Path(..., ge=1),
+    gameweek: int = Query(..., ge=1, le=38),
+    free_transfers: Optional[int] = Query(None, ge=0, le=15),
+    bank: Optional[float] = Query(None, ge=0, le=200),
+    max_transfers: int = Query(3, ge=1, le=3),
+):
+    """Explicit owner action: plan transfers for a gameweek that has not started."""
+    bootstrap = await _official_call(scout.official_client.bootstrap)
+    event = next((e for e in bootstrap.get("events", []) if e["id"] == gameweek), {})
+    deadline = utc_datetime(event.get("deadline_time"))
+    if deadline is None or deadline <= datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a gameweek whose official deadline has not passed.",
+        )
+    try:
+        return await run_in_threadpool(
+            partial(
+                admin_dashboard.manager_plan,
+                entry_id,
+                gameweek,
+                free_transfers=free_transfers,
+                bank=bank,
+                max_transfers=max_transfers,
+            )
+        )
+    except OfficialFPLNotFoundError as error:
+        raise HTTPException(status_code=404, detail="That FPL team ID was not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OfficialFPLAPIError as error:
+        raise HTTPException(status_code=502, detail="Official FPL is unavailable.") from error
+
+
+@app.post("/api/admin/capture", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def capture_admin_forecast(gameweek: int = Query(..., ge=1, le=38)):
+    """Explicit owner action: save an upcoming forecast and matching shortlist."""
+    bootstrap = await _official_call(scout.official_client.bootstrap)
+    event = next((e for e in bootstrap.get("events", []) if e["id"] == gameweek), {})
+    deadline = utc_datetime(event.get("deadline_time"))
+    if deadline is None or deadline <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail="Choose a gameweek whose official deadline has not passed.")
+    try:
+        predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
+        team = await run_in_threadpool(scout.select_optimal_team, predictions)
+        squad_result = await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
+        with admin_dashboard.lock:
+            admin_dashboard.cache.clear()
+        return {"gameweek": gameweek, "archive": predictions.attrs.get("archive", {}), "squad": squad_result}
+    except (InferenceError, ValueError, OfficialFPLAPIError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 def _uses_bearer_auth(dependency) -> bool:
@@ -207,6 +360,9 @@ Allow: /
 Disallow: /docs
 Disallow: /redoc
 Disallow: /openapi.json
+Disallow: /admin
+Disallow: /api/admin/
+Disallow: /static/admin/
 
 Sitemap: {SITE_URL}/sitemap.xml
 """

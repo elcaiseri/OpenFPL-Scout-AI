@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#100c17">
+  <title>The Observatory · OpenFPL Admin</title>
+  <link rel="icon" href="/assets/openfpl-predictive-lion-frameless-2026-512.png">
+  <link rel="stylesheet" href="/static/admin/style.css">
+  <script src="/static/admin/script.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><img src="/assets/openfpl-predictive-lion-frameless-2026-512.png" alt="" width="40" height="40"><span>OpenFPL <small>THE OBSERVATORY</small></span></a>
+    <div class="top-actions"><span class="private-badge">ADMIN ACCESS</span><button id="lock" class="quiet" hidden>Lock workspace</button></div>
+  </header>
+  <section id="login" class="login panel">
+    <span class="eyebrow">EVERY DECISION HAS A RESULT</span>
+    <h1>See the whole game.</h1>
+    <p>One workspace for your forecasts, football results, squad decisions, and machine learning. Measured against what actually happened.</p>
+    <form id="login-form"><label for="owner-key">Owner access key</label><input id="owner-key" type="password" autocomplete="off" spellcheck="false" required placeholder="Your private key"><button id="unlock" type="submit">Enter the observatory <span aria-hidden="true">↗</span></button></form>
+    <p class="fine">Admin access only. Your key stays in this tab’s memory and clears when you reload or lock. Linking an FPL team ID is optional and never stored.</p>
+  </section>
+  <p id="message" class="message" role="status" aria-live="polite" hidden></p>
+  <div id="dashboard" class="workspace" hidden>
+    <aside class="sidebar">
+      <span class="eyebrow nav-label">EXPLORE THE SYSTEM</span>
+      <nav id="navigation" role="tablist" aria-label="Observatory views" aria-orientation="vertical">
+        <button id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" data-tab="overview"><span>01</span> Season overview</button>
+        <button id="tab-scout" role="tab" aria-selected="false" aria-controls="view-scout" data-tab="scout" tabindex="-1"><span>02</span> Scout</button>
+        <button id="tab-gameweek" role="tab" aria-selected="false" aria-controls="view-gameweek" data-tab="gameweek" tabindex="-1"><span>03</span> Gameweek centre</button>
+        <button id="tab-decisions" role="tab" aria-selected="false" aria-controls="view-decisions" data-tab="decisions" tabindex="-1"><span>04</span> Manager decisions</button>
+        <button id="tab-entry" role="tab" aria-selected="false" aria-controls="view-entry" data-tab="entry" tabindex="-1"><span>05</span> My FPL team</button>
+        <button id="tab-players" role="tab" aria-selected="false" aria-controls="view-players" data-tab="players" tabindex="-1"><span>06</span> Player intelligence</button>
+        <button id="tab-models" role="tab" aria-selected="false" aria-controls="view-models" data-tab="models" tabindex="-1"><span>07</span> Model lab</button>
+        <button id="tab-system" role="tab" aria-selected="false" aria-controls="view-system" data-tab="system" tabindex="-1"><span>08</span> System health</button>
+      </nav>
+      <div class="nav-foot"><span class="signal"></span><strong>Evidence, always.</strong><p>Lime is our estimate.<br>Blue is the official result.<br>Gaps stay visible.</p></div>
+    </aside>
+    <main>
+      <section class="heading"><div><span class="eyebrow" id="view-eyebrow">THE BIG PICTURE</span><h1 id="view-title">Season overview<span class="lime">.</span></h1><p id="updated" class="fine"></p></div><div class="filters"><label>Season<select id="season"></select></label><label>Gameweek<select id="gameweek"></select></label><button id="refresh" class="quiet">↻ Refresh</button></div></section>
+      <div class="context-bar"><label for="evaluation-mode">Evidence scope<select id="evaluation-mode"><option value="all">All archived runs</option><option value="verified">Verified pre-deadline only</option></select></label><p id="evaluation-context"></p><span class="comparison-legend"><i class="our-dot"></i> Our estimate <i class="actual-dot"></i> Actual</span></div>
+      <div id="warnings" class="notice" hidden></div>
+
+      <section id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
+        <section class="hero panel"><div><span class="eyebrow">OUR CALLS. THE FINAL SCORE.</span><h2>The season, in perspective.</h2><p id="season-population"></p><div id="season-bias" class="hero-note"></div></div><div id="season-pair" class="hero-pair"></div></section>
+        <div id="summary" class="metrics"></div>
+        <section class="panel"><span class="eyebrow">ACTUAL RETURNS FROM THE FIRST GAMEWEEK</span><h2>Every recorded point counts</h2><p class="fine">All finalized official returns for archived players in the selected evidence scope, including ownership-ranking runs. Matched xPts/pts comparisons use only genuine points forecasts.</p><div id="season-actuals" class="metrics compact"></div></section>
+        <div class="grid-two"><section class="panel"><div class="section-title"><div><span class="eyebrow">EXPECTATION VS REALITY</span><h2>Points across gameweeks</h2></div></div><p class="fine">Mean points per player with an official score. Ranking-only gameweeks show actual points and a gap for xPts; error metrics require genuine points forecasts.</p><div id="season-chart" class="chart"></div></section><section class="panel"><span class="eyebrow">THE SIZE OF THE MISS</span><h2>Error over time</h2><p id="trend-context" class="fine"></p><div id="trend" class="chart"></div></section></div>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">THE SEASON AT A GLANCE</span><h2>Gameweek coverage</h2></div><span class="fine">Select a gameweek to investigate ↗</span></div><div id="week-map" class="week-map"></div><p class="fine">Blue: finalized results · Lime: saved upcoming forecast · Amber: provisional or retrospective · Empty: no forecast. Ownership cold starts are evaluated through rankings, not points error.</p></section>
+        <div id="insights" class="insights"></div>
+        <section class="panel"><span class="eyebrow">OUR RANKINGS AGAINST THE RESULTS</span><h2>Selection quality from GW1</h2><p class="fine">Actual returns from our top ten versus the actual top ten in the scored pool. Includes ranking-only gameweeks.</p><div id="season-rankings" class="table-scroll"></div></section>
+        <section class="panel"><span class="eyebrow">CLUB-LEVEL PERFORMANCE</span><h2>Where our points landed</h2><p class="fine">Matched xPts and pts use the same player-gameweeks. All actual pts also includes ranking-only gameweeks such as GW1. These are FPL points, not match-score predictions.</p><div id="season-clubs" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-scout" role="tabpanel" aria-labelledby="tab-scout" hidden>
+        <div class="section-title context-title"><p id="scout-context" class="fine"></p><button id="scout-capture" class="quiet">Save a Scout forecast ↗</button></div>
+        <section class="hero panel scout-hero">
+          <div><span class="eyebrow">OUR FLAGSHIP FEATURE, UNDER REVIEW</span><h2>The picks. The points.</h2><p id="scout-population"></p><div id="scout-result" class="hero-note"></div></div>
+          <div id="scout-pair" class="hero-pair"></div>
+        </section>
+        <p class="fine scout-definition"><strong class="ours">xPts = OpenFPL expected points.</strong> <strong class="actual">Pts = official FPL gameweek points.</strong> Shortlist totals count every saved pick once, including captain and vice-captain. No multipliers, autosubs or chips; the Scout is budget-free.</p>
+        <div id="scout-metrics" class="metrics"></div>
+        <div class="grid-two">
+          <section class="panel"><span class="eyebrow">THE SCOUT’S CAPTAIN</span><h2>The first choice</h2><div id="scout-captain"></div></section>
+          <section class="panel"><span class="eyebrow">THE SCOUT’S VICE-CAPTAIN</span><h2>The backup choice</h2><div id="scout-vice"></div></section>
+        </div>
+        <section class="panel">
+          <div class="section-title"><div><span class="eyebrow">EVERY SAVED PICK</span><h2>xPts vs pts, player by player</h2></div><button id="scout-export" class="quiet">Export Scout CSV ↓</button></div>
+          <p class="fine">Saved Scout order. Select a player for their season dossier. A dash means unknown; zero is a real return. Error = xPts − pts.</p>
+          <div id="scout-player-chart" class="chart"></div><div id="scout-players" class="table-scroll"></div>
+        </section>
+        <section class="panel">
+          <div class="section-title"><div><span class="eyebrow">THE SCOUT ACROSS THE SEASON</span><h2>Did the picks deliver?</h2></div><span class="comparison-legend"><i class="our-dot"></i> xPts <i class="actual-dot"></i> Pts</span></div>
+          <p id="scout-season-context" class="fine"></p><div id="scout-season-metrics" class="metrics compact"></div>
+          <div id="scout-season-chart" class="chart"></div><div id="scout-history" class="table-scroll"></div>
+        </section>
+        <section class="panel"><span class="eyebrow">WHERE THE SCOUT FINDS ITS POINTS</span><h2>Season returns by position</h2><p class="fine">Matched xPts/pts use the same Scout picks. All actual pts includes every available final return, including GW1, within the selected evidence scope.</p><div id="scout-positions" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-gameweek" role="tabpanel" aria-labelledby="tab-gameweek" hidden>
+        <div class="section-title context-title"><p id="week-context" class="fine"></p><span id="result-badge" class="badge"></span></div>
+        <div id="week-overview" class="metrics"></div>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">ON THE PITCH</span><h2>Official match results</h2></div><span id="fixture-progress" class="badge"></span></div><div id="fixtures" class="fixtures"></div><div id="football-stats" class="stat-ribbon"></div><p class="fine">Fixture scores and player statistics come from official FPL. OpenFPL forecasts player points; it does not forecast match scores.</p></section>
+        <div class="grid-two"><section class="panel"><span class="eyebrow">OUR PLAYER ORDER</span><h2>Highest-ranked selections</h2><div id="our-leaders"></div></section><section class="panel"><span class="eyebrow">WHAT ACTUALLY HAPPENED</span><h2>Highest actual returns</h2><div id="actual-leaders"></div></section></div>
+        <div class="metrics compact" id="ranking-metrics"></div>
+        <div class="grid-two"><section class="panel"><span class="eyebrow">EVERY PLAYER, TWO NUMBERS</span><h2>Predicted vs actual</h2><div id="scatter" class="chart"></div></section><section class="panel"><span class="eyebrow">DO OUR EXPECTATIONS HOLD UP?</span><h2>Calibration by points band</h2><div id="gw-calibration" class="chart"></div><p class="fine">Players grouped by predicted points. Each pair compares the group’s mean forecast with its mean actual score.</p></section></div>
+        <div class="grid-two"><section class="panel"><span class="eyebrow">MORE THAN WE EXPECTED</span><h2>Biggest surprises</h2><div id="underperform"></div></section><section class="panel"><span class="eyebrow">LESS THAN WE EXPECTED</span><h2>Biggest overpredictions</h2><div id="overperform"></div></section></div>
+        <section class="panel"><span class="eyebrow">BY ROLE AND CLUB</span><h2>Find the pattern</h2><div class="grid-two flush"><div id="positions" class="table-scroll"></div><div id="week-clubs" class="table-scroll"></div></div></section>
+      </section>
+
+      <section id="view-decisions" role="tabpanel" aria-labelledby="tab-decisions" hidden>
+        <section class="panel decision-intro"><span class="eyebrow">THE SYSTEM IN THE MANAGER’S SEAT</span><h2>Was the decision worth it?</h2><p>Audit the saved shortlist, the best starting XI implied by its rankings, and the captain’s return. Compare our choice with actual outcomes and the opportunities left on the bench. To score your own real team instead, open <strong>My FPL team</strong>.</p><p id="decision-context" class="fine"></p></section>
+        <div id="decision-metrics" class="metrics"></div>
+        <div class="decision-grid"><section class="panel pitch-panel"><div class="section-title"><div><span class="eyebrow">OUR DERIVED STARTING XI</span><h2 id="formation-title">The selection</h2></div><span class="comparison-legend"><i class="our-dot"></i> Predicted <i class="actual-dot"></i> Actual</span></div><div id="pitch" class="pitch"></div><div id="bench" class="bench"></div></section><div><section class="panel"><span class="eyebrow">THE ARMBAND</span><h2>Captaincy audit</h2><div id="captain-audit"></div></section><section class="panel"><span class="eyebrow">WITH HINDSIGHT</span><h2>The same squad’s ceiling</h2><div id="hindsight"></div><p class="fine">Hindsight uses actual scores after the matches. It is an opportunity measure, not an achievable advance prediction.</p></section></div></div>
+        <section class="panel"><span class="eyebrow">CALL BY CALL</span><h2>The XI’s predicted and actual return</h2><div id="decision-bars" class="chart tall"></div></section>
+        <section class="panel"><span class="eyebrow">SQUAD PERFORMANCE OVER THE SEASON</span><h2>Our decisions vs results</h2><div id="decision-history" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-entry" role="tabpanel" aria-labelledby="tab-entry" hidden>
+        <section class="panel decision-intro"><span class="eyebrow">YOUR OWN TEAM, MEASURED</span><h2>How is your side actually doing?</h2><p>Link a public FPL team ID to score its real picks with our models, compare them with the official results, and plan the next set of transfers. This view is optional: every other part of the Observatory works without it.</p><p class="fine">The team ID stays in this tab&rsquo;s memory, is never written to disk, and clears when you lock or reload &mdash; exactly like your owner key.</p></section>
+        <section class="panel capture-panel"><div><span class="eyebrow">LINK AN FPL ENTRY</span><h2>Score a real team with our models</h2><p class="fine">Enter a public FPL team ID to compare its actual picks with our forecasts and the official results. The ID stays in this tab&rsquo;s memory, is never written to disk, and clears when you lock or reload.</p></div><form id="manager-form"><label>FPL team ID<input id="manager-id" type="text" inputmode="numeric" pattern="[0-9]{1,9}" maxlength="9" placeholder="e.g. 1234567" autocomplete="off" required></label><button id="manager-load" type="submit">Load team &#8599;</button></form><p id="manager-status" class="fine" role="status"></p></section>
+        <div id="manager-view" hidden>
+          <div id="manager-summary" class="metrics"></div>
+          <div class="decision-grid">
+            <section class="panel pitch-panel"><div class="section-title"><div><span class="eyebrow">THEIR OFFICIAL SELECTION</span><h2 id="manager-formation">The team</h2></div><span class="comparison-legend"><i class="our-dot"></i> Predicted <i class="actual-dot"></i> Actual</span></div><div id="manager-pitch" class="pitch"></div><div id="manager-bench" class="bench"></div></section>
+            <div>
+              <section class="panel"><span class="eyebrow">THEIR ARMBAND</span><h2>Captaincy</h2><div id="manager-captain"></div></section>
+              <section class="panel"><span class="eyebrow">AGAINST OUR SHORTLIST</span><h2>Where we agreed</h2><div id="manager-overlap" class="metrics compact stack"></div></section>
+            </div>
+          </div>
+          <section class="panel"><span class="eyebrow">PICK BY PICK</span><h2>Our forecast against their return</h2><div id="manager-squad" class="table-scroll"></div></section>
+          <section class="panel"><span class="eyebrow">GAMEWEEK BY GAMEWEEK</span><h2>Their score, our derived XI, the official average</h2><div id="manager-history" class="table-scroll"></div></section>
+          <section class="panel capture-panel plan-panel"><div><span class="eyebrow">PLAN THE NEXT MOVE</span><h2>Optimize transfers</h2><p class="fine">Searches transfers that raise our predicted captain-doubled XI for a gameweek whose deadline has not passed. This runs inference when no forecast is archived, so it can take a minute.</p></div><form id="optimize-form"><label>Gameweek<select id="optimize-gameweek" required></select></label><label>Free transfers<input id="optimize-free-transfers" type="number" min="0" max="15" step="1" placeholder="auto"></label><label>Bank &pound;m<input id="optimize-bank" type="number" min="0" max="200" step="0.1" placeholder="auto"></label><label>Max transfers<select id="optimize-max"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select></label><button id="optimize" type="submit">Find transfers &#8599;</button></form><p id="optimize-status" class="fine" role="status"></p></section>
+          <div id="optimize-summary" class="metrics"></div>
+          <section class="panel"><span class="eyebrow">CANDIDATE PLANS</span><h2>What each move is worth</h2><div id="optimize-plans"></div><div id="optimize-notes"></div></section>
+        </div>
+      </section>
+
+      <section id="view-players" role="tabpanel" aria-labelledby="tab-players" hidden>
+        <section class="panel player-panel"><div class="section-title"><div><span class="eyebrow">THE COMPLETE PLAYER AUDIT</span><h2>Look beyond the headline score</h2></div><button id="export" class="quiet">Export CSV ↓</button></div><div class="table-controls"><label class="search-label">Player or club<input id="search" type="search" placeholder="Search the player universe…"></label><label>Position<select id="position"><option value="">All positions</option><option>GK</option><option>DEF</option><option>MID</option><option>FWD</option></select></label><label>Population<select id="scope"><option value="all">All players</option><option value="squad">Scout shortlist</option><option value="matched">With actual scores</option><option value="missing">Missing actual scores</option><option value="played">Played 60+ minutes</option></select></label><label>Order<select id="sort"><option value="error">Largest miss</option><option value="expected_points">Predicted points</option><option value="actual_points">Actual points</option><option value="name">Player name</option></select></label></div><p id="player-count" class="fine"></p><div class="table-scroll"><table><thead><tr><th>Player</th><th>Position</th><th>Our points / score</th><th>Actual pts</th><th>Error</th><th>Minutes</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>Selection</th></tr></thead><tbody id="players"></tbody></table></div><div class="pagination"><button id="previous-page" class="quiet">← Previous</button><span id="page-count" class="fine"></span><button id="next-page" class="quiet">Next →</button></div><p class="fine">Select a player to open their season history. Error = predicted − actual. Missing data is a dash; zero is a real score. GW1 ownership scores are ranking inputs, not predicted points.</p></section>
+        <section class="panel"><span class="eyebrow">ACROSS THE SEASON</span><h2>Player returns, side by side</h2><p class="fine">Top 20 by all available final actual points for archived players, including ranking-only gameweeks, within the chosen evidence scope. Matched xPts/pts use only genuine points forecasts.</p><div id="season-players" class="table-scroll"></div></section>
+      </section>
+
+      <section id="view-models" role="tabpanel" aria-labelledby="tab-models" hidden>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">MODELS AGAINST OFFICIAL OUTCOMES</span><h2>Live-season model comparison</h2></div><label>Window<select id="live-model-window"><option value="season">Selected season</option><option value="gameweek">Selected gameweek</option></select></label></div><div id="live-models" class="table-scroll"></div><p class="fine">Raw component predictions are saved from each new inference. Earlier archives may contain only the ensemble. All values are compared with official final scores; coverage counts show which rows are available.</p></section>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">RECORDED TRAINING EXPERIMENTS</span><h2>The model benchmark</h2></div><div class="filters"><label>Evaluation<select id="training-dataset"><option value="holdout">Holdout predictions</option><option value="cross-validation">Out-of-fold predictions</option></select></label><button id="reload-models" class="quiet">↻ Load</button></div></div><p id="training-context" class="fine"></p><div id="training-metrics" class="metrics compact"></div><div id="training-table" class="table-scroll"></div></section>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">INSPECT AN INDIVIDUAL MODEL</span><h2>Under the microscope</h2></div><label>Model or baseline<select id="training-model"></select></label></div><div class="grid-two flush"><div><h3>Estimate vs recorded label</h3><div id="training-scatter" class="chart"></div></div><div><h3>Calibration</h3><div id="training-calibration" class="chart"></div></div></div><h3>Error by training gameweek</h3><div id="training-trend" class="chart"></div><p class="fine">The scatter shows a deterministic sample of up to 300 rows. Metrics and calibration use all valid rows. Training evaluations are distinct from the live FPL season.</p></section>
+        <section class="panel"><span class="eyebrow">REPRODUCIBILITY</span><h2>Validation folds &amp; model inputs</h2><div id="folds" class="table-scroll"></div><div id="training-features" class="feature-tags"></div></section>
+      </section>
+
+      <section id="view-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+        <section class="panel"><div class="section-title"><div><span class="eyebrow">FROM SOURCE TO SNAPSHOT</span><h2>Pipeline health</h2></div><span id="official-badge" class="badge"></span></div><div id="pipeline" class="pipeline"></div><div id="model-status" class="table-scroll"></div><p id="model-context" class="fine"></p></section>
+        <section class="panel"><span class="eyebrow">WHAT THE MODELS CAN SEE</span><h2>Feature coverage</h2><p class="fine">Recorded inputs from the latest archived inference in this season. Missing features remain visible.</p><div id="feature-coverage" class="feature-tags"></div></section>
+        <section class="panel capture-panel"><div><span class="eyebrow">BUILD THE EVIDENCE</span><h2>Save an upcoming forecast</h2><p class="fine">Run the configured ensemble and save its predictions, individual model outputs, and selected squad before the deadline. This can take a minute.</p></div><form id="capture-form"><label>Upcoming gameweek<select id="capture-gameweek" required></select></label><button id="capture" type="submit">Capture forecast ↗</button></form><p id="capture-result" class="fine" role="status"></p></section>
+        <section class="panel"><span class="eyebrow">ARCHIVE LEDGER</span><h2>What is saved, and when?</h2><div id="archive-ledger" class="table-scroll"></div></section>
+        <section class="panel"><span class="eyebrow">SERVICE ACTIVITY</span><h2>This running instance</h2><div id="runtime" class="metrics compact"></div><p id="runtime-scope" class="fine"></p></section>
+      </section>
+      <footer>OpenFPL Observatory · Official results from <a href="https://fantasy.premierleague.com/help/rules" target="_blank" rel="noreferrer">Fantasy Premier League</a> · Refreshes every 60 seconds while visible.<br>Retrospective runs, ownership scores, and training evaluations are labeled separately. Missing evidence is never replaced with a made-up score.</footer>
+    </main>
+  </div>
+  <dialog id="player-dialog" aria-labelledby="player-title"><div class="section-title"><div><span class="eyebrow">PLAYER DOSSIER</span><h2 id="player-title">Player history</h2></div><button id="close-player" class="quiet" aria-label="Close player history">✕</button></div><p id="player-subtitle" class="fine"></p><div id="player-detail-metrics" class="metrics compact"></div><div id="player-history-chart" class="chart"></div><div id="player-history-table" class="table-scroll"></div><div id="player-components" class="table-scroll"></div></dialog>
+</body>
+</html>

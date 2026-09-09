@@ -29,6 +29,8 @@ responsive web dashboard and FastAPI service.
   with separate starting-XI, captaincy, and availability signals.
 - Optional FPL Data enrichment can fill missing historical statistics from GW2
   without replacing official values.
+- An owner dashboard compares archived forecasts with official results and
+  tracks model status, feature coverage, enrichment, storage, and service activity.
 
 Squad selection is intentionally budget-free. Prices are returned for context
 but do not affect player projections or selection.
@@ -60,6 +62,180 @@ Optional FPL Data enrichment can be disabled immediately with:
 ```dotenv
 FPL_DATA_INFERENCE_ENABLED=false
 ```
+
+## Private owner dashboard
+
+Open `/admin` to review the system. Set a dedicated secret in `.env` locally,
+or in the deployment environment, then enter it on the dashboard:
+
+```dotenv
+OPENFPL_ADMIN_KEY=<a-long-random-owner-secret>
+```
+
+Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Existing `VALID_API_KEYS` do not grant owner access. Without an owner key,
+the dashboard data endpoint is disabled. Use HTTPS for a hosted deployment.
+The browser keeps the key only in memory; locking the dashboard or reloading
+clears it. Owner responses use `Cache-Control: no-store`. The login shell
+contains no system data, and owner routes are omitted from the public API
+catalog, OpenAPI, and sitemap.
+
+The Observatory is a system admin workspace. It runs without any FPL manager
+ID; linking one is optional and confined to its own view. Eight views share
+season and gameweek selectors:
+
+- **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
+  within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
+  map, and club comparisons. **All archived runs** includes retrospective
+  comparisons; **Verified pre-deadline only** isolates advance forecasts.
+- **Scout:** the actual saved shortlist, captain and vice-captain, with explicit
+  expected points (**xPts**) vs official gameweek points (**pts**) for every
+  pick and the full shortlist. Includes errors, season totals/trends,
+  positional comparisons, player dossiers and a Scout-only CSV. Every pick
+  counts once; season metrics compare the same matched picks with finalized
+  scores and honor the evidence scope. A missing return keeps the full
+  shortlist's actual total unknown. Missing or mismatched squads are excluded.
+- **Gameweek centre:** official fixtures and football statistics, forecast vs
+  actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
+  scatter plots, surprises, and position/club breakdowns. Club totals are FPL
+  player points, not predicted match scores. Fixture scores are official only.
+- **Manager decisions:** a legal XI derived from the saved 15-player shortlist,
+  captain, bench, fixed-XI predicted/actual returns, and hindsight opportunity.
+  This budget-free benchmark doubles the captain and applies no autosubs or
+  chips. Hindsight optimizes the same complete shortlist using actual results;
+  it is not an achievable forecast. The official manager average is context,
+  since real entries operate under different constraints. Incomplete or
+  mismatched squads do not generate a derived XI.
+- **My FPL team:** an optional linked FPL entry. Scores its real picks with our
+  models against the official results, and plans the next transfers. Empty and
+  inert until you enter a team ID; see below.
+- **Player intelligence:** searchable, filtered, paginated comparisons, CSV
+  exports with timing provenance, and player dossiers with gameweek histories
+  and saved component-model outputs. Dossier metrics include all final saved
+  points comparisons, with timing shown for every row.
+- **Model lab:** live-season ensemble/component results, recorded holdout and
+  out-of-fold model/baseline leaderboards, calibration, scatter samples, error
+  trends, validation folds, and input features. Training artifacts are read
+  from beside configured models (`holdout_predictions.csv`,
+  `oof_predictions.csv`, `training_metadata.json`). Their season identifiers,
+  populations and model versions remain distinct from live-season accuracy.
+- **System health:** model loading/inference status, feature coverage,
+  enrichment, archive ledger, an explicit upcoming forecast capture action,
+  and service telemetry. Telemetry covers this process since startup; latency
+  uses its latest 200 non-dashboard requests.
+
+### My FPL team
+
+This view accepts a public FPL team ID. It is kept in the browser tab's
+memory only: it is never written to disk, never sent anywhere but this service,
+and clears when you lock the dashboard or reload, exactly like the owner key.
+
+Loading an entry reads its official picks, joins them to our archived forecast
+by player ID, and shows xPts against official pts for every pick, the official
+gameweek score, bench points, transfer costs, captaincy, the overlap with our
+own shortlist, and a gameweek timeline beside our derived XI and the official
+average. Official points, ranks and bench totals are reported by FPL and are
+never recomputed. Our predicted total applies the official multipliers to the
+same picks; it is not an alternative score. Reviewing an entry runs no
+inference. Picks become public only after each gameweek deadline.
+
+**Optimize transfers** searches for transfers that raise our predicted
+captain-doubled XI for a gameweek whose deadline has not passed. It starts from
+the squad that played the last completed gameweek, reuses an archived forecast
+for the target gameweek when one exists, and otherwise runs inference
+explicitly. Plans respect the 15-player shape, the three-per-club limit, and the
+available budget. Each plan is shown with its transfer count, any four-point
+hits, and the net gain after them, so a hit that does not pay for itself is
+visible rather than hidden.
+
+Two inputs cannot be read from public FPL endpoints, so both are estimated and
+both are overridable:
+
+- **Selling prices are not public.** Every sale is valued at the player's
+  current price. A squad holding price risers is therefore undervalued here and
+  one holding fallers is overvalued. Confirm affordability in the official game
+  before making a transfer.
+- **The free-transfer bank is not public.** It is replayed from the entry's
+  public transfer counts, honoring wildcard and free-hit weeks, and capped at
+  five. A transfer made and reversed inside one gameweek is invisible to this.
+
+Bank is taken from the entry's official gameweek history and can also be
+overridden. Whenever you override either figure, the response and the dashboard
+say so. One-transfer plans are searched exhaustively; two- and three-transfer
+plans use a beam search over the strongest single moves, so they are strong
+candidates rather than proven optima. Every plan is labelled accordingly.
+
+The same owner authorization protects `GET /api/admin/manager/{entry_id}` and
+`POST /api/admin/manager/{entry_id}/optimize?gameweek=4`. The planner rejects a
+gameweek whose deadline has passed.
+
+GW1 ownership cold-start scores are ranking inputs, not predicted points.
+They are evaluated through ranking quality and realized squad returns, and
+excluded from MAE/RMSE, calibration, and matched points totals. Unknown values
+stay missing; they are never substituted with zero.
+
+**All actual pts** includes finalized returns from GW1 onward, including
+ownership-ranking runs, in season, Scout, player, club and position totals.
+Player leaders are ordered by these full available returns. **Matched xPts/pts**
+compares only rows with both a real points forecast and an official result.
+Scout gameweek charts show full-shortlist totals, including GW1's actual points;
+missing xPts or incomplete actual totals remain gaps. Both views honor the
+selected evidence scope.
+
+To compute retrospective GW1 model xPts for the original ownership-selected
+shortlist, run `.venv/bin/python -m scripts.replay_gw1 --season 2026-2027`.
+This explicitly runs the configured models against the archived GW0 roster and
+GW1 fixture context. Official scores and match statistics are excluded from
+inputs; unavailable prior-match features use the models' trained imputation.
+The archived roster itself was observed after the deadline. These estimates
+are retrospective comparisons, not recovered pre-deadline forecasts.
+
+The separate `evaluation/replays/gw_01.json` records its generation time, input
+and model hashes, and the immutable source snapshot's SHA-256. The dashboard
+uses a matching replay for xPts comparisons across Scout, season, gameweek,
+manager decisions, player dossiers and model components. Original shortlist
+order, ownership scores and captain roles remain intact. Replay estimates are
+excluded from the verified evidence scope; refresh never runs models.
+
+A preserved retrospective snapshot may include `snapshot_kind`,
+`snapshot_created_at_utc`, and a season/gameweek-bound `actuals_snapshot` of
+final official results. The original forecast capture timestamp is retained.
+Saving such a snapshot after the deadline never grants pre-deadline eligibility.
+Its final results can still be read if the separate live-score cache is missing.
+
+Successful scout runs now save an atomic forecast bundle at
+`data/archive/<season>/evaluation/gw_XX.json`. It can be refreshed before the
+official deadline, and is preserved after that deadline. The matching squad is
+attached only while the same forecast is still current and before the deadline.
+New captures also save raw individual model outputs and player context in the
+bundle and in `diagnostics/gw_XX.json`. Legacy runs retain their original
+evidence: missing model outputs are not reconstructed after results are known.
+Legacy archives remain visible, with capture timestamps checked for eligibility.
+Unknown or late forecasts populate the archive comparison cards and trend, with
+their timing clearly labeled. They are excluded from verified pre-deadline
+accuracy; rerunning a past gameweek cannot create a verified historical forecast.
+The gameweek review opens on the latest archived gameweek with matched scores;
+upcoming forecasts can still be selected explicitly.
+
+Scores are joined by official player ID within the same season and gameweek.
+Missing scores stay missing, and event-live totals already include double
+gameweeks. Results remain provisional until official FPL reports both `finished`
+and `data_checked`. The first finalized score fetch bypasses the live cache and
+is stored under `evaluation/actuals/`. Old live files without finalization
+provenance remain provisional. Upstream failures retain saved scores with a
+visible warning. The dashboard refreshes every 60 seconds while visible; current
+official data uses the shared FPL cache. Reading or refreshing views never runs
+inference. **Capture forecast** explicitly runs inference for an upcoming
+official deadline and records the real capture time.
+
+To build a complete record, schedule `/api/scout` before each deadline and open
+the dashboard (or call `GET /api/admin/dashboard` with
+`Authorization: Bearer <owner-key>`) after results finalize. Continue mounting
+the data directory read-write. No sample results are used in the dashboard.
+The same owner authorization protects `GET /api/admin/players/{player_id}`,
+`GET /api/admin/models?dataset=holdout|cross-validation`, and
+`POST /api/admin/capture?gameweek=4`, `GET /api/admin/manager/{entry_id}`, and
+`POST /api/admin/manager/{entry_id}/optimize`. Capture rejects expired deadlines.
 
 ## Docker
 
