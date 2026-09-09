@@ -6,7 +6,7 @@
   const date = v => v ? new Date(v).toLocaleString('en-GB', {dateStyle: 'medium', timeStyle: 'short'}) : 'Not recorded';
   const human = v => String(v || 'Not recorded').replaceAll('_', ' ').replaceAll('-', ' ');
   const percent = v => v == null ? '—' : `${fmt(v, 1)}%`;
-  const state = {key: '', report: null, training: null, tab: 'overview', page: 0, epoch: 0, pending: new Map()};
+  const state = {key: '', report: null, training: null, tab: 'overview', page: 0, epoch: 0, pending: new Map(), managerId: '', manager: null, plan: null};
   const pagesize = 40;
   const views = {
     overview: ['THE BIG PICTURE', 'Season overview'], scout: ['THE OPENFPL SCOUT', 'Scout'], gameweek: ['EVERY MATCH. EVERY RETURN.', 'Gameweek centre'],
@@ -52,12 +52,13 @@
   }
   function lock() {
     state.epoch++; state.key = ''; state.report = null; state.training = null; state.page = 0;
+    state.managerId = ''; state.manager = null; state.plan = null; $('manager-view').hidden = true;
     state.pending.forEach(t => t.controller.abort()); state.pending.clear();
     $('owner-key').value = ''; $('dashboard').hidden = true; $('login').hidden = false; $('lock').hidden = true;
     $('player-dialog').close();
-    ['season-actuals','season-rankings','scout-pair','scout-metrics','scout-captain','scout-vice','scout-player-chart','scout-players','scout-season-metrics','scout-season-chart','scout-history','scout-positions','summary','season-pair','season-chart','trend','week-map','insights','season-clubs','week-overview','fixtures','football-stats','our-leaders','actual-leaders','ranking-metrics','scatter','gw-calibration','underperform','overperform','positions','week-clubs','decision-metrics','pitch','bench','captain-audit','hindsight','decision-bars','decision-history','players','season-players','live-models','training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','pipeline','model-status','feature-coverage','archive-ledger','runtime','warnings','player-detail-metrics','player-history-chart','player-history-table','player-components'].forEach(id => $(id).replaceChildren());
-    ['season','gameweek','training-model','capture-gameweek'].forEach(id => $(id).replaceChildren());
-    ['scout-context','scout-population','scout-result','scout-season-context','search','player-title','player-subtitle','capture-result','training-context','evaluation-context','updated','season-population','season-bias','week-context','result-badge','fixture-progress','decision-context','formation-title','player-count','page-count','official-badge','model-context','runtime-scope'].forEach(id => {if ($(id).tagName === 'INPUT') $(id).value = ''; else $(id).textContent = '';});
+    ['season-actuals','season-rankings','scout-pair','scout-metrics','scout-captain','scout-vice','scout-player-chart','scout-players','scout-season-metrics','scout-season-chart','scout-history','scout-positions','summary','season-pair','season-chart','trend','week-map','insights','season-clubs','week-overview','fixtures','football-stats','our-leaders','actual-leaders','ranking-metrics','scatter','gw-calibration','underperform','overperform','positions','week-clubs','decision-metrics','pitch','bench','captain-audit','hindsight','decision-bars','decision-history','players','season-players','live-models','training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','pipeline','model-status','feature-coverage','archive-ledger','runtime','warnings','player-detail-metrics','player-history-chart','player-history-table','player-components','manager-summary','manager-pitch','manager-bench','manager-captain','manager-overlap','manager-squad','manager-history','optimize-summary','optimize-plans','optimize-notes'].forEach(id => $(id).replaceChildren());
+    ['season','gameweek','training-model','capture-gameweek','optimize-gameweek'].forEach(id => $(id).replaceChildren());
+    ['scout-context','scout-population','scout-result','scout-season-context','search','player-title','player-subtitle','capture-result','training-context','evaluation-context','updated','season-population','season-bias','week-context','result-badge','fixture-progress','decision-context','formation-title','player-count','page-count','official-badge','model-context','runtime-scope','manager-id','manager-status','manager-formation','optimize-status','optimize-free-transfers','optimize-bank'].forEach(id => {if ($(id).tagName === 'INPUT') $(id).value = ''; else $(id).textContent = '';});
     $('evaluation-mode').value = 'all'; $('scope').value = 'all'; $('position').value = '';
     $('unlock').disabled = false; $('refresh').disabled = false; $('capture').disabled = false;
     $('dashboard').classList.remove('loading'); setTab('overview'); message(''); $('owner-key').focus();
@@ -223,6 +224,107 @@
     $('hindsight').append(note(`Raw bench returns: ${fmt(benchTotal,0)} points. Bench points are not all recoverable within formation rules.`));
     pairedBars('decision-bars',xi,'name','expected_points','actual_points');
     table('decision-history',['GW','Evidence','Our XI pts','Actual XI pts','FPL average','Hindsight','Opportunity'],currentAnalytics().decisions.map(d=>[gwButton(d.gameweek),human(d.forecast_state),value(d.predicted_points,'ours'),value(d.actual_points,'actual'),fmt(d.official_average,0),fmt(d.hindsight_points),fmt(d.selection_gap)]));
+    renderManager(); renderPlan();
+  }
+  function squadCard(p){
+    const b=el('button',null,'pitch-player');b.type='button';
+    const name=el('span',p.name,'name');
+    if(p.is_captain)name.append(el('span','C','captain-chip'));
+    if(p.is_vice_captain&&!p.is_captain)name.append(el('span','V','captain-chip'));
+    const nums=el('div',null,'pitch-points');nums.append(value(p.expected_points,'ours',1),value(p.actual_points,'actual',0));
+    b.append(el('small',`${p.position}${p.multiplier>1?` ×${p.multiplier}`:''}`),name,nums);
+    b.title=`${p.name}: ${fmt(p.expected_points)} predicted, ${fmt(p.actual_points,0)} actual`;
+    b.addEventListener('click',()=>openPlayer(p.id));return b;
+  }
+  function renderManager(){
+    const data=state.manager;
+    $('manager-view').hidden=!data;
+    if(!data)return;
+    const r=data.review,e=data.entry;
+    $('manager-status').textContent=`${e.name||'This entry'}${e.manager?` · ${e.manager}`:''} · team ${e.id} · GW${data.gameweek}. ${data.note}`;
+    $('manager-summary').replaceChildren(
+      metric('OFFICIAL GW POINTS',fmt(r.official_points,0),`Reported by FPL${r.transfers_cost?` · ${fmt(r.transfers_cost,0)} pts of hits`:''}`,'actual'),
+      metric('OUR FORECAST FOR THESE PICKS',fmt(r.predicted_points),`${r.matched_forecasts} of ${r.starting.length} starters had a forecast`,'ours'),
+      metric('SAME PICKS · ACTUAL',fmt(r.actual_points),'Official multipliers, no autosubs applied here','actual'),
+      metric('OFFICIAL MANAGER AVERAGE',fmt(data.timeline.find(t=>t.gameweek===data.gameweek)?.official_average,0),`Points left on their bench: ${fmt(r.bench_points,0)}`));
+    const xi=r.starting,formation=['DEF','MID','FWD'].map(pos=>xi.filter(p=>p.position===pos).length).join('–');
+    $('manager-formation').textContent=xi.length?`Their ${formation}${r.active_chip?` · ${human(r.active_chip)}`:''}`:'No official picks for this gameweek';
+    $('manager-pitch').replaceChildren(...['GK','DEF','MID','FWD'].map(pos=>{const row=el('div',null,'pitch-row');row.append(...xi.filter(p=>p.position===pos).map(squadCard));return row;}));
+    if(!xi.length)empty('manager-pitch','Official picks become public only after the gameweek deadline.');
+    $('manager-bench').replaceChildren(...r.bench.map(squadCard));
+    $('manager-captain').replaceChildren();
+    if(r.captain){
+      $('manager-captain').append(playerLink(r.captain));
+      [['Predicted base points',r.captain.expected_points,'ours'],['Actual base points',r.captain.actual_points,'actual'],['Official multiplier',r.captain.multiplier,'']].forEach(([label,v,tone])=>{const row=el('div',null,'pair-line');row.append(el('span',label),el('strong',fmt(v,label==='Official multiplier'?0:2),tone));$('manager-captain').append(row);});
+      if(r.vice_captain)$('manager-captain').append(note(`Vice-captain: ${r.vice_captain.name}. The armband moves only if the captain does not play; that fallback is not modelled here.`));
+    }else empty('manager-captain','No captain is recorded for this gameweek.');
+    const c=data.comparison;
+    $('manager-overlap').replaceChildren(
+      metric('SHARED PICKS',`${r.our_squad_overlap} / ${r.squad.length}`,'Players in both their squad and our saved shortlist'),
+      metric('THEIR SEASON POINTS',fmt(c.entry_points,0),`${c.gameweeks} gameweeks comparable with our archive`,'actual'),
+      metric('OUR DERIVED XI',fmt(c.our_points,0),'Same gameweeks · budget-free benchmark','ours'));
+    $('manager-overlap').className='metrics compact';
+    table('manager-squad',['Player','Pos','Mult','Our xPts','Actual pts','Difference','In our shortlist'],r.squad.map(p=>[playerName(p),p.position,p.multiplier>1?`×${p.multiplier}`:p.started?'Starting':'Bench',value(p.expected_points,'ours'),value(p.actual_points,'actual',0),el('span',signed(p.expected_points!=null&&p.actual_points!=null?p.expected_points-p.actual_points:null),''),p.in_our_squad?human(p.our_role||'shortlist'):'—']));
+    table('manager-history',['GW','Their pts','Bench','Transfers','Hit','Our XI predicted','Our XI actual','FPL average','Overall rank'],data.timeline.map(t=>[gwButton(t.gameweek,'decisions'),value(t.official_points,'actual',0),fmt(t.bench_points,0),fmt(t.transfers,0),fmt(t.transfers_cost,0),value(t.our_predicted_points,'ours'),value(t.our_actual_points,'actual'),fmt(t.official_average,0),t.overall_rank==null?'—':Number(t.overall_rank).toLocaleString('en-GB')]));
+    const upcoming=(state.report?.gameweeks||[]).filter(w=>w.deadline_time&&Date.parse(w.deadline_time)>Date.now());
+    const chosen=$('optimize-gameweek').value;
+    options('optimize-gameweek',upcoming.map(w=>[w.gameweek,`GW ${w.gameweek} · ${date(w.deadline_time)}`]),upcoming.some(w=>String(w.gameweek)===chosen)?chosen:upcoming[0]?.gameweek);
+    $('optimize').disabled=!upcoming.length||state.pending.has('optimize');
+    if(!upcoming.length&&!state.plan)$('optimize-status').textContent='No upcoming deadline in the selected season. Select the current season to plan transfers.';
+    else if(!state.plan)$('optimize-status').textContent=`Free transfers are estimated from public transfer history: ${data.free_transfers.free_transfers} going into GW${(data.gameweeks.at(-1)||0)+1}. Override either field to plan with your own figures.`;
+  }
+  function renderPlan(){
+    const plan=state.plan;
+    if(!plan){['optimize-summary','optimize-plans','optimize-notes'].forEach(id=>$(id).replaceChildren());return;}
+    const best=plan.recommended;
+    $('optimize-summary').replaceChildren(
+      metric('CURRENT XI · PREDICTED',fmt(plan.baseline.predicted_points),`Captain ${plan.baseline.captain?.name||'—'} doubled · squad worth £${fmt(plan.baseline.squad_value,1)}m`,'ours'),
+      metric('BEST NET GAIN',best?signed(best.net_gain):'—',best?`${best.transfers} transfer(s), ${best.hits} hit(s)`:'No plan beats holding the current squad','ours'),
+      metric('FREE TRANSFERS',fmt(plan.free_transfers,0),human(plan.free_transfer_source)),
+      metric('BANK',`£${fmt(plan.bank,1)}m`,human(plan.bank_source)));
+    $('optimize-plans').replaceChildren();
+    if(!plan.plans.length){empty('optimize-plans','No affordable transfer improves the predicted XI within the club and position limits.');}
+    else plan.plans.forEach(p=>{
+      const panel=el('div',null,'plan');
+      panel.append(el('h3',`${p.transfers} transfer${p.transfers>1?'s':''}${p.hits?` · ${p.hits} hit${p.hits>1?'s':''} (−${fmt(p.hit_cost,0)})`:' · no hit'}${p.exhaustive?'':' · beam search'}`));
+      const rows=p.moves.map(m=>[`${m.out.name} (${m.out.team})`,`${m.in.name} (${m.in.team})`,`£${fmt(m.cost,1)}m`,signed(m.gain)]);
+      const holder=el('div',null,'table-scroll');panel.append(holder);holder.id=`plan-${p.transfers}`;$('optimize-plans').append(panel);
+      table(`plan-${p.transfers}`,['Out','In','Net cost','xPts change'],rows);
+      panel.append(note(`Predicted XI ${fmt(p.predicted_points)} · net of hits ${fmt(p.net_predicted_points)} · net gain ${signed(p.net_gain)} · bank left £${fmt(p.remaining_bank,1)}m.`));
+    });
+    $('optimize-notes').replaceChildren(...[...plan.notes,...plan.warnings].map(note));
+    $('optimize-status').textContent=`Forecast source: ${human(plan.forecast_source.kind)} for GW${plan.gameweek}, from the squad that played GW${plan.squad_gameweek}. Captured ${date(plan.forecast_source.captured_at_utc)}.`;
+  }
+  async function loadManager(event){
+    if(event)event.preventDefault();
+    if(!state.key||!state.report)return;
+    const id=($('manager-id').value||state.managerId).trim();
+    if(!/^\d{1,9}$/.test(id)){$('manager-status').textContent='Enter a numeric FPL team ID.';return;}
+    state.managerId=id;
+    const epoch=state.epoch,gw=state.report.selected?.gameweek;
+    $('manager-load').disabled=true;$('manager-status').textContent=`Loading team ${id}…`;
+    try{
+      const data=await api(`/api/admin/manager/${encodeURIComponent(id)}?season=${encodeURIComponent(state.report.season)}${gw?`&gameweek=${gw}`:''}`,{channel:'manager'});
+      if(!data)return;
+      state.manager=data;state.plan=null;renderManager();renderPlan();
+    }catch(e){if(epoch===state.epoch){state.manager=null;state.plan=null;$('manager-view').hidden=true;$('manager-status').textContent=e.message;}}
+    finally{if(epoch===state.epoch)$('manager-load').disabled=false;}
+  }
+  async function runOptimize(event){
+    event.preventDefault();
+    if(state.pending.has('optimize')||!state.key||!state.managerId)return;
+    const gw=$('optimize-gameweek').value;if(!gw)return;
+    const query=new URLSearchParams({gameweek:gw,max_transfers:$('optimize-max').value});
+    if($('optimize-free-transfers').value!=='')query.set('free_transfers',$('optimize-free-transfers').value);
+    if($('optimize-bank').value!=='')query.set('bank',$('optimize-bank').value);
+    const epoch=state.epoch;
+    $('optimize').disabled=true;$('optimize-status').textContent=`Planning GW${gw} transfers. Running the models if no forecast is archived…`;
+    try{
+      const data=await api(`/api/admin/manager/${encodeURIComponent(state.managerId)}/optimize?${query}`,{method:'POST',channel:'optimize',timeout:180000});
+      if(!data)return;
+      state.plan=data;renderPlan();
+    }catch(e){if(epoch===state.epoch){state.plan=null;renderPlan();$('optimize-status').textContent=e.message;}}
+    finally{if(epoch===state.epoch)$('optimize').disabled=false;}
   }
   function gwButton(gw, tab = 'gameweek'){const b=el('button',`GW${gw}`,'link-button');b.type='button';b.addEventListener('click',()=>selectWeek(gw, tab));return b;}
   function filteredPlayers() {
@@ -370,8 +472,8 @@
   $('login-form').addEventListener('submit',e=>{e.preventDefault();state.key=$('owner-key').value.trim();$('owner-key').value='';refresh(true);});
   $('lock').addEventListener('click',lock);
   $('refresh').addEventListener('click',()=>refresh());
-  $('season').addEventListener('change',()=>{state.page=0;options('gameweek',[],null);$('player-dialog').close();refresh();});
-  $('gameweek').addEventListener('change',()=>{state.page=0;refresh();});
+  $('season').addEventListener('change',()=>{state.page=0;state.manager=null;state.plan=null;$('manager-view').hidden=true;$('manager-status').textContent='';options('gameweek',[],null);$('player-dialog').close();refresh();});
+  $('gameweek').addEventListener('change',async()=>{state.page=0;await refresh();if(state.managerId&&state.key)loadManager();});
   $('evaluation-mode').addEventListener('change',()=>{if(state.report)render();});
   Object.keys(views).forEach(tab=>$(`tab-${tab}`).addEventListener('click',()=>setTab(tab)));
   const compactNavigation = window.matchMedia('(max-width: 950px)');
@@ -386,8 +488,10 @@
   $('live-model-window').addEventListener('change',()=>{if(state.report)renderLiveModels();});
   $('training-dataset').addEventListener('change',loadTraining);$('reload-models').addEventListener('click',loadTraining);$('training-model').addEventListener('change',renderTrainingModel);
   $('capture-form').addEventListener('submit',captureForecast);
+  $('manager-form').addEventListener('submit',loadManager);
+  $('optimize-form').addEventListener('submit',runOptimize);
   $('close-player').addEventListener('click',()=>$('player-dialog').close());
   $('player-dialog').addEventListener('close',()=>{state.pending.get('player')?.controller.abort();state.pending.delete('player');});
-  setInterval(()=>{if(state.key&&!document.hidden&&!state.pending.has('main')&&!state.pending.has('capture'))refresh();},60000);
+  setInterval(()=>{if(state.key&&!document.hidden&&!state.pending.has('main')&&!state.pending.has('capture')&&!state.pending.has('optimize'))refresh();},60000);
   window.addEventListener('pagehide',lock);
 })();

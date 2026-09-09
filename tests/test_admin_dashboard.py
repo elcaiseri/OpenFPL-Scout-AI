@@ -438,9 +438,176 @@ async def asgi_get(path, key=None, method="GET"):
     return start["status"], dict(start["headers"]), body
 
 
+GK, DEF, MID, FWD = 1, 2, 3, 4
+ROSTER = [(i, GK) for i in (1, 2, 3)] + [(i, DEF) for i in range(4, 12)] + [(i, MID) for i in range(12, 20)] + [(i, FWD) for i in range(20, 25)]
+PICKED = [1, 2, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 20, 21, 22]
+
+
+class ManagerClient:
+    """A public FPL entry: picks and bank are visible, selling prices are not."""
+
+    def __init__(self):
+        self.events = [
+            {"id": 1, "deadline_time": "2020-08-15T10:00:00Z", "finished": True, "data_checked": True, "is_current": True},
+            {"id": 2, "deadline_time": "2020-08-22T10:00:00Z", "finished": False, "data_checked": False},
+        ]
+        self.picks_calls = []
+
+    def bootstrap(self):
+        return {
+            "events": self.events,
+            "teams": [{"id": i, "name": f"Club {i}"} for i in range(1, 9)],
+            "elements": [
+                {"id": pid, "web_name": f"Player {pid}", "team": (pid % 8) + 1,
+                 "element_type": position, "now_cost": 45 + pid, "status": "a"}
+                for pid, position in ROSTER
+            ],
+        }
+
+    def event_live(self, gw, *, refresh=False):
+        return {"elements": [{"id": pid, "stats": {"total_points": pid % 7, "minutes": 90}} for pid, _ in ROSTER]}
+
+    def mapped_manager(self, entry_id):
+        return {"id": entry_id, "name": "Owner XI", "player_first_name": "A", "player_last_name": "B",
+                "summary_overall_points": 60, "summary_overall_rank": 100, "current_event": 1,
+                "started_event": 1, "last_deadline_value": 100.5, "last_deadline_bank": 1.5}
+
+    def manager_history(self, entry_id):
+        return {"entry_id": entry_id, "chips": [], "current": [
+            {"event": 1, "points": 55, "points_on_bench": 4, "event_transfers": 0,
+             "event_transfers_cost": 0, "overall_rank": 100, "bank": 15, "value": 1005},
+        ]}
+
+    def mapped_manager_picks(self, entry_id, gameweek):
+        self.picks_calls.append(gameweek)
+        return {
+            "entry_id": entry_id, "gameweek": gameweek,
+            "active_chip": None, "automatic_subs": [],
+            "entry_history": {"points": 55, "points_on_bench": 4, "bank": 15, "value": 1005,
+                              "event_transfers": 0, "event_transfers_cost": 0, "overall_rank": 100},
+            "picks": [
+                {"element": pid, "element_type": next(p for i, p in ROSTER if i == pid),
+                 "multiplier": 0 if index >= 11 else (2 if index == 0 else 1),
+                 "is_captain": index == 0, "is_vice_captain": index == 1,
+                 "player": {"web_name": f"Player {pid}", "team_name": "Club", "price": 5.0}}
+                for index, pid in enumerate(PICKED)
+            ],
+        }
+
+
+class ManagerViewTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.client = ManagerClient()
+        self.frames = []
+        self.scout = SimpleNamespace(
+            data_archive=DataArchive(self.root), official_client=self.client,
+            config={"models": {"ridge": {"version": "v1"}}},
+            model_artifacts=[SimpleNamespace(name="ridge")], fpl_data_enabled=False,
+            get_official_predictions=self.predictions,
+        )
+        self.dashboard = AdminDashboard(self.scout, cache_seconds=0)
+        target = self.root / "2020-2021/evaluation/gw_01.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({
+            "metadata": {"season": "2020-2021", "prediction_gameweek": 1,
+                         "captured_at_utc": "2020-08-14T10:00:00Z",
+                         "inference": {"successful_models": ["ridge"], "weights": {"ridge": 1}}},
+            "deadline_time": "2020-08-15T10:00:00Z",
+            "predictions": [
+                {"id": pid, "web_name": f"Player {pid}", "element_type": position,
+                 "team_name": f"Club {(pid % 8) + 1}", "gameweek": 1, "expected_points": 10 - pid * 0.1}
+                for pid, position in ROSTER
+            ],
+        }))
+
+    def predictions(self, gameweek=None):
+        frame = pd.DataFrame([
+            {"id": pid, "web_name": f"Player {pid}", "element_type": position,
+             "team_name": f"Club {(pid % 8) + 1}", "gameweek": gameweek,
+             "expected_points": 20.0 if pid == 24 else 10 - pid * 0.1}
+            for pid, position in ROSTER
+        ])
+        frame.attrs["inference"] = {"strategy": "model-ensemble"}
+        self.frames.append(gameweek)
+        return frame
+
+    def test_review_reports_official_figures_beside_our_forecast(self):
+        result = self.dashboard.manager_review(7)
+        self.assertEqual(result["gameweek"], 1)
+        self.assertEqual(result["entry"]["id"], 7)
+        self.assertEqual(result["review"]["official_points"], 55)
+        self.assertEqual(result["review"]["bank"], 1.5)
+        self.assertEqual(result["review"]["squad_value"], 100.5)
+        self.assertEqual(len(result["review"]["starting"]), 11)
+        self.assertEqual(len(result["review"]["bench"]), 4)
+        self.assertEqual(result["review"]["captain"]["id"], PICKED[0])
+        # The captain's forecast and result are both doubled, like the official game.
+        started = result["review"]["starting"]
+        self.assertAlmostEqual(
+            result["review"]["predicted_points"],
+            sum(p["expected_points"] * max(1, p["multiplier"]) for p in started),
+        )
+        self.assertEqual(result["timeline"][0]["official_points"], 55)
+        self.assertEqual(result["free_transfers"]["free_transfers"], 1)
+
+    def test_review_runs_no_inference(self):
+        self.dashboard.manager_review(7)
+        self.assertEqual(self.frames, [])
+
+    def test_review_falls_back_to_the_latest_played_gameweek(self):
+        result = self.dashboard.manager_review(7, gameweek=2)
+        self.assertEqual(result["gameweek"], 1)
+        self.assertEqual(self.client.picks_calls, [1])
+
+    def test_plan_uses_last_completed_picks_and_runs_inference_for_the_new_week(self):
+        result = self.dashboard.manager_plan(7, 2)
+        self.assertEqual(result["squad_gameweek"], 1)
+        self.assertEqual(result["gameweek"], 2)
+        self.assertEqual(self.frames, [2])
+        self.assertEqual(result["forecast_source"]["kind"], "inference")
+        self.assertEqual(result["bank_source"], "official-entry-history")
+        self.assertEqual(result["bank"], 1.5)
+        # Player 24 is a forward worth 20 points and is affordable, so it is signed.
+        self.assertEqual(result["recommended"]["moves"][0]["in"]["id"], 24)
+        self.assertEqual(result["free_transfers"], 1)
+
+    def test_plan_reuses_an_archived_forecast_without_inference(self):
+        result = self.dashboard.manager_plan(7, 1)
+        self.assertEqual(result["forecast_source"]["kind"], "archived-forecast")
+        self.assertEqual(result["forecast_source"]["captured_at_utc"], "2020-08-14T10:00:00Z")
+        self.assertEqual(self.frames, [])
+
+    def test_overrides_are_applied_and_disclosed(self):
+        result = self.dashboard.manager_plan(7, 2, free_transfers=0, bank=50.0)
+        self.assertEqual(result["bank"], 50.0)
+        self.assertEqual(result["free_transfers"], 0)
+        self.assertEqual(result["bank_source"], "owner-override")
+        self.assertEqual(result["free_transfer_source"], "owner-override")
+        self.assertTrue(any("Bank was overridden" in w for w in result["warnings"]))
+        self.assertTrue(any("Free transfers were overridden" in w for w in result["warnings"]))
+        self.assertEqual(result["plans"][0]["hits"], 1)
+
+    def test_plan_discloses_the_selling_price_approximation(self):
+        result = self.dashboard.manager_plan(7, 2)
+        self.assertTrue(any("Selling prices are not public" in n for n in result["notes"]))
+
+    def test_an_entry_without_completed_gameweeks_is_refused(self):
+        self.client.manager_history = lambda entry_id: {"chips": [], "current": []}
+        with self.assertRaises(ValueError):
+            self.dashboard.manager_review(7)
+
+
 class AccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_new_owner_routes_fail_closed_and_stay_out_of_public_schema(self):
-        paths = [("/api/admin/players/1", "GET"), ("/api/admin/models", "GET"), ("/api/admin/capture?gameweek=4", "POST")]
+        paths = [
+            ("/api/admin/players/1", "GET"), ("/api/admin/models", "GET"),
+            ("/api/admin/capture?gameweek=4", "POST"),
+            ("/api/admin/manager/1", "GET"),
+            ("/api/admin/manager/1/optimize?gameweek=4", "POST"),
+        ]
         for path, method in paths:
             with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}):
                 status, headers, _ = await asgi_get(path, "shared-api-key", method)
@@ -456,8 +623,14 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}), patch.object(main, "scout", fake, create=True):
             status, _, _ = await asgi_get("/api/admin/capture?gameweek=1", "owner-test-key", "POST")
             self.assertEqual(status, 422)
-            for path in ["/api/admin/models?dataset=private", "/api/admin/players/0", "/api/admin/players/1?season=private"]:
+            for path in ["/api/admin/models?dataset=private", "/api/admin/players/0", "/api/admin/players/1?season=private",
+                         "/api/admin/manager/0", "/api/admin/manager/1?season=private", "/api/admin/manager/1?gameweek=39"]:
                 status, _, _ = await asgi_get(path, "owner-test-key")
+                self.assertEqual(status, 422)
+            status, _, _ = await asgi_get("/api/admin/manager/1/optimize?gameweek=1", "owner-test-key", "POST")
+            self.assertEqual(status, 422)
+            for query in ["gameweek=4&free_transfers=-1", "gameweek=4&bank=-1", "gameweek=4&max_transfers=9", "gameweek=39"]:
+                status, _, _ = await asgi_get(f"/api/admin/manager/1/optimize?{query}", "owner-test-key", "POST")
                 self.assertEqual(status, 422)
 
     async def test_owner_endpoint_fails_closed_and_does_not_accept_shared_keys(self):

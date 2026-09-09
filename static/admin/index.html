@@ -20,7 +20,7 @@
     <h1>See the whole game.</h1>
     <p>One workspace for your forecasts, football results, squad decisions, and machine learning. Measured against what actually happened.</p>
     <form id="login-form"><label for="owner-key">Owner access key</label><input id="owner-key" type="password" autocomplete="off" spellcheck="false" required placeholder="Your private key"><button id="unlock" type="submit">Enter the observatory <span aria-hidden="true">↗</span></button></form>
-    <p class="fine">Admin access only. Your key stays in this tab’s memory and clears when you reload or lock. No manager ID needed.</p>
+    <p class="fine">Admin access only. Your key stays in this tab’s memory and clears when you reload or lock. Linking an FPL team ID is optional and never stored.</p>
   </section>
   <p id="message" class="message" role="status" aria-live="polite" hidden></p>
   <div id="dashboard" class="workspace" hidden>
@@ -95,6 +95,22 @@
         <div class="decision-grid"><section class="panel pitch-panel"><div class="section-title"><div><span class="eyebrow">OUR DERIVED STARTING XI</span><h2 id="formation-title">The selection</h2></div><span class="comparison-legend"><i class="our-dot"></i> Predicted <i class="actual-dot"></i> Actual</span></div><div id="pitch" class="pitch"></div><div id="bench" class="bench"></div></section><div><section class="panel"><span class="eyebrow">THE ARMBAND</span><h2>Captaincy audit</h2><div id="captain-audit"></div></section><section class="panel"><span class="eyebrow">WITH HINDSIGHT</span><h2>The same squad’s ceiling</h2><div id="hindsight"></div><p class="fine">Hindsight uses actual scores after the matches. It is an opportunity measure, not an achievable advance prediction.</p></section></div></div>
         <section class="panel"><span class="eyebrow">CALL BY CALL</span><h2>The XI’s predicted and actual return</h2><div id="decision-bars" class="chart tall"></div></section>
         <section class="panel"><span class="eyebrow">SQUAD PERFORMANCE OVER THE SEASON</span><h2>Our decisions vs results</h2><div id="decision-history" class="table-scroll"></div></section>
+        <section class="panel capture-panel"><div><span class="eyebrow">LINK AN FPL ENTRY</span><h2>Score a real team with our models</h2><p class="fine">Enter a public FPL team ID to compare its actual picks with our forecasts and the official results. The ID stays in this tab&rsquo;s memory, is never written to disk, and clears when you lock or reload.</p></div><form id="manager-form"><label>FPL team ID<input id="manager-id" type="text" inputmode="numeric" pattern="[0-9]{1,9}" maxlength="9" placeholder="e.g. 1234567" autocomplete="off" required></label><button id="manager-load" type="submit">Load team &#8599;</button></form><p id="manager-status" class="fine" role="status"></p></section>
+        <div id="manager-view" hidden>
+          <div id="manager-summary" class="metrics"></div>
+          <div class="decision-grid">
+            <section class="panel pitch-panel"><div class="section-title"><div><span class="eyebrow">THEIR OFFICIAL SELECTION</span><h2 id="manager-formation">The team</h2></div><span class="comparison-legend"><i class="our-dot"></i> Predicted <i class="actual-dot"></i> Actual</span></div><div id="manager-pitch" class="pitch"></div><div id="manager-bench" class="bench"></div></section>
+            <div>
+              <section class="panel"><span class="eyebrow">THEIR ARMBAND</span><h2>Captaincy</h2><div id="manager-captain"></div></section>
+              <section class="panel"><span class="eyebrow">AGAINST OUR SHORTLIST</span><h2>Where we agreed</h2><div id="manager-overlap"></div></section>
+            </div>
+          </div>
+          <section class="panel"><span class="eyebrow">PICK BY PICK</span><h2>Our forecast against their return</h2><div id="manager-squad" class="table-scroll"></div></section>
+          <section class="panel"><span class="eyebrow">GAMEWEEK BY GAMEWEEK</span><h2>Their score, our derived XI, the official average</h2><div id="manager-history" class="table-scroll"></div></section>
+          <section class="panel capture-panel"><div><span class="eyebrow">PLAN THE NEXT MOVE</span><h2>Optimize transfers</h2><p class="fine">Searches transfers that raise our predicted captain-doubled XI for a gameweek whose deadline has not passed. This runs inference when no forecast is archived, so it can take a minute.</p></div><form id="optimize-form"><label>Gameweek<select id="optimize-gameweek" required></select></label><label>Free transfers<input id="optimize-free-transfers" type="number" min="0" max="15" step="1" placeholder="auto"></label><label>Bank &pound;m<input id="optimize-bank" type="number" min="0" max="200" step="0.1" placeholder="auto"></label><label>Max transfers<select id="optimize-max"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select></label><button id="optimize" type="submit">Find transfers &#8599;</button></form><p id="optimize-status" class="fine" role="status"></p></section>
+          <div id="optimize-summary" class="metrics"></div>
+          <section class="panel"><span class="eyebrow">CANDIDATE PLANS</span><h2>What each move is worth</h2><div id="optimize-plans"></div><div id="optimize-notes"></div></section>
+        </div>
       </section>
 
       <section id="view-players" role="tabpanel" aria-labelledby="tab-players" hidden>

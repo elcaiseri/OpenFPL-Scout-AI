@@ -21,6 +21,13 @@ import pandas as pd
 
 from src.data_archive import _json_safe, utc_datetime
 from src.observatory import actual_summary, gameweek_analysis, point_metrics, season_analysis
+from src.manager_lab import (
+    catalog as manager_catalog,
+    estimate_free_transfers,
+    optimize as optimize_transfers,
+    review as manager_review,
+    squad_from_picks,
+)
 from src.model_lab import ModelLab
 from src.scout_replay import load_replay
 
@@ -125,6 +132,129 @@ class AdminDashboard:
             raise ValueError("This player has no archived forecasts in the selected season")
         finalized = [p for p in history if p["result_state"] == "final"]
         return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics(finalized), "actual": actual_summary(finalized)})
+
+    def _entry_gameweeks(self, history):
+        played = sorted({int(n) for n in (number(r.get("event")) for r in history.get("current") or []) if n})
+        if not played:
+            raise ValueError("This entry has no completed gameweeks")
+        return played
+
+    def manager_review(self, entry_id, season=None, gameweek=None):
+        """Join a public FPL entry with our archived forecasts. Runs no inference."""
+        report = self._season_report(season)
+        client = self.scout.official_client
+        entry = client.mapped_manager(entry_id)
+        history = client.manager_history(entry_id)
+        played = self._entry_gameweeks(history)
+        selected = gameweek if gameweek in played else played[-1]
+        weeks = {w["gameweek"]: w for w in report["gameweeks"]}
+        detail = manager_review(client.mapped_manager_picks(entry_id, selected), weeks.get(selected), entry)
+        timeline = []
+        for row in history.get("current") or []:
+            gw = number(row.get("event"))
+            if gw is None:
+                continue
+            analysis = (weeks.get(int(gw)) or {}).get("analysis") or {}
+            squad = analysis.get("squad") or {}
+            bank, value = number(row.get("bank")), number(row.get("value"))
+            timeline.append({
+                "gameweek": int(gw),
+                "official_points": number(row.get("points")),
+                "bench_points": number(row.get("points_on_bench")),
+                "transfers": number(row.get("event_transfers")),
+                "transfers_cost": number(row.get("event_transfers_cost")),
+                "overall_rank": number(row.get("overall_rank")),
+                "bank": bank / 10 if bank is not None else None,
+                "squad_value": value / 10 if value is not None else None,
+                "our_predicted_points": squad.get("predicted_points"),
+                "our_actual_points": squad.get("actual_points"),
+                "official_average": analysis.get("average_manager_score"),
+            })
+        scored = [t for t in timeline if t["official_points"] is not None and t["our_actual_points"] is not None]
+        return _json_safe({
+            "season": report["season"],
+            "entry": {
+                "id": entry.get("id"), "name": entry.get("name"),
+                "manager": " ".join(filter(None, [entry.get("player_first_name"), entry.get("player_last_name")])) or None,
+                "overall_points": entry.get("summary_overall_points"),
+                "overall_rank": entry.get("summary_overall_rank"),
+                "current_event": entry.get("current_event"),
+                "started_event": entry.get("started_event"),
+                "squad_value": entry.get("last_deadline_value"),
+                "bank": entry.get("last_deadline_bank"),
+            },
+            "gameweek": selected, "gameweeks": played,
+            "review": detail, "timeline": timeline,
+            "comparison": {
+                "gameweeks": len(scored),
+                "entry_points": sum(t["official_points"] for t in scored) if scored else None,
+                "our_points": sum(t["our_actual_points"] for t in scored) if scored else None,
+                "official_average": sum(t["official_average"] for t in scored if t["official_average"] is not None) if scored else None,
+            },
+            "free_transfers": estimate_free_transfers(history, (played[-1] + 1)),
+            "chips": history.get("chips", []),
+            "note": (
+                "This entry's official points, ranks and bench totals are reported by FPL. "
+                "Our comparison covers only gameweeks where both an archived forecast and a "
+                "final official result exist."
+            ),
+        })
+
+    def manager_plan(self, entry_id, gameweek, *, free_transfers=None, bank=None, max_transfers=3):
+        """Plan transfers for an upcoming gameweek. Runs inference when no forecast is archived."""
+        client = self.scout.official_client
+        bootstrap = client.bootstrap()
+        history = client.manager_history(entry_id)
+        played = self._entry_gameweeks(history)
+        source_gameweek = max([gw for gw in played if gw < gameweek] or played)
+        picks = client.mapped_manager_picks(entry_id, source_gameweek)
+        report = self._season_report(None)
+        week = next((w for w in report["gameweeks"] if w["gameweek"] == gameweek), None)
+        if week and week["prediction_count"] and week.get("is_points_forecast"):
+            rows = week["players"]
+            source = {"kind": "archived-forecast", "captured_at_utc": week["captured_at_utc"], "gameweek": gameweek}
+        else:
+            frame = self.scout.get_official_predictions(gameweek)
+            rows = frame.to_dict("records")
+            source = {
+                "kind": "inference",
+                "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+                "gameweek": gameweek,
+                "strategy": frame.attrs.get("inference", {}).get("strategy"),
+            }
+            with self.lock:
+                self.cache.clear()
+        players = manager_catalog(rows, bootstrap)
+        squad, unforecast, unresolved = squad_from_picks(picks, players, bootstrap)
+        entry_history = picks.get("entry_history", {}) or {}
+        official_bank = number(entry_history.get("bank"))
+        funds = number(bank) if bank is not None else (official_bank / 10 if official_bank is not None else 0.0)
+        estimate = estimate_free_transfers(history, gameweek)
+        transfers = int(free_transfers) if free_transfers is not None else estimate["free_transfers"]
+        pool = [p for p in players.values() if p["id"] not in {s["id"] for s in squad}]
+        result = optimize_transfers(
+            squad, pool, bank=funds, free_transfers=transfers, max_transfers=max_transfers
+        )
+        warnings = []
+        if unforecast:
+            warnings.append("No forecast for " + ", ".join(sorted(unforecast)) + "; they are held but never fielded in a planned XI.")
+        if unresolved:
+            warnings.append(f"{len(unresolved)} pick(s) are not in the official player list and were dropped; the plan is incomplete.")
+        if bank is not None and official_bank is not None and abs(funds - official_bank / 10) > 1e-9:
+            warnings.append("Bank was overridden; affordability uses your figure, not the official one.")
+        if free_transfers is not None and transfers != estimate["free_transfers"]:
+            warnings.append("Free transfers were overridden; hit costs use your figure.")
+        return _json_safe({
+            **result,
+            "entry_id": entry_id,
+            "gameweek": gameweek,
+            "squad_gameweek": source_gameweek,
+            "forecast_source": source,
+            "bank_source": "owner-override" if bank is not None else "official-entry-history",
+            "free_transfer_estimate": estimate,
+            "free_transfer_source": "owner-override" if free_transfers is not None else estimate["basis"],
+            "warnings": warnings,
+        })
 
     def _system(self, report):
         metadata = report.get("latest_metadata", {})

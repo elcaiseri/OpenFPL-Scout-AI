@@ -80,8 +80,9 @@ clears it. Owner responses use `Cache-Control: no-store`. The login shell
 contains no system data, and owner routes are omitted from the public API
 catalog, OpenAPI, and sitemap.
 
-The Observatory is a system admin workspace. No FPL manager ID or linked
-personal entry is required. Seven views share season and gameweek selectors:
+The Observatory is a system admin workspace. It runs without any FPL manager
+ID; linking one is optional and covered below. Seven views share season and
+gameweek selectors:
 
 - **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
   within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
@@ -104,7 +105,8 @@ personal entry is required. Seven views share season and gameweek selectors:
   chips. Hindsight optimizes the same complete shortlist using actual results;
   it is not an achievable forecast. The official manager average is context,
   since real entries operate under different constraints. Incomplete or
-  mismatched squads do not generate a derived XI.
+  mismatched squads do not generate a derived XI. This view also hosts the
+  optional linked FPL entry and its transfer planner.
 - **Player intelligence:** searchable, filtered, paginated comparisons, CSV
   exports with timing provenance, and player dossiers with gameweek histories
   and saved component-model outputs. Dossier metrics include all final saved
@@ -119,6 +121,51 @@ personal entry is required. Seven views share season and gameweek selectors:
   enrichment, archive ledger, an explicit upcoming forecast capture action,
   and service telemetry. Telemetry covers this process since startup; latency
   uses its latest 200 non-dashboard requests.
+
+### Linking an FPL entry
+
+Manager decisions accepts a public FPL team ID. It is kept in the browser tab's
+memory only: it is never written to disk, never sent anywhere but this service,
+and clears when you lock the dashboard or reload, exactly like the owner key.
+
+Loading an entry reads its official picks, joins them to our archived forecast
+by player ID, and shows xPts against official pts for every pick, the official
+gameweek score, bench points, transfer costs, captaincy, the overlap with our
+own shortlist, and a gameweek timeline beside our derived XI and the official
+average. Official points, ranks and bench totals are reported by FPL and are
+never recomputed. Our predicted total applies the official multipliers to the
+same picks; it is not an alternative score. Reviewing an entry runs no
+inference. Picks become public only after each gameweek deadline.
+
+**Optimize transfers** searches for transfers that raise our predicted
+captain-doubled XI for a gameweek whose deadline has not passed. It starts from
+the squad that played the last completed gameweek, reuses an archived forecast
+for the target gameweek when one exists, and otherwise runs inference
+explicitly. Plans respect the 15-player shape, the three-per-club limit, and the
+available budget. Each plan is shown with its transfer count, any four-point
+hits, and the net gain after them, so a hit that does not pay for itself is
+visible rather than hidden.
+
+Two inputs cannot be read from public FPL endpoints, so both are estimated and
+both are overridable:
+
+- **Selling prices are not public.** Every sale is valued at the player's
+  current price. A squad holding price risers is therefore undervalued here and
+  one holding fallers is overvalued. Confirm affordability in the official game
+  before making a transfer.
+- **The free-transfer bank is not public.** It is replayed from the entry's
+  public transfer counts, honoring wildcard and free-hit weeks, and capped at
+  five. A transfer made and reversed inside one gameweek is invisible to this.
+
+Bank is taken from the entry's official gameweek history and can also be
+overridden. Whenever you override either figure, the response and the dashboard
+say so. One-transfer plans are searched exhaustively; two- and three-transfer
+plans use a beam search over the strongest single moves, so they are strong
+candidates rather than proven optima. Every plan is labelled accordingly.
+
+The same owner authorization protects `GET /api/admin/manager/{entry_id}` and
+`POST /api/admin/manager/{entry_id}/optimize?gameweek=4`. The planner rejects a
+gameweek whose deadline has passed.
 
 GW1 ownership cold-start scores are ranking inputs, not predicted points.
 They are evaluated through ranking quality and realized squad returns, and
@@ -185,7 +232,8 @@ the dashboard (or call `GET /api/admin/dashboard` with
 the data directory read-write. No sample results are used in the dashboard.
 The same owner authorization protects `GET /api/admin/players/{player_id}`,
 `GET /api/admin/models?dataset=holdout|cross-validation`, and
-`POST /api/admin/capture?gameweek=4`. Capture rejects expired deadlines.
+`POST /api/admin/capture?gameweek=4`, `GET /api/admin/manager/{entry_id}`, and
+`POST /api/admin/manager/{entry_id}/optimize`. Capture rejects expired deadlines.
 
 ## Docker
 

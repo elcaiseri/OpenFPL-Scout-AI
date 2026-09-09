@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
@@ -217,6 +218,61 @@ async def get_admin_player(
 @app.get("/api/admin/models", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
 async def get_admin_models(dataset: Literal["holdout", "cross-validation"] = "holdout"):
     return await run_in_threadpool(admin_dashboard.model_lab.report, dataset)
+
+
+@app.get("/api/admin/manager/{entry_id}", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def get_admin_manager(
+    entry_id: int = Path(..., ge=1),
+    season: Optional[str] = Query(None, pattern=r"^\d{4}-\d{4}$"),
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+):
+    """Review a public FPL entry against our archived forecasts. Runs no inference."""
+    try:
+        return await run_in_threadpool(
+            admin_dashboard.manager_review, entry_id, season, gameweek
+        )
+    except OfficialFPLNotFoundError as error:
+        raise HTTPException(status_code=404, detail="That FPL team ID was not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except OfficialFPLAPIError as error:
+        raise HTTPException(status_code=502, detail="Official FPL is unavailable.") from error
+
+
+@app.post("/api/admin/manager/{entry_id}/optimize", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
+async def optimize_admin_manager(
+    entry_id: int = Path(..., ge=1),
+    gameweek: int = Query(..., ge=1, le=38),
+    free_transfers: Optional[int] = Query(None, ge=0, le=15),
+    bank: Optional[float] = Query(None, ge=0, le=200),
+    max_transfers: int = Query(3, ge=1, le=3),
+):
+    """Explicit owner action: plan transfers for a gameweek that has not started."""
+    bootstrap = await _official_call(scout.official_client.bootstrap)
+    event = next((e for e in bootstrap.get("events", []) if e["id"] == gameweek), {})
+    deadline = utc_datetime(event.get("deadline_time"))
+    if deadline is None or deadline <= datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a gameweek whose official deadline has not passed.",
+        )
+    try:
+        return await run_in_threadpool(
+            partial(
+                admin_dashboard.manager_plan,
+                entry_id,
+                gameweek,
+                free_transfers=free_transfers,
+                bank=bank,
+                max_transfers=max_transfers,
+            )
+        )
+    except OfficialFPLNotFoundError as error:
+        raise HTTPException(status_code=404, detail="That FPL team ID was not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OfficialFPLAPIError as error:
+        raise HTTPException(status_code=502, detail="Official FPL is unavailable.") from error
 
 
 @app.post("/api/admin/capture", dependencies=[Depends(verify_admin_key)], include_in_schema=False)
