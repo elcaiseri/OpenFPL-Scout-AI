@@ -81,7 +81,7 @@ contains no system data, and owner routes are omitted from the public API
 catalog, OpenAPI, and sitemap.
 
 The Observatory is a system admin workspace. It runs without any FPL manager
-ID; linking one is optional and confined to its own view. Eight views share
+ID; linking one is optional and confined to its own view. Seven views share
 season and gameweek selectors:
 
 - **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
@@ -95,17 +95,17 @@ season and gameweek selectors:
   counts once; season metrics compare the same matched picks with finalized
   scores and honor the evidence scope. A missing return keeps the full
   shortlist's actual total unknown. Missing or mismatched squads are excluded.
-- **Gameweek centre:** official fixtures and football statistics, forecast vs
-  actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
-  scatter plots, surprises, and position/club breakdowns. Club totals are FPL
-  player points, not predicted match scores. Fixture scores are official only.
-- **Manager decisions:** a legal XI derived from the saved 15-player shortlist,
+  The expandable **Derived XI & captaincy audit** contains a legal XI derived from the saved 15-player shortlist,
   captain, bench, fixed-XI predicted/actual returns, and hindsight opportunity.
   This budget-free benchmark doubles the captain and applies no autosubs or
   chips. Hindsight optimizes the same complete shortlist using actual results;
   it is not an achievable forecast. The official manager average is context,
   since real entries operate under different constraints. Incomplete or
   mismatched squads do not generate a derived XI.
+- **Gameweek centre:** official fixtures and football statistics, forecast vs
+  actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
+  scatter plots, surprises, and position/club breakdowns. Club totals are FPL
+  player points, not predicted match scores. Fixture scores are official only.
 - **My FPL team:** an optional linked FPL entry. Scores its real picks with our
   models against the official results, and plans the next transfers. Empty and
   inert until you enter a team ID; see below.
@@ -121,7 +121,10 @@ season and gameweek selectors:
   populations and model versions remain distinct from live-season accuracy.
 - **System health:** model loading/inference status, feature coverage,
   enrichment, archive ledger, an explicit upcoming forecast capture action,
-  and service telemetry. Telemetry covers this process since startup; latency
+  and service telemetry. Suggested improvements prioritize recorded connection,
+  archive and model failures, missing input features, and the next deadline
+  without a verified forecast. Review actions jump to the relevant detail and
+  never trigger inference. Telemetry covers this process since startup; latency
   uses its latest 200 non-dashboard requests.
 
 ### My FPL team

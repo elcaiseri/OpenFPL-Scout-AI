@@ -39,9 +39,13 @@ def point_metrics(players):
         return dict.fromkeys(("mae", "rmse", "bias", "within_two_pct", "predicted_mean", "actual_mean", "predicted_total", "actual_total", "r2", "rank_correlation"), None) | {"count": 0}
     predicted, actual = np.array(pairs, dtype=float).T
     errors = predicted - actual
-    spread = float(np.sum((actual - actual.mean()) ** 2))
+    # Constant decimals can have a tiny nonzero std from mean rounding, while
+    # their ranks are identical. Test variation directly before normalization.
+    predicted_varies = bool(np.any(predicted != predicted[0]))
+    actual_varies = bool(np.any(actual != actual[0]))
+    spread = float(np.sum((actual - actual.mean()) ** 2)) if actual_varies else 0.0
     rank_correlation = None
-    if len(pairs) > 1 and np.std(predicted) > 0 and np.std(actual) > 0:
+    if predicted_varies and actual_varies:
         rank_correlation = float(np.corrcoef(pd.Series(predicted).rank(), pd.Series(actual).rank())[0, 1])
     return {
         "count": len(pairs), "mae": float(np.abs(errors).mean()),

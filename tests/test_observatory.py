@@ -2,6 +2,7 @@ import json
 import math
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -50,6 +51,37 @@ class ComparisonTests(unittest.TestCase):
         self.assertIsNone(result['r2'])
         self.assertIsNone(result['rank_correlation'])
         self.assertIsNone(point_metrics([])['actual_total'])
+
+    def test_constant_decimal_values_have_no_rank_correlation_or_runtime_warning(self):
+        for predicted, actual in [
+            ([0.1] * 3, [1, 2, 3]),
+            ([1, 2, 3], [0.1] * 3),
+            ([0.1] * 3, [0.1] * 3),
+        ]:
+            with self.subTest(predicted=predicted, actual=actual), warnings.catch_warnings():
+                warnings.simplefilter('error', RuntimeWarning)
+                result = point_metrics([
+                    {'expected_points': p, 'actual_points': a}
+                    for p, a in zip(predicted, actual)
+                ])
+                self.assertIsNone(result['rank_correlation'])
+                if len(set(actual)) == 1:
+                    self.assertIsNone(result['r2'])
+                self.assertAlmostEqual(result['mae'], sum(abs(p - a) for p, a in zip(predicted, actual)) / 3)
+                json.dumps(result, allow_nan=False)
+
+    def test_rank_correlation_preserves_ties_and_small_distinct_values(self):
+        for predicted, actual, expected in [
+            ([1, 1, 2], [3, 3, 1], -1),
+            ([1e-200, 2e-200, 3e-200], [1, 2, 3], 1),
+        ]:
+            with self.subTest(predicted=predicted), warnings.catch_warnings():
+                warnings.simplefilter('error', RuntimeWarning)
+                result = point_metrics([
+                    {'expected_points': p, 'actual_points': a}
+                    for p, a in zip(predicted, actual)
+                ])
+                self.assertAlmostEqual(result['rank_correlation'], expected)
 
     def test_calibration_uses_identical_matched_population(self):
         bins = calibration([{'expected_points': 1, 'actual_points': 3}, {'expected_points': 0, 'actual_points': None}, {'expected_points': 2, 'actual_points': -1}])
@@ -233,6 +265,21 @@ class ModelLabTests(unittest.TestCase):
     def test_absent_actual_label_is_not_an_evaluation(self):
         (self.root / 'holdout_predictions.csv').write_text('ridge\n2\n')
         self.assertFalse(self.lab.report()['available'])
+
+    def test_constant_baseline_is_safe_in_summary_timeline_and_calibration(self):
+        pd.DataFrame([
+            {'season': 2025, 'gameweek': 1, 'actual': actual, 'baseline_mean': 0.1}
+            for actual in [1, 2, 3]
+        ]).to_csv(self.root / 'holdout_predictions.csv', index=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            report = self.lab.report()
+        baseline = report['models'][0]
+        self.assertIsNone(baseline['rank_correlation'])
+        self.assertIsNone(baseline['timeline'][0]['rank_correlation'])
+        self.assertIsNone(baseline['calibration'][0]['rank_correlation'])
+        self.assertAlmostEqual(baseline['mae'], 1.9)
+        json.dumps(report, allow_nan=False)
 
 
 if __name__ == '__main__':

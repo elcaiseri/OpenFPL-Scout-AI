@@ -96,3 +96,13 @@ main section, #capture-form { scroll-margin-top: 100px; }
 @media(prefers-reduced-motion:reduce) { * { scroll-behavior: auto !important; } }
 
 #season-actuals { margin-top: 18px; margin-bottom: 0; }
+.audit-details { margin-bottom: 20px; scroll-margin-top: 165px; }
+.audit-details > summary { cursor: pointer; padding: 20px; border: 1px solid var(--line); border-radius: 11px; color: var(--lime); }
+.audit-details > summary span { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.audit-details[open] > summary { margin-bottom: 20px; }
+.audit-details > summary:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+.suggestion { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.suggestion:last-child { border-bottom: 0; padding-bottom: 0; }
+.suggestion > div { flex: 1 1 240px; min-width: 0; }
+.suggestion h3 { margin: 12px 0 6px; }
+.suggestion .fine { overflow-wrap: anywhere; }
