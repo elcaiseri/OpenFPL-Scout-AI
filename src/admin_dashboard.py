@@ -21,7 +21,7 @@ import pandas as pd
 
 from src.data_archive import _json_safe, utc_datetime
 from src.capture_history import CaptureHistory
-from src.observatory import actual_summary, gameweek_analysis, point_metrics, season_analysis
+from src.observatory import actual_summary, gameweek_analysis, player_value, point_metrics, season_analysis, value_metrics
 from src.manager_lab import (
     catalog as manager_catalog,
     estimate_free_transfers,
@@ -184,7 +184,7 @@ class AdminDashboard:
         if not history:
             raise ValueError("This player has no archived forecasts in the selected season")
         finalized = [p for p in history if p["result_state"] == "final"]
-        return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics(finalized), "actual": actual_summary(finalized)})
+        return _json_safe({"season": report["season"], "player": history[-1], "history": history, "metrics": metrics(finalized), "value": value_metrics(finalized), "actual": actual_summary(finalized)})
 
     def _entry_gameweeks(self, history):
         played = sorted({int(n) for n in (number(r.get("event")) for r in history.get("current") or []) if n})
@@ -569,6 +569,7 @@ class AdminDashboard:
             selected = squad_by_id.get(player_id)
             position = row.get("element_type")
             context = forecast.get("player_context", {}).get(str(player_id), {})
+            cost = number(context.get("now_cost"))
             players.append({
                 "id": player_id, "name": row["web_name"] if isinstance(row.get("web_name"), str) else str(player_id),
                 "team": row["team_name"] if isinstance(row.get("team_name"), str) else "—",
@@ -580,7 +581,7 @@ class AdminDashboard:
                 "goals": number(stats.get("goals_scored")), "assists": number(stats.get("assists")),
                 "bonus": number(stats.get("bonus")), "clean_sheets": number(stats.get("clean_sheets")),
                 "xg": number(stats.get("expected_goals")), "xa": number(stats.get("expected_assists")),
-                "price": number(context.get("now_cost")) / 10 if number(context.get("now_cost")) is not None else None,
+                "price": cost / 10 if cost is not None and cost > 0 else None,
                 "ownership": number(context.get("selected_by_percent", row.get("selected_by_percent"))),
                 "availability": context.get("status", row.get("status")),
                 "opponent": row.get("opponent_team_name"),
@@ -589,6 +590,7 @@ class AdminDashboard:
                 "in_squad": selected is not None,
                 "role": selected.get("role", "") if selected else "",
             })
+            players[-1].update(player_value(players[-1]))
         players.sort(key=lambda p: p["selection_score"], reverse=True)
         selected_players = [p for p in players if p["in_squad"]]
         # Reject a separately overwritten squad that no longer matches its forecast.

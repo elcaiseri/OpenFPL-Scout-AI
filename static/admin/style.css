@@ -151,3 +151,7 @@ main section, #capture-form { scroll-margin-top: 100px; }
   .scope-copy { flex-basis: 100%; }
   .heading .filters button { flex: 1; }
 }
+
+.value-chart { display: block; overflow-x: auto; }
+.value-chart svg { min-width: 620px; }
+.value-chart text { font-size: 10px; }

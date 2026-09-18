@@ -34,6 +34,33 @@ def actual_summary(players):
     return {"count": len(values), "points": total(values), "mean": sum(values) / len(values) if values else None}
 
 
+def player_value(player):
+    """Points per £1m at capture time; price is already expressed in millions."""
+    price = numeric(player.get("price"))
+    values = {}
+    for field in ("expected_points", "actual_points"):
+        points = numeric(player.get(field))
+        ratio = points / price if price is not None and price > 0 and points is not None else None
+        values[f"{field}_per_million"] = numeric(ratio)
+    return values
+
+
+def value_metrics(players):
+    """Average per-GW value on identical priced rows, never totals/latest price."""
+    rows = [{**p, **player_value(p)} for p in players]
+    priced = sum(numeric(p.get("price")) is not None and numeric(p.get("price")) > 0 for p in rows)
+    expected = [p["expected_points_per_million"] for p in rows]
+    actual = [p["actual_points_per_million"] for p in rows]
+    pairs = [(a, b) for a, b in zip(expected, actual) if a is not None and b is not None]
+    return {
+        "rows": len(rows), "priced": priced, "missing_price": len(rows) - priced,
+        "expected_count": sum(v is not None for v in expected),
+        "actual_count": sum(v is not None for v in actual), "count": len(pairs),
+        "expected_mean": sum(a for a, _ in pairs) / len(pairs) if pairs else None,
+        "actual_mean": sum(b for _, b in pairs) / len(pairs) if pairs else None,
+    }
+
+
 def point_metrics(players):
     pairs = [(numeric(p.get("expected_points")), numeric(p.get("actual_points"))) for p in players]
     pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
@@ -293,7 +320,7 @@ def season_analysis(weeks, verified=False):
     leaders = []
     for player_id, history in by_player.items():
         last = history[-1]
-        leaders.append({"id": player_id, "name": last["name"], "team": last["team"], "position": last["position"], "gameweeks": len(history), **point_metrics(history), "actual": actual_summary(history), "scored_points": actual_summary(history)["points"]})
+        leaders.append({"id": player_id, "name": last["name"], "team": last["team"], "position": last["position"], "gameweeks": len(history), **point_metrics(history), "value": value_metrics(history), "actual": actual_summary(history), "scored_points": actual_summary(history)["points"]})
     leaders.sort(key=lambda p: (-(p["scored_points"] or 0), p["id"]))
     ranked_weeks = [w for w in completed if w["players"] and any(p.get("actual_points") is not None for p in w["players"])]
     return {

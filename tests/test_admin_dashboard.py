@@ -60,6 +60,34 @@ def forecast_bundle():
 
 
 class DashboardTests(unittest.TestCase):
+    def test_value_uses_archived_price_in_millions_and_is_available_in_dossier(self):
+        self.bundle['player_context'] = {'1': {'now_cost': 55}, '2': {'now_cost': 40},
+                                         '3': {'now_cost': 0}, '4': {'now_cost': -50}}
+        self.save_bundle()
+        report = self.dashboard.report()
+        players = {p['id']: p for p in report['selected']['players']}
+        self.assertEqual(players[1]['price'], 5.5)
+        self.assertAlmostEqual(players[1]['expected_points_per_million'], 4 / 5.5)
+        self.assertAlmostEqual(players[1]['actual_points_per_million'], 6 / 5.5)
+        self.assertEqual(players[2]['actual_points_per_million'], 0)
+        for pid in (3, 4):
+            self.assertIsNone(players[pid]['price'])
+            self.assertIsNone(players[pid]['actual_points_per_million'])
+        dossier = self.dashboard.player_report(1)
+        self.assertEqual(dossier['value']['count'], 1)
+        self.assertAlmostEqual(dossier['value']['actual_mean'], 6 / 5.5)
+        self.assertAlmostEqual(dossier['history'][0]['expected_points_per_million'], 4 / 5.5)
+
+    def test_legacy_price_is_unknown_and_ownership_is_not_expected_value(self):
+        self.bundle['metadata']['inference']['strategy'] = 'ownership-cold-start'
+        self.bundle['player_context'] = {'1': {'now_cost': 50}}
+        self.save_bundle()
+        players = {p['id']: p for p in self.dashboard.report()['selected']['players']}
+        self.assertIsNone(players[1]['expected_points_per_million'])
+        self.assertEqual(players[1]['actual_points_per_million'], 1.2)
+        self.assertIsNone(players[2]['price'])
+        self.assertIsNone(players[2]['actual_points_per_million'])
+
     def test_retrospective_model_points_keep_original_picks_and_never_become_verified(self):
         self.bundle['metadata']['inference']['strategy'] = 'ownership-cold-start'
         self.save_bundle()
