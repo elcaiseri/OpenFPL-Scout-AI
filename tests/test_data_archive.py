@@ -141,6 +141,9 @@ class DataArchiveTests(unittest.TestCase):
             self.assertEqual(metadata["prediction_gameweek"], 2)
             self.assertEqual(metadata["live_gameweeks"], [1, 2])
             self.assertEqual(client.live_calls, [1, 2])
+            diagnostics = json.loads((season / 'diagnostics/gw_02.json').read_text())
+            self.assertEqual(diagnostics['baseline_predictions']['last_gameweek'], {'10': 6})
+            self.assertEqual(diagnostics['baseline_predictions']['recent_three_gameweeks'], {'10': 6})
 
     def test_does_not_refetch_finalized_live_gameweek(self):
         with tempfile.TemporaryDirectory() as directory:

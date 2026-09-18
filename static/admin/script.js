@@ -67,6 +67,8 @@
     $('owner-key').value = ''; $('dashboard').hidden = true; $('login').hidden = false; $('lock').hidden = true;
     $('player-dialog').close();
     ['season-actuals','season-rankings','scout-pair','scout-metrics','scout-captain','scout-vice','scout-player-chart','scout-players','scout-season-metrics','scout-season-chart','scout-history','scout-positions','summary','season-pair','season-chart','trend','week-map','insights','season-clubs','week-overview','fixtures','football-stats','our-leaders','actual-leaders','ranking-metrics','scatter','gw-calibration','underperform','overperform','positions','week-clubs','decision-metrics','pitch','bench','captain-audit','hindsight','decision-bars','decision-history','players','season-players','live-models','training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','system-suggestions','pipeline','model-status','feature-coverage','archive-ledger','runtime','warnings','player-detail-metrics','player-history-chart','player-history-table','player-components','manager-summary','manager-pitch','manager-bench','manager-captain','manager-overlap','manager-squad','manager-history','optimize-summary','optimize-plans','optimize-notes'].forEach(id => $(id).replaceChildren());
+    ['season-coverage','week-coverage','season-errors','season-calibration','season-calibration-counts','season-baselines','position-heatmap','heatmap-context','ranking-context','week-errors','week-baselines','gw-calibration-counts','live-model-coverage','training-comparison-context','training-sample-context','training-errors','training-calibration-counts'].forEach(id => $(id).replaceChildren());
+    ['season-ranking-size','week-ranking-size'].forEach(id => $(id).value = '10'); $('heatmap-metric').value = 'mae';
     ['season','gameweek','training-model','capture-gameweek','optimize-gameweek'].forEach(id => $(id).replaceChildren());
     ['scout-context','scout-population','scout-result','scout-season-context','search','player-title','player-subtitle','capture-result','capture-availability','training-context','evaluation-context','updated','season-population','season-bias','week-context','result-badge','fixture-progress','decision-context','formation-title','player-count','page-count','model-context','runtime-scope','manager-id','manager-status','manager-formation','optimize-status','optimize-free-transfers','optimize-bank'].forEach(id => {if ($(id).tagName === 'INPUT') $(id).value = ''; else $(id).textContent = '';});
     $('scout-decisions').open = false;
@@ -188,12 +190,12 @@
     const r = state.report, tab = state.tab, a = currentAnalytics();
     const upcoming = r.gameweeks.filter(w => Date.parse(w.deadline_time) > Date.now()).map(w => w.gameweek);
     const inputs = {
-      overview: [a, r.gameweeks, r.selected?.gameweek],
+      overview: [a, r.gameweeks, r.selected?.gameweek, $('season-ranking-size').value, $('heatmap-metric').value, $('evaluation-mode').value],
       scout: [r.selected, a.scout, a.decisions, $('evaluation-mode').value],
-      gameweek: [r.selected],
+      gameweek: [r.selected, $('week-ranking-size').value],
       entry: [state.manager, state.plan, r.season, upcoming],
       players: [r.selected, a.players, state.page, ...['search','position','scope','sort'].map(id => $(id).value)],
-      models: [r.selected?.analysis.models, r.selected?.result_state, a.models, $('live-model-window').value],
+      models: [r.selected?.analysis.models, r.selected?.result_state, a.models, a.coverage, $('live-model-window').value, $('evaluation-mode').value],
       system: [r.system, r.runtime, r.gameweeks, r.official_status, r.season, upcoming],
     };
     const signature = JSON.stringify(inputs[tab]);
@@ -201,6 +203,69 @@
     const renderers = {overview: renderOverview, scout: () => {renderScout(); renderDecisions();}, gameweek: renderGameweek,
       entry: () => {renderManager(); renderPlan();}, players: renderPlayers, models: renderLiveModels, system: renderSystem};
     renderers[tab](); state.rendered.set(tab, signature);
+  }
+  function renderCoverage(id, counts = {}, detail = '') {
+    const c = counts || {}, items = [
+      ['Matched forecasts', `${fmt(c.matched || 0,0)} / ${fmt(c.forecasted || 0,0)} (${percent(c.matched_pct)})`],
+      ['Missing results', fmt(c.missing_results || 0,0)],
+      ['Ranking-only rows', fmt(c.ranking_only || 0,0)],
+    ];
+    $(id).replaceChildren(...items.map(([label, score]) => {const item=el('span');item.append(el('strong',score),document.createTextNode(` ${label.toLowerCase()}`));return item;}), note(detail));
+  }
+  function baselineTable(id, rows) {
+    table(id,['Saved baseline','Paired / eligible rows','Ensemble MAE','Baseline MAE','MAE improvement · pts','MAE improvement · %'],rows.map(row=>[
+      row.label,`${row.count} / ${row.candidate_count}`,fmt(row.ensemble_mae),fmt(row.baseline_mae),signed(row.improvement_points),percent(row.improvement_pct),
+    ]));
+    if (!rows.some(row=>row.count)) $(id).append(note('No matched saved baseline evidence yet. New forecast captures record baselines; earlier runs are not reconstructed from later data.'));
+  }
+  function renderHeatmap(weeks) {
+    const field=$('heatmap-metric').value;
+    $('heatmap-context').textContent=`${field==='mae'?'Darker pink means larger absolute error.':'Blue: underprediction. Pink: overprediction. Stronger color means larger bias.'} Zero is a real result; a dash is unavailable or outside the evidence scope. Each cell shows its matched sample count. Select a cell to inspect that gameweek.`;
+    table('position-heatmap',['Position',...weeks.map(w=>`GW${w.gameweek}`)],['GK','DEF','MID','FWD'].map(position=>[
+      position,...weeks.map(week=>{
+        const cell=week.positions.find(p=>p.position===position), score=cell?.[field];
+        if (score==null || !cell?.count) {
+          const missing=el('span','—','heatmap-missing');
+          missing.title=`${position} · GW${week.gameweek}: ${week.included?'No matched points forecasts':week.result_state!=='final'?'Awaiting final results':'Outside verified evidence scope'} · ${human(week.forecast_state)}`;
+          return missing;
+        }
+        const button=el('button',field==='bias'?signed(score):fmt(score));button.type='button';
+        button.append(el('small',`n=${cell.count}`));
+        const size=Math.abs(score);button.dataset.level=size===0?'zero':size<=1?'1':size<=2?'2':size<=4?'3':'4';
+        button.dataset.direction=field==='bias'&&score<0?'under':'over';button.dataset.focusKey=`heat-${position}-${week.gameweek}`;
+        button.title=`${position} · GW${week.gameweek} · ${field.toUpperCase()} ${fmt(score)} · ${cell.count} matched forecasts · ${human(week.forecast_state)}`;
+        button.setAttribute('aria-label',button.title);button.addEventListener('click',()=>selectWeek(week.gameweek));return button;
+      }),
+    ]));
+  }
+  function histogram(id, distribution) {
+    if (!distribution?.count) {empty(id,'No matched points forecasts in this population. Missing results and ownership-only scores are excluded.');return;}
+    const bins=distribution.bins, svg=chart(id,`Error distribution for ${distribution.count} matched forecasts. Error equals predicted minus actual points. ${distribution.bins.map(bin=>`${bin.label}: ${bin.count} forecasts`).join('; ')}.`);
+    $(id).classList.add('distribution-chart');
+    const max=Math.max(1,...bins.map(b=>b.count)), y=yAxis(svg,0,max*1.15), slot=548/bins.length;
+    const short=['<−8','−8…−4','−4…−2','−2…0','0','0…2','2…4','4…8','>8'];
+    bins.forEach((bin,index)=>{
+      const x=52+slot*(index+.5), width=slot*.7;
+      const bar=svgNode('rect',{x:x-width/2,y:y(bin.count),width,height:Math.max(0,y(0)-y(bin.count)),rx:2,class:`error-bar ${bin.direction}`});
+      chartTip(bar,`${bin.label} points: ${bin.count} forecasts (${fmt(100*bin.count/distribution.count,1)}%)`);
+      svg.append(bar,svgNode('text',{x,y:y(bin.count)-5,'text-anchor':'middle'},String(bin.count)),svgNode('text',{x,y:220,'text-anchor':'middle'},short[index]));
+    });
+    const zero=52+slot*4.5;
+    svg.append(svgNode('line',{x1:zero,x2:zero,y1:16,y2:202,class:'reference'}),svgNode('text',{x:52,y:10},`Matched n=${distribution.count}`),svgNode('text',{x:325,y:238,'text-anchor':'middle'},'Underprediction ← Error (points) → Overprediction'));
+  }
+  function calibrationChart(id, tableId, rows) {
+    table(tableId,['Forecast band','Matched n','Mean predicted','Mean actual'],rows.map(row=>[row.band,fmt(row.count,0),value(row.predicted_mean,'ours'),value(row.actual_mean,'actual')]));
+    $(tableId).append(note('Each point uses the same players for both means. Dashed diagonal = perfect calibration. Sample counts describe coverage, not confidence intervals. Empty bands remain unavailable.'));
+    const matched=rows.filter(row=>row.count&&row.predicted_mean!=null&&row.actual_mean!=null);
+    if(!matched.length){empty(id,'No matched points forecasts for calibration.');return;}
+    const svg=chart(id,'Calibration: mean predicted versus mean actual points by forecast band. Dashed diagonal is perfect calibration.'),[lo,hi]=chartRange(matched.flatMap(row=>[row.predicted_mean,row.actual_mean])),y=yAxis(svg,lo,hi),x=v=>46+(v-lo)/(hi-lo)*558;
+    for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4;svg.append(svgNode('text',{x:x(v),y:218,'text-anchor':'middle'},fmt(v,1)));}
+    svg.append(svgNode('line',{x1:x(lo),x2:x(hi),y1:y(lo),y2:y(hi),class:'reference'}),svgNode('text',{x:46,y:11},'Mean actual points ↑'),svgNode('text',{x:325,y:238,'text-anchor':'middle'},'Mean predicted points →'));
+    matched.forEach(row=>{
+      const point=svgNode('circle',{cx:x(row.predicted_mean),cy:y(row.actual_mean),r:6,class:'actual-point point'});
+      chartTip(point,`${row.band} predicted points · n=${row.count} · mean forecast ${fmt(row.predicted_mean)}, mean actual ${fmt(row.actual_mean)}`);
+      svg.append(point);
+    });
   }
   function renderOverview() {
     const r = state.report, a = currentAnalytics(), m = a.metrics, weeks = a.timeline.filter(w => w.count);
@@ -210,8 +275,15 @@
     $('season-bias').textContent = m.bias == null ? 'No finalized points comparisons in this evidence scope yet.' : `We ${m.bias >= 0 ? 'overpredicted' : 'underpredicted'} by ${fmt(Math.abs(m.bias))} points per matched player on average.`;
     $('summary').replaceChildren(metric('MEAN ABSOLUTE ERROR',fmt(m.mae),'Average distance from the official score','ours'),metric('ROOT MEAN SQUARED ERROR',fmt(m.rmse),'Larger misses receive more weight'),metric('WITHIN TWO POINTS',percent(m.within_two_pct),'Share of matched points forecasts','actual'),metric('RANK CORRELATION',fmt(m.rank_correlation),'Spearman · −1 to +1; higher is better'));
     $('season-actuals').replaceChildren(metric('ALL ACTUAL POINTS',fmt(a.actual.points,0),'Available official returns, including ranking-only runs','actual'),metric('OFFICIAL RETURNS',fmt(a.actual.count,0),'Scored archived player-gameweeks'),metric('COMPLETED GAMEWEEKS',fmt(a.actual.gameweeks,0),'Gameweeks contributing actual returns'),metric('ACTUAL MEAN RETURN',fmt(a.actual.mean),'Across all available official returns','actual'));
-    table('season-rankings',['GW','Our top 10 · actual pts','Actual top 10 · pts','Overlap','Haul rate','NDCG'],a.selection.map(w=>[gwButton(w.gameweek),fmt(w.chosen_actual,0),fmt(w.best_actual,0),percent(w.top10_overlap_pct),percent(w.haul_rate_pct),fmt(w.ndcg)]));
-    lineChart('season-chart',a.timeline.map(w=>({...w,actual_mean:w.actual.mean})),'gameweek',[['predicted_mean','Our mean forecast','ours'],['actual_mean','Official mean return','actual']],{label:'Mean predicted and actual points by gameweek; ranking-only weeks show actual points with no invented prediction',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
+    const rankSize = Number($('season-ranking-size').value), selections = a.selection_windows?.[rankSize] || a.selection;
+    table('season-rankings',['GW','Evidence',`Our top ${rankSize} · pts`,`Actual top ${rankSize} · pts`,'Selected / K','Scored / archived','Overlap','Haul rate','NDCG'],selections.map(w=>[gwButton(w.gameweek),human(w.forecast_state),fmt(w.chosen_actual,0),fmt(w.best_actual,0),`${w.count} / ${rankSize}`,`${w.pool} / ${w.forecasted_pool ?? w.pool}`,percent(w.overlap_pct ?? w.top10_overlap_pct),percent(w.haul_rate_pct),fmt(w.ndcg)]));
+    renderCoverage('season-coverage', a.coverage, `${a.coverage?.verified_gameweeks || 0} verified / ${a.coverage?.evaluated_gameweeks || 0} evaluated gameweeks · ${a.coverage?.pending_gameweeks || 0} awaiting final results. Scope: ${$('evaluation-mode').selectedOptions[0].textContent}.`);
+    histogram('season-errors', a.error_distribution);
+    calibrationChart('season-calibration', 'season-calibration-counts', a.calibration);
+    baselineTable('season-baselines', a.baseline_comparisons || []);
+    renderHeatmap(a.position_heatmap || []);
+
+    lineChart('season-chart',a.timeline.map(w=>({...w,actual_mean:w.is_points_forecast?w.actual_mean:w.actual.mean})),'gameweek',[['predicted_mean','Our mean forecast','ours'],['actual_mean','Official mean return','actual']],{label:'Mean predicted and actual points by gameweek; ranking-only weeks show actual points with no invented prediction',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
     $('trend-context').textContent = 'Mean absolute error in points. Includes only final points comparisons within the selected evidence scope.';
     lineChart('trend',weeks,'gameweek',[['mae','Mean absolute error','ours']],{label:'Prediction error by gameweek',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
     $('week-map').replaceChildren(...r.gameweeks.map(w=>{const b=el('button',String(w.gameweek));b.type='button';b.dataset.focusKey=`gw-${w.gameweek}`;b.dataset.state=!w.prediction_count?'missing':w.result_state==='final'?(w.eligible?'final':'retrospective'):w.result_state==='awaiting-results'?'upcoming':'retrospective';b.classList.toggle('active',w.gameweek===r.selected?.gameweek);b.title=`GW${w.gameweek} · ${human(w.forecast_state)} · ${human(w.result_state)}`;b.setAttribute('aria-label',b.title);b.addEventListener('click',()=>selectWeek(w.gameweek));return b;}));
@@ -297,16 +369,19 @@
     badge('result-badge',human(w?.result_state),w?.result_state==='final');
     $('week-context').textContent = w ? `GW${w.gameweek} · ${w.replay?'Retrospective model xPts':w.is_points_forecast?'Points forecast':'Ownership ranking, not a points forecast'} · ${human(w.forecast_state)} · computed / saved ${date(w.captured_at_utc)} · deadline ${date(w.deadline_time)} · results observed ${date(w.actuals_at_utc)}` : 'No archived gameweek yet.';
     const m=w?.metrics||{};
+    renderCoverage('week-coverage', a?.coverage, `${human(w?.forecast_state)} forecast · ${human(w?.result_state)} results. This gameweek audit includes the saved run regardless of Season evidence.`);
+    histogram('week-errors', a?.error_distribution); baselineTable('week-baselines', a?.baseline_comparisons || []);
     $('week-overview').replaceChildren(metric('OUR MEAN POINTS',fmt(m.predicted_mean),'Matched points forecasts only','ours'),metric('ACTUAL MEAN POINTS',fmt(m.actual_mean),'Same matched player population','actual'),metric('ACTUAL SCORES MATCHED',`${w?.matched_actuals||0} / ${w?.prediction_count||0}`,'Missing results remain unknown'),metric('OFFICIAL MANAGER AVERAGE',fmt(a?.average_manager_score,0),'Official FPL score, not a player average','actual'));
     badge('fixture-progress',`${a?.finished_fixtures||0} / ${a?.fixture_count||0} finished`,!!a?.fixture_count && a.finished_fixtures===a.fixture_count);
     $('fixtures').replaceChildren(...(a?.fixtures||[]).map(f=>{const card=el('article',null,'fixture'),score=el('div',null,'fixture-score');score.append(el('span',f.home),el('strong',`${fmt(f.home_score,0)} : ${fmt(f.away_score,0)}`),el('span',f.away));card.append(score,el('p',`${f.finished?'Full time':f.started?'In progress':'Upcoming'} · ${date(f.kickoff_time)} · FDR ${f.home_difficulty??'—'} / ${f.away_difficulty??'—'}`));return card;}));
     if(!a?.fixtures.length) empty('fixtures','No official fixtures available for this gameweek.');
     $('football-stats').replaceChildren(...(a?.official_totals||[]).map(s=>{const n=el('div');n.append(el('strong',fmt(s.actual,0)),el('small',human(s.name)));return n;}));
-    leaderboard('our-leaders',a?.selection.our_top||[]);leaderboard('actual-leaders',a?.selection.actual_top||[]);
-    const ranking=a?.selection||{};
-    $('ranking-metrics').replaceChildren(metric('TOP-10 OVERLAP',percent(ranking.top10_overlap_pct),'Our top ten vs actual top ten in the scored pool'),metric('TOP-10 HAUL RATE',percent(ranking.haul_rate_pct),'Share of our top ten returning 6+ points'),metric('RANKING QUALITY',fmt(ranking.ndcg),'NDCG@10 · actual-point gain; 1 is ideal'),metric('OUR TOP-10 ACTUAL RETURN',fmt(ranking.chosen_actual,0),`Actual top ten returned ${fmt(ranking.best_actual,0)} points`,'actual'));
+    const size = Number($('week-ranking-size').value), ranking = a?.selection_windows?.[size] || a?.selection || {};
+    $('ranking-context').textContent = `Top ${size}: ${ranking.count || 0} selections from ${ranking.pool || 0} scored / ${ranking.forecasted_pool || 0} archived players. ${ranking.missing_results || 0} missing results excluded. Smaller pools use all scored players; ties break by player ID.`;
+    leaderboard('our-leaders',ranking.our_top||[],size);leaderboard('actual-leaders',ranking.actual_top||[],size);
+    $('ranking-metrics').replaceChildren(metric(`TOP-${size} OVERLAP`,percent(ranking.overlap_pct ?? ranking.top10_overlap_pct),`${ranking.count || 0} evaluated selections`),metric(`TOP-${size} HAUL RATE`,percent(ranking.haul_rate_pct),'Share of evaluated selections returning 6+ points'),metric('RANKING QUALITY',fmt(ranking.ndcg),`NDCG@${size} · nonnegative actual-point gain; 1 is ideal`),metric(`OUR TOP-${size} ACTUAL RETURN`,fmt(ranking.chosen_actual,0),`Actual top ${size} returned ${fmt(ranking.best_actual,0)} points`,'actual'));
     scatterChart('scatter',w?.players||[],'All matched player forecasts vs official points');
-    pairedBars('gw-calibration',a?.calibration||[],'band','predicted_mean','actual_mean');
+    calibrationChart('gw-calibration','gw-calibration-counts',a?.calibration||[]);
     leaderboard('underperform',a?.biggest_under||[],5);leaderboard('overperform',a?.biggest_over||[],5);
     comparisonTable('positions',(w?.positions||[]).map(p=>({...p,name:p.position})),'Position');comparisonTable('week-clubs',a?.clubs||[],'Club');
   }
@@ -441,12 +516,14 @@
     table('season-players',['Player','GWs','Matched','Matched xPts','Matched pts','All actual pts','MAE'],currentAnalytics().players.filter(p=>p.actual.count).slice(0,20).map(p=>[playerName(p),p.gameweeks,p.count,value(p.predicted_total,'ours'),value(p.actual_total,'actual'),value(p.actual.points,'actual'),fmt(p.mae)]));
   }
   function modelTable(id, models) {
-    table(id,['Model / baseline','Matched','Our mean','Actual mean','MAE ↓','RMSE ↓','Bias','R²','Rank ρ'],models.map(m=>[human(m.name),fmt(m.count,0),value(m.predicted_mean,'ours'),value(m.actual_mean,'actual'),fmt(m.mae),fmt(m.rmse),signed(m.bias),fmt(m.r2),fmt(m.rank_correlation)]));
+    table(id,['Model / baseline','Available','Shared rows','Our mean','Actual mean','MAE ↓','RMSE ↓','Bias','R²','Rank ρ'],[...models].sort((a,b)=>(a.comparison?.mae ?? Infinity)-(b.comparison?.mae ?? Infinity)).map(model=>{const m=model.comparison || {};return [human(model.name),fmt(model.count,0),fmt(m.count || 0,0),value(m.predicted_mean,'ours'),value(m.actual_mean,'actual'),fmt(m.mae),fmt(m.rmse),signed(m.bias),fmt(m.r2),fmt(m.rank_correlation)];}));
   }
   function renderLiveModels() {
     const w=state.report.selected, isWeek=$('live-model-window').value==='gameweek';
     const models=isWeek?(w?.result_state==='final'?w.analysis.models:[]):currentAnalytics().models;
     modelTable('live-models',models);
+    const shared = models.find(m=>m.comparison?.count)?.comparison.count || 0;
+    $('live-model-coverage').textContent = `${shared} shared player-gameweek rows across ${models.filter(m=>m.count).length} models with scored predictions. ${isWeek?`GW${w?.gameweek || '—'} · ${human(w?.forecast_state)} · final results required`:$('evaluation-mode').selectedOptions[0].textContent}. Models with zero available rows do not participate. No shared rows means no fair comparison.`;
     if(isWeek&&w?.result_state!=='final') $('live-models').append(note('This gameweek has no finalized results yet. Saved model estimates are available in each player dossier.'));
     else if(!models.some(m=>m.name!=='ensemble'&&m.count)) $('live-models').append(note('Individual model outputs were not recorded for these completed gameweeks. New forecast captures retain them for future comparisons.'));
   }
@@ -454,7 +531,7 @@
     if(!state.key)return;
     const epoch=state.epoch;
     $('reload-models').disabled=true;$('training-context').textContent='Reading recorded model evaluations…';state.training=null;
-    ['training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features'].forEach(id=>$(id).replaceChildren());
+    ['training-metrics','training-table','training-scatter','training-calibration','training-trend','folds','training-features','training-errors','training-calibration-counts','training-comparison-context','training-sample-context'].forEach(id=>$(id).replaceChildren());
     options('training-model',[],null);
     try {const r=await api(`/api/admin/models?dataset=${encodeURIComponent($('training-dataset').value)}`,{channel:'models'});if(!r)return;state.training=r;renderTraining();}
     catch(e){$('training-context').textContent=e.message;}
@@ -464,9 +541,12 @@
     const r=state.training;if(!r)return;
     if(!r.available){$('training-context').textContent=r.message;return;}
     $('training-context').textContent=`${r.note} Trained ${date(r.trained_at_utc)}. Evaluation season labels: ${r.evaluation_seasons.join(', ')}. ${r.warnings.join(' ')}`;
-    const best=r.models.find(m=>m.count),ensemble=r.models.find(m=>m.name==='weighted_ensemble'),baseline=r.models.find(m=>m.kind==='baseline'&&m.count);
-    const lift=ensemble&&baseline&&baseline.mae>0?100*(baseline.mae-ensemble.mae)/baseline.mae:null;
-    $('training-metrics').replaceChildren(metric('EVALUATION ROWS',fmt(r.rows,0),`${human(r.dataset)} · ${human(r.validation_strategy)}`),metric('LOWEST RECORDED MAE',fmt(best?.mae),human(best?.name),'ours'),metric('ENSEMBLE VS BEST BASELINE',percent(lift),'MAE reduction; positive means ensemble improves'),metric('MODEL INPUTS',fmt(r.feature_count,0),`Dataset season labels: ${r.dataset_seasons.join(', ')}`));
+    const compared = [...r.models].filter(m=>m.comparison?.count).sort((a,b)=>a.comparison.mae-b.comparison.mae);
+    const best=compared[0],ensemble=r.models.find(m=>m.name==='weighted_ensemble'),baseline=compared.find(m=>m.kind==='baseline');
+    const improvement=ensemble?.comparison?.count && baseline ? baseline.comparison.mae-ensemble.comparison.mae : null;
+    const lift=improvement!=null && baseline.comparison.mae>0 ? 100*improvement/baseline.comparison.mae : null;
+    $('training-metrics').replaceChildren(metric('SHARED EVALUATION ROWS',`${fmt(r.comparison_count || 0,0)} / ${fmt(r.rows,0)}`,`${human(r.dataset)} · ${human(r.validation_strategy)}`),metric('LOWEST SHARED-ROW MAE',fmt(best?.comparison.mae),human(best?.name),'ours'),metric('ENSEMBLE VS BEST BASELINE',percent(lift),`${signed(improvement)} points MAE improvement on identical rows; baseline ${human(baseline?.name)}`),metric('MODEL INPUTS',fmt(r.feature_count,0),`Dataset season labels: ${r.dataset_seasons.join(', ')}`));
+    $('training-comparison-context').textContent=`All comparison metrics use ${r.comparison_count || 0} shared rows across ${(r.comparison_models || []).length} models/baselines with available labels. Available counts show their individual coverage. Zero available rows are excluded from the intersection; zero shared rows means unavailable comparison. Positive MAE improvement favors the ensemble; percent improvement is undefined for a zero-error baseline.`;
     modelTable('training-table',r.models);
     options('training-model',r.models.map(m=>[m.name,human(m.name)]),ensemble?.name||best?.name);
     $('training-features').replaceChildren(...r.features.map(f=>el('span',human(f))));
@@ -475,7 +555,9 @@
   function renderTrainingModel(){
     const r=state.training,m=r?.models.find(m=>m.name===$('training-model').value);if(!m)return;
     scatterChart('training-scatter',m.scatter,`${human(m.name)} recorded predictions and labels`);
-    pairedBars('training-calibration',m.calibration,'band','predicted_mean','actual_mean');
+    calibrationChart('training-calibration','training-calibration-counts',m.calibration);
+    histogram('training-errors',m.error_distribution);
+    $('training-sample-context').textContent=`Individual-model diagnostics use all ${m.count} valid rows for ${human(m.name)}; the leaderboard above uses the ${r.comparison_count || 0} common rows shared by its participating models. These are recorded training evaluations, not live verified forecasts.`;
     lineChart('training-trend',m.timeline,'gameweek',[['mae','Mean absolute error','ours']],{label:'Recorded error by training season and gameweek',tick:w=>`${w.season} / ${w.gameweek}`});
     const folds=r.folds.filter(f=>f.model===m.name);
     table('folds',['Model','Fold','Training window','Validation window','Train rows','Valid rows','MAE','RMSE'],folds.map(f=>[human(f.model),f.fold,`${f.train_period_start} → ${f.train_period_end}`,`${f.validation_period_start} → ${f.validation_period_end}`,fmt(f.train_rows,0),fmt(f.validation_rows,0),fmt(f.mae),fmt(f.rmse)]));
@@ -629,6 +711,7 @@
   $('export').addEventListener('click',exportCSV);
   $('scout-export').addEventListener('click',()=>{if(state.report)exportPlayers(state.report.selected?.analysis.scout.players||[], 'openfpl-scout');});
   $('scout-capture').addEventListener('click',()=>{setTab('system');$('capture-form').scrollIntoView({block:'center'});$('capture-gameweek').focus({preventScroll:true});});
+  ['season-ranking-size','week-ranking-size','heatmap-metric'].forEach(id=>$(id).addEventListener('change',()=>{if(state.report)renderActive();}));
   $('live-model-window').addEventListener('change',()=>{if(state.report){renderScope();renderActive();}});
   $('training-dataset').addEventListener('change',loadTraining);$('reload-models').addEventListener('click',loadTraining);$('training-model').addEventListener('change',renderTrainingModel);
   $('capture-form').addEventListener('submit',captureForecast);

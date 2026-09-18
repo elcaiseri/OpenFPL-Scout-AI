@@ -9,7 +9,7 @@ from threading import RLock
 
 import pandas as pd
 
-from src.observatory import calibration, point_metrics
+from src.observatory import calibration, error_distribution, point_metrics
 from src.data_archive import _json_safe
 
 
@@ -52,6 +52,11 @@ class ModelLab:
         columns = [c for c in frame if c in candidates or c.startswith("baseline_")]
         models = []
         actual = pd.to_numeric(frame.actual, errors="coerce")
+        comparisons = pd.DataFrame({name: pd.to_numeric(frame[name], errors="coerce") for name in columns})
+        comparisons["actual"] = actual
+        comparisons = comparisons.replace([float("inf"), -float("inf")], float("nan"))
+        participants = [name for name in columns if comparisons[[name, "actual"]].dropna().shape[0]]
+        common = comparisons[[*participants, "actual"]].dropna()
         for name in columns:
             values = pd.to_numeric(frame[name], errors="coerce")
             valid = pd.DataFrame({"expected_points": values, "actual_points": actual}).replace([float("inf"), -float("inf")], float("nan")).dropna()
@@ -68,12 +73,15 @@ class ModelLab:
             models.append({
                 "name": name, "kind": "baseline" if name.startswith("baseline_") else "ensemble" if "ensemble" in name else "model",
                 **metrics, "calibration": calibration(records), "timeline": timeline,
+                "comparison": point_metrics(common[[name, "actual"]].rename(columns={name: "expected_points", "actual": "actual_points"}).to_dict("records")) if name in participants else point_metrics([]),
+                "error_distribution": error_distribution(records),
                 "scatter": sample.to_dict("records"), "outliers": outliers,
                 "cv": metadata.get("models", {}).get(name, {}),
             })
         models.sort(key=lambda m: (m["mae"] is None, m["mae"] or 0))
         return _json_safe({
             "available": True, "dataset": dataset, "rows": len(frame),
+            "comparison_count": len(common) if participants else 0, "comparison_models": participants,
             "source": str(root / filename), "trained_at_utc": metadata.get("trained_at_utc"),
             "validation_strategy": metadata.get("validation_strategy"),
             "dataset_seasons": metadata.get("dataset", {}).get("seasons", []),

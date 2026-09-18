@@ -120,7 +120,30 @@ main section, #capture-form { scroll-margin-top: 100px; }
 .freshness-grid strong { font-size: 13px; color: var(--aqua); }
 .freshness-grid p { margin-top: 6px; }
 .capture-diagnostic { white-space: normal; min-width: 190px; max-width: 350px; }
+.coverage-strip { display: flex; flex-wrap: wrap; gap: 10px 22px; border-left: 2px solid var(--aqua); padding: 10px 14px; margin: -4px 0 20px; font-size: 11px; color: var(--muted); }
+.coverage-strip strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.coverage-strip > p { flex-basis: 100%; }
+.heatmap td { padding: 4px; text-align: center; }
+.heatmap th { text-align: center; }
+.heatmap td:first-child { text-align: left; position: sticky; left: 0; background: #1c1525; z-index: 1; padding-right: 10px; }
+.heatmap button { min-width: 64px; width: 100%; padding: 8px 6px; font-size: 12px; font-variant-numeric: tabular-nums; color: #ffeaf3; background: #4c293d; }
+.heatmap button small { color: inherit; opacity: .85; }
+.heatmap button[data-level="2"] { background: #69324a; }
+.heatmap button[data-level="3"] { background: #8a3a5a; }
+.heatmap button[data-level="4"] { background: #ae416c; }
+.heatmap button[data-direction="under"] { background: #1b3c47; color: #deffff; }
+.heatmap button[data-direction="under"][data-level="2"] { background: #245766; }
+.heatmap button[data-direction="under"][data-level="3"] { background: #286f81; }
+.heatmap button[data-direction="under"][data-level="4"] { background: #298699; }
+.heatmap button[data-level="zero"] { color: var(--lime); background: #243020; }
+.heatmap-missing { display: block; padding: 12px; color: var(--muted); border: 1px dashed var(--line); }
+.chart .error-bar.under { fill: var(--aqua); }
+.chart .error-bar.over { fill: var(--pink); }
+.chart .error-bar.exact { fill: var(--lime); }
+.distribution-chart { display: block; overflow-x: auto; }
+.distribution-chart text { font-size: 10px; }
 @media(max-width:650px) {
+  .distribution-chart svg { min-width: 570px; }
   .heading .filters { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
   .heading .filters button { white-space: nowrap; }
   .freshness-grid { grid-template-columns: 1fr; }

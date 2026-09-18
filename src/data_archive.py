@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from src.logger import get_logger
+from src.observatory import baseline_predictions
 
 logger = get_logger(__name__)
 
@@ -283,6 +284,7 @@ class DataArchive:
         diagnostics = {
             "metadata": metadata,
             "model_predictions": predictions.attrs.get("model_predictions", {}),
+            "baseline_predictions": baseline_predictions(official_history, prediction_gameweek),
             "player_context": context,
         }
         self._record_write(

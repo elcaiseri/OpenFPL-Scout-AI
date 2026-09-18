@@ -412,7 +412,7 @@ class AdminDashboard:
                         if diagnostics_path.is_file():
                             diagnostics = read_json(diagnostics_path)
                             if diagnostics.get("metadata", {}).get("captured_at_utc") == latest.get("captured_at_utc"):
-                                forecasts[gw].update({k: diagnostics.get(k, {}) for k in ("model_predictions", "player_context")})
+                                forecasts[gw].update({k: diagnostics.get(k, {}) for k in ("model_predictions", "baseline_predictions", "player_context")})
                     replay_path = season_root / "evaluation/replays" / f"{name}.json"
                     if bundle_path.is_file() and replay_path.is_file() and forecasts[gw]["metadata"].get("inference", {}).get("strategy") == "ownership-cold-start":
                         try:
@@ -585,6 +585,7 @@ class AdminDashboard:
                 "availability": context.get("status", row.get("status")),
                 "opponent": row.get("opponent_team_name"),
                 "model_predictions": {name: number(values.get(str(player_id))) for name, values in (replay or forecast).get("model_predictions", {}).items()},
+                "baseline_predictions": {name: number(values.get(str(player_id))) for name, values in forecast.get("baseline_predictions", {}).items()},
                 "in_squad": selected is not None,
                 "role": selected.get("role", "") if selected else "",
             })

@@ -137,6 +137,20 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(before['system']['capture_history']['attempts'], [])
         self.assertEqual(after['system']['capture_history']['attempts'][0]['status'], 'failed')
 
+    def test_saved_baselines_join_by_player_id_and_legacy_runs_remain_unavailable(self):
+        legacy = self.dashboard.report()
+        self.assertTrue(all(row['count'] == 0 for row in legacy['analytics']['all']['baseline_comparisons']))
+        self.bundle['baseline_predictions'] = {'last_gameweek': {'1': 0, '99': 100}, 'recent_three_gameweeks': {'1': 6}}
+        self.save_bundle()
+        report = self.dashboard.report()
+        previous = report['analytics']['verified']['baseline_comparisons'][0]
+        self.assertEqual(previous['count'], 1)
+        self.assertEqual(previous['ensemble_mae'], 2)
+        self.assertEqual(previous['baseline_mae'], 6)
+        players = {p['id']: p for p in report['selected']['players']}
+        self.assertEqual(players[1]['baseline_predictions']['last_gameweek'], 0)
+        self.assertEqual(players[4]['baseline_predictions']['last_gameweek'], None)
+
     def test_scout_report_exposes_archived_picks_and_season_xpts_comparisons(self):
         report = self.dashboard.report()
         scout = report['selected']['analysis']['scout']

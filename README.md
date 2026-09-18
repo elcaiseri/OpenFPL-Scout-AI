@@ -86,7 +86,8 @@ season and gameweek selectors:
 
 - **Season overview:** matched predicted/actual points, MAE, RMSE, bias,
   within-two accuracy, rank correlation, gameweek trends, a 38-week coverage
-  map, and club comparisons. **All archived runs** includes retrospective
+  map, a position-by-gameweek MAE/bias heatmap, error distribution, calibration,
+  baseline comparisons, and club comparisons. **All archived runs** includes retrospective
   comparisons; **Verified pre-deadline only** isolates advance forecasts.
 - **Scout:** the actual saved shortlist, captain and vice-captain, with explicit
   expected points (**xPts**) vs official gameweek points (**pts**) for every
@@ -103,7 +104,7 @@ season and gameweek selectors:
   since real entries operate under different constraints. Incomplete or
   mismatched squads do not generate a derived XI.
 - **Gameweek centre:** official fixtures and football statistics, forecast vs
-  actual player leaderboards, top-ten overlap, haul rate, NDCG, calibration,
+  actual player leaderboards with top-5/10/20 controls, overlap, haul rate, NDCG, calibration,
   scatter plots, surprises, and position/club breakdowns. Club totals are FPL
   player points, not predicted match scores. Fixture scores are official only.
 - **My FPL team:** an optional linked FPL entry. Scores its real picks with our
@@ -126,6 +127,42 @@ season and gameweek selectors:
   without a verified forecast. Review actions jump to the relevant detail and
   never trigger inference. Telemetry covers this process since startup; latency
   uses its latest 200 non-dashboard requests.
+
+Comparison panels expose their sample sizes beside accuracy. Season coverage
+counts matched/forecasted player-gameweeks, missing results, ranking-only rows,
+verified/evaluated gameweeks and weeks awaiting final results. Season diagnostics
+use final results within **Season evidence**; the selected-gameweek audit also
+shows provisional results with explicit timing labels. Ranking comparisons use
+the scored pool, disclose excluded missing results and use all available players
+when fewer than the requested K exist. Ties break by official player ID.
+
+Error histograms use `predicted - actual`: negative is underprediction, positive
+is overprediction, and exact zero has its own bucket. Heatmap cells show MAE or
+signed bias and matched sample counts; zero is distinct from unavailable data.
+Select a cell to inspect its gameweek. Calibration plots compare predicted and
+actual means on identical rows in each forecast band against a perfect-calibration
+diagonal. Their tables retain empty bands and show sample counts; these counts
+are not confidence intervals.
+
+New forecast captures save two simple baselines in diagnostics and preserved
+evaluation bundles: previous-gameweek points and the average of up to three
+most recent recorded gameweeks. Both use only official history supplied to that
+inference with gameweeks strictly before the forecast. Double-gameweek fixture
+returns are summed before averaging; missing gameweeks are never filled as zero.
+Each baseline comparison pairs exactly the same players/gameweeks for ensemble
+and baseline MAE, reporting improvement in points and percent. Positive means
+the ensemble improves; percentage improvement is undefined for a zero-error
+baseline. Different baseline rows may have different paired populations.
+Older archives without frozen baselines show unavailable comparisons and are
+not backfilled using later data.
+
+Live and training model leaderboards compare the intersection of scored rows
+across models with at least one available prediction. **Available** retains each
+model's own coverage; **Shared rows** is the common comparison sample. A model
+with zero available rows is excluded from the intersection, and no shared rows
+means unavailable comparison metrics. Training baseline lift uses this same
+common population. Individual training-model charts retain their own complete
+valid-row population and label it separately from the leaderboard.
 
 Each view explains which filters apply. **Season evidence** filters season
 aggregates; selected-gameweek audits and player dossiers still expose their

@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 
 POSITIONS = ("GK", "DEF", "MID", "FWD")
+RANKING_WINDOWS = (5, 10, 20)
+BASELINES = {"last_gameweek": "Previous gameweek", "recent_three_gameweeks": "Recent average (up to 3 recorded gameweeks)"}
 
 
 def numeric(value: Any):
@@ -62,6 +64,82 @@ def ranked(players):
     return sorted(players, key=lambda p: (-(p.get("selection_score") if p.get("selection_score") is not None else p.get("expected_points") or 0), p["id"]))
 
 
+def baseline_predictions(history, gameweek):
+    """Freeze simple baselines from inference inputs, never current results.
+
+    Fixture rows are summed into gameweek returns before averaging. Missing
+    fixtures invalidate that gameweek; absent gameweeks are never filled as zero.
+    """
+    output = {name: {} for name in BASELINES}
+    if not {"id", "gameweek", "total_points"}.issubset(history.columns):
+        return output
+    frame = history.copy()
+    for field in ("id", "gameweek", "total_points"):
+        frame[field] = pd.to_numeric(frame[field], errors="coerce").replace([np.inf, -np.inf], np.nan)
+    frame = frame.loc[(frame.id > 0) & (frame.id % 1 == 0) & (frame.gameweek >= 1)
+                      & (frame.gameweek < gameweek) & (frame.gameweek % 1 == 0)]
+    # Official fixture IDs distinguish genuine double-gameweek fixtures.
+    if "official_fixture" in frame:
+        known = frame.official_fixture.notna()
+        frame = pd.concat([frame.loc[known].drop_duplicates(["id", "gameweek", "official_fixture"]), frame.loc[~known]])
+    totals = frame.groupby(["id", "gameweek"]).total_points.agg(lambda rows: rows.sum() if rows.notna().all() else np.nan)
+    for player_id, values in totals.groupby(level=0):
+        weeks = values.droplevel(0).sort_index()
+        previous = numeric(weeks.get(gameweek - 1))
+        if previous is not None:
+            output["last_gameweek"][str(int(player_id))] = previous
+        recent = weeks.tail(3)
+        if len(recent) and recent.notna().all():
+            output["recent_three_gameweeks"][str(int(player_id))] = float(recent.mean())
+    return output
+
+
+def baseline_comparison(players):
+    candidates = [p for p in players if numeric(p.get("expected_points")) is not None and numeric(p.get("actual_points")) is not None]
+    output = []
+    for name, label in BASELINES.items():
+        paired = [p for p in candidates if numeric(p.get("baseline_predictions", {}).get(name)) is not None]
+        ensemble = point_metrics(paired)
+        baseline = point_metrics([{"expected_points": p["baseline_predictions"][name], "actual_points": p["actual_points"]} for p in paired])
+        improvement = baseline["mae"] - ensemble["mae"] if paired else None
+        output.append({"name": name, "label": label, "count": len(paired), "candidate_count": len(candidates),
+                       "ensemble_mae": ensemble["mae"], "baseline_mae": baseline["mae"],
+                       "improvement_points": improvement,
+                       "improvement_pct": 100 * improvement / baseline["mae"] if paired and baseline["mae"] > 0 else None})
+    return output
+
+
+def error_distribution(players):
+    errors = [numeric(p.get("expected_points")) - numeric(p.get("actual_points")) for p in players
+              if numeric(p.get("expected_points")) is not None and numeric(p.get("actual_points")) is not None]
+    # Symmetric, exhaustive buckets. Exact zero is separate from either side.
+    bounds = [("< −8", lambda e: e < -8), ("−8 to < −4", lambda e: -8 <= e < -4),
+              ("−4 to < −2", lambda e: -4 <= e < -2), ("−2 to < 0", lambda e: -2 <= e < 0),
+              ("0", lambda e: e == 0), ("> 0 to 2", lambda e: 0 < e <= 2),
+              ("> 2 to 4", lambda e: 2 < e <= 4), ("> 4 to 8", lambda e: 4 < e <= 8), ("> 8", lambda e: e > 8)]
+    return {"count": len(errors), "bins": [{"label": label, "count": sum(test(e) for e in errors),
+             "direction": "under" if index < 4 else "over" if index > 4 else "exact"} for index, (label, test) in enumerate(bounds)]}
+
+
+def coverage(players):
+    forecasted = sum(numeric(p.get("expected_points")) is not None for p in players)
+    matched = sum(numeric(p.get("expected_points")) is not None and numeric(p.get("actual_points")) is not None for p in players)
+    return {"forecasted": forecasted, "matched": matched, "missing_results": forecasted - matched,
+            "matched_pct": 100 * matched / forecasted if forecasted else None,
+            "ranking_only": sum(p.get("expected_points") is None and p.get("selection_score") is not None for p in players)}
+
+
+def position_heatmap(weeks, verified=False):
+    result = []
+    for week in weeks:
+        included = week["result_state"] == "final" and (not verified or week["eligible"])
+        result.append({"gameweek": week["gameweek"], "forecast_state": week["forecast_state"], "result_state": week["result_state"],
+                       "included": included, "positions": [{"position": position, **point_metrics([
+                           p for p in week["players"] if included and p.get("position") == position
+                       ])} for position in POSITIONS]})
+    return result
+
+
 def selection_metrics(players, k=10):
     matched = [p for p in players if p.get("actual_points") is not None]
     chosen = ranked(matched)[:k]
@@ -70,7 +148,9 @@ def selection_metrics(players, k=10):
     dcg = sum(max(0, p["actual_points"]) / math.log2(i + 2) for i, p in enumerate(chosen))
     ideal = sum(max(0, p["actual_points"]) / math.log2(i + 2) for i, p in enumerate(best))
     return {
-        "count": len(chosen), "pool": len(matched),
+        "k": k, "count": len(chosen), "pool": len(matched), "forecasted_pool": len(players),
+        "missing_results": len(players) - len(matched),
+        "overlap_pct": 100 * sum(p["id"] in hit_ids for p in chosen) / len(chosen) if chosen else None,
         "top10_overlap_pct": 100 * sum(p["id"] in hit_ids for p in chosen) / len(chosen) if chosen else None,
         "haul_rate_pct": 100 * sum(p["actual_points"] >= 6 for p in chosen) / len(chosen) if chosen else None,
         "ndcg": dcg / ideal if ideal else None,
@@ -147,6 +227,13 @@ def model_comparison(players):
     for name in names:
         values = [{"expected_points": p.get("model_predictions", {}).get(name), "actual_points": p.get("actual_points")} for p in players]
         output.append({"name": name, **point_metrics(values)})
+    participants = [m["name"] for m in output if m["count"]]
+    def prediction(player, name):
+        return player.get("expected_points") if name == "ensemble" else player.get("model_predictions", {}).get(name)
+    common = [p for p in players if numeric(p.get("actual_points")) is not None
+              and all(numeric(prediction(p, name)) is not None for name in participants)]
+    for model in output:
+        model["comparison"] = point_metrics([{"expected_points": prediction(p, model["name"]), "actual_points": p["actual_points"]} for p in common]) if model["count"] else point_metrics([])
     return output
 
 
@@ -211,11 +298,18 @@ def season_analysis(weeks, verified=False):
     ranked_weeks = [w for w in completed if w["players"] and any(p.get("actual_points") is not None for p in w["players"])]
     return {
         "metrics": point_metrics(players), "calibration": calibration(players),
+        "coverage": {**coverage(players),
+                     "evaluated_gameweeks": sum(any(numeric(p.get("expected_points")) is not None and numeric(p.get("actual_points")) is not None for p in w["players"]) for w in completed),
+                     "verified_gameweeks": sum(w["eligible"] and w["metrics"]["count"] > 0 for w in completed),
+                     "pending_gameweeks": sum(w["result_state"] != "final" and w["prediction_count"] > 0 and (not verified or w["eligible"]) for w in weeks)},
+        "baseline_comparisons": baseline_comparison(players), "error_distribution": error_distribution(players),
+        "position_heatmap": position_heatmap(weeks, verified),
         "actual": {**actual_summary(players), "gameweeks": len(ranked_weeks)},
         "scout": scout_season_analysis(weeks, verified),
         "positions": grouped_metrics(players, "position"), "clubs": grouped_metrics(players, "team"),
         "models": model_comparison(players), "players": leaders,
         "selection": [{"gameweek": w["gameweek"], **{k: v for k, v in selection_metrics(w["players"]).items() if k not in ("our_top", "actual_top")}} for w in ranked_weeks],
+        "selection_windows": {str(size): [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], **{k: v for k, v in selection_metrics(w["players"], size).items() if k not in ("our_top", "actual_top")}} for w in ranked_weeks] for size in RANKING_WINDOWS},
         "timeline": [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], "result_state": w["result_state"], "is_points_forecast": w.get("is_points_forecast", True), **point_metrics(w["players"]), "actual": actual_summary(w["players"])} for w in completed if w["prediction_count"]],
         "decisions": [{"gameweek": w["gameweek"], "forecast_state": w["forecast_state"], **{k: v for k, v in w["analysis"]["squad"].items() if k not in ("xi", "bench")}, "official_average": w["analysis"]["average_manager_score"]} for w in completed if w["prediction_count"] and (not verified or w["squad"]["eligible"])],
     }
@@ -242,6 +336,9 @@ def gameweek_analysis(week, event, fixtures, teams):
         })
     return {
         "selection": selection_metrics(players),
+        "selection_windows": {str(size): selection_metrics(players, size) for size in RANKING_WINDOWS},
+        "coverage": coverage(players), "baseline_comparisons": baseline_comparison(players),
+        "error_distribution": error_distribution(players),
         "scout": scout_analysis(week),
         "squad": squad_analysis(players if week["squad"]["matches_forecast"] else []),
         "calibration": calibration(players), "models": model_comparison(players),
