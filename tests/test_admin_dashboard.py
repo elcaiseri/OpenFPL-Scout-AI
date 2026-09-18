@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 import main
-from src.admin_dashboard import AdminDashboard, RuntimeMonitor
+from src.admin_dashboard import AdminDashboard, CaptureDeadlineError, RuntimeMonitor
 from src.data_archive import DataArchive
 
 
@@ -126,6 +126,16 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNone(report["selected"]["squad"]["actual_points"])
         self.assertTrue(report["selected"]["squad"]["eligible"])
         json.dumps(report, allow_nan=False)
+
+    def test_capture_history_updates_even_when_season_report_is_cached(self):
+        self.dashboard.cache_seconds = 60
+        before = self.dashboard.report()
+        attempt = self.dashboard.capture_history.start(2)
+        self.dashboard.capture_history.save({**attempt, 'status': 'failed'})
+        after = self.dashboard.report()
+        self.assertEqual(after['generated_at_utc'], before['generated_at_utc'])
+        self.assertEqual(before['system']['capture_history']['attempts'], [])
+        self.assertEqual(after['system']['capture_history']['attempts'][0]['status'], 'failed')
 
     def test_scout_report_exposes_archived_picks_and_season_xpts_comparisons(self):
         report = self.dashboard.report()
@@ -601,6 +611,19 @@ class ManagerViewTests(unittest.TestCase):
 
 
 class AccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_capture_service_response_and_failure_keep_owner_route_contract(self):
+        for error, expected_status in [(None, 200), (CaptureDeadlineError('Deadline passed'), 422), (ValueError('Inference unavailable'), 502)]:
+            def capture(gameweek):
+                if error:
+                    raise error
+                return {'gameweek': gameweek, 'capture_id': 'saved-attempt', 'archive': {'status': 'saved'}, 'squad': {'status': 'saved'}}
+            with self.subTest(status=expected_status), patch.dict('os.environ', {'OPENFPL_ADMIN_KEY': 'owner-test-key'}), patch.object(main, 'admin_dashboard', SimpleNamespace(capture_forecast=capture), create=True):
+                status, headers, body = await asgi_get('/api/admin/capture?gameweek=4', 'owner-test-key', 'POST')
+            self.assertEqual(status, expected_status)
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            if error is None:
+                self.assertEqual(json.loads(body)['capture_id'], 'saved-attempt')
+
     async def test_new_owner_routes_fail_closed_and_stay_out_of_public_schema(self):
         paths = [
             ("/api/admin/players/1", "GET"), ("/api/admin/models", "GET"),
@@ -620,8 +643,13 @@ class AccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_capture_rejects_past_deadline_and_new_queries_are_validated(self):
         fake = SimpleNamespace(official_client=OfficialClient())
-        with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}), patch.object(main, "scout", fake, create=True):
-            status, _, _ = await asgi_get("/api/admin/capture?gameweek=1", "owner-test-key", "POST")
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}), patch.object(main, "scout", fake, create=True):
+            fake.data_archive = DataArchive(Path(directory))
+            fake.config = {}
+            dashboard = AdminDashboard(fake)
+            with patch.object(main, "admin_dashboard", dashboard, create=True):
+                status, _, _ = await asgi_get("/api/admin/capture?gameweek=1", "owner-test-key", "POST")
+            self.assertEqual(dashboard.capture_history.snapshot()['attempts'][0]['status'], 'rejected')
             self.assertEqual(status, 422)
             for path in ["/api/admin/models?dataset=private", "/api/admin/players/0", "/api/admin/players/1?season=private",
                          "/api/admin/manager/0", "/api/admin/manager/1?season=private", "/api/admin/manager/1?gameweek=39"]:

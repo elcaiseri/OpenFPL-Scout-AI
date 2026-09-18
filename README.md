@@ -127,6 +127,35 @@ season and gameweek selectors:
   never trigger inference. Telemetry covers this process since startup; latency
   uses its latest 200 non-dashboard requests.
 
+Each view explains which filters apply. **Season evidence** filters season
+aggregates; selected-gameweek audits and player dossiers still expose their
+saved runs. It is disabled in views where it has no effect. Training benchmarks
+use their own evaluation controls, while capture history and runtime span all
+seasons. The linked team and transfer plan show their own gameweeks and update
+only when explicitly loaded or run.
+
+Expand **Data freshness** to inspect the selected gameweek's forecast save time,
+official-result fetch time and enrichment record time, with their ages. The
+report assembly time and browser refresh time are shown separately. Finalized
+official results remain valid as they age. Enrichment is timestamped by the
+forecast that recorded its diagnostics; its source update time is unknown.
+Where recorded, source gameweek coverage is shown. Retrospective estimates
+retain their label and use the replay generation time.
+
+**Capture history** records owner requests to `/api/admin/capture` from this
+release onward, including rejected deadlines, failures and partial saves. It
+shows start/finish times, duration, model outcomes, forecast/shortlist archive
+outcomes and the stage of a failure. Raw exception bodies, credentials and
+manager IDs are not written to this log; detailed traces remain in service logs.
+Records live under `<archive-root>/operations/captures/`, independently of
+whether forecast archiving is enabled. The latest 100 attempts are displayed;
+older completed files are pruned, while unfinished records are retained. A
+running record means no final outcome was recorded, including after a process
+interruption. If history cannot be persisted, a visible warning explains that
+recent records are held only in process memory. **Retry** is available for failed
+or incomplete attempts in the selected season while their deadline is still
+upcoming. Public Scout calls and transfer-planner inference are not included.
+
 ### My FPL team
 
 This view accepts a public FPL team ID. It is kept in the browser tab's
@@ -226,8 +255,14 @@ gameweeks. Results remain provisional until official FPL reports both `finished`
 and `data_checked`. The first finalized score fetch bypasses the live cache and
 is stored under `evaluation/actuals/`. Old live files without finalization
 provenance remain provisional. Upstream failures retain saved scores with a
-visible warning. The dashboard refreshes every 60 seconds while visible; current
-official data uses the shared FPL cache. Reading or refreshing views never runs
+visible warning. Auto-refresh checks every 60 seconds while the tab is visible
+and idle. It waits during editing, open player dossiers and pending operations;
+responses arriving during interaction are deferred. Only the active view is
+rendered, and unchanged charts and tables retain their elements. Expanded
+sections, filters, pagination, transfer inputs and scroll positions are preserved.
+**Pause auto-refresh** stops background checks; manual **Refresh** remains
+available. Failed refreshes leave the previous snapshot visible with a status
+message. Current official data uses the shared FPL cache. Reading or refreshing views never runs
 inference. **Capture forecast** explicitly runs inference for an upcoming
 official deadline and records the real capture time.
 

@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from src.data_archive import _json_safe, utc_datetime
+from src.capture_history import CaptureHistory
 from src.observatory import actual_summary, gameweek_analysis, point_metrics, season_analysis
 from src.manager_lab import (
     catalog as manager_catalog,
@@ -33,6 +34,10 @@ from src.scout_replay import load_replay
 
 SEASON_PATTERN = re.compile(r"^\d{4}-\d{4}$")
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+class CaptureDeadlineError(ValueError):
+    """The requested capture cannot produce advance evidence."""
 
 
 def read_json(path: Path) -> dict:
@@ -91,6 +96,54 @@ class AdminDashboard:
         self.cache = {}
         self.lock = RLock()
         self.model_lab = ModelLab(scout.config)
+        self.capture_history = CaptureHistory(self.root)
+
+    def capture_forecast(self, gameweek):
+        """Run an explicit owner capture and record its outcome even on failure."""
+        record = self.capture_history.start(gameweek)
+        started = time.monotonic()
+        try:
+            bootstrap = self.scout.official_client.bootstrap()
+            event = next((e for e in bootstrap.get("events", []) if e["id"] == gameweek), {})
+            deadline = utc_datetime(event.get("deadline_time"))
+            if any(e.get("deadline_time") for e in bootstrap.get("events", [])):
+                record["season"] = self.scout.data_archive._season_name(bootstrap)
+            if deadline is None or deadline <= datetime.now(timezone.utc):
+                raise CaptureDeadlineError("Choose a gameweek whose official deadline has not passed.")
+            record["phase"] = "inference and forecast archive"
+            self.capture_history.save(record)
+            predictions = self.scout.get_official_predictions(gameweek)
+            inference = predictions.attrs.get("inference", {})
+            archive = predictions.attrs.get("archive", {})
+            record.update(
+                archive_status=archive.get("status", "not-recorded"),
+                successful_models=list(inference.get("successful_models", [])),
+                failed_models=list(inference.get("failed_models", {})),
+                phase="shortlist selection and archive",
+            )
+            self.capture_history.save(record)
+            team = self.scout.select_optimal_team(predictions)
+            squad = self.scout.data_archive.capture_squad(predictions, team)
+            record["squad_status"] = squad.get("status", "not-recorded")
+            record["status"] = "saved" if record["archive_status"] == record["squad_status"] == "saved" else "incomplete"
+            record["phase"] = "complete"
+            if record["status"] == "incomplete":
+                record["error"] = f"Forecast archive: {record['archive_status']}; shortlist archive: {record['squad_status']}. Check archive configuration and service logs."
+            return {"gameweek": gameweek, "archive": archive, "squad": squad, "capture_id": record["id"]}
+        except CaptureDeadlineError as error:
+            record.update(status="rejected", error=str(error))
+            raise
+        except Exception as error:
+            # Persist a useful stage and exception type, not potentially sensitive
+            # external response bodies or URLs. Detailed traces stay in service logs.
+            record.update(status="failed", error=f"{record['phase'].capitalize()} failed ({type(error).__name__}). Check service logs before retrying.")
+            raise
+        finally:
+            record["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
+            record["duration_seconds"] = round(time.monotonic() - started, 3)
+            self.capture_history.save(record)
+            with self.lock:
+                self.cache.clear()
 
     def _season_report(self, season=None):
         if season is not None and not SEASON_PATTERN.fullmatch(season):
@@ -273,6 +326,7 @@ class AdminDashboard:
             })
         return {
             "models": models,
+            "capture_history": self.capture_history.snapshot(),
             "archive": self.scout.data_archive.status(),
             "enrichment": metadata.get("enrichment", {}),
             "enrichment_enabled": self.scout.fpl_data_enabled,

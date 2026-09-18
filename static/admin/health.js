@@ -30,6 +30,22 @@
     }
     return items.sort((a, b) => ({Review: 0, 'Next step': 1, Improve: 2}[a.priority] - {Review: 0, 'Next step': 1, Improve: 2}[b.priority]));
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = {suggestions};
-  else window.OpenFPLHealth = {suggestions};
+  function freshness(report, now = Date.now()) {
+    const week = report.selected || {}, metadata = week.metadata || {}, enrichment = metadata.enrichment || {};
+    const stamp = (id, label, timestamp, status, detail) => {
+      const parsed = timestamp ? Date.parse(timestamp) : NaN;
+      return {id, label, timestamp: Number.isFinite(parsed) ? timestamp : null,
+        age_seconds: Number.isFinite(parsed) ? (now - parsed) / 1000 : null, status, detail};
+    };
+    return [
+      stamp('forecast', week.replay ? 'Retrospective estimate' : 'Forecast saved', week.replay?.generated_at_utc || week.captured_at_utc,
+        week.forecast_state || 'missing', 'Selected gameweek. Refresh does not run inference.'),
+      stamp('results', 'Official results fetched', week.actuals_at_utc, week.result_state || 'unknown',
+        week.result_state === 'final' ? 'Final results are retained; their age does not make them stale.' : 'Provisional or missing results may change. The report can reuse cached official data.'),
+      stamp('enrichment', 'Enrichment recorded', enrichment.status ? metadata.captured_at_utc : null, enrichment.status || 'not-recorded',
+        `Recorded with this forecast; source update time is not recorded.${enrichment.source_observed_gameweek != null ? ` Source covers through GW${enrichment.source_observed_gameweek}; required through GW${enrichment.required_history_gameweek ?? '—'}.` : ''}`),
+    ];
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = {suggestions, freshness};
+  else window.OpenFPLHealth = {suggestions, freshness};
 })();

@@ -6,7 +6,8 @@
   const date = v => v ? new Date(v).toLocaleString('en-GB', {dateStyle: 'medium', timeStyle: 'short'}) : 'Not recorded';
   const human = v => String(v || 'Not recorded').replaceAll('_', ' ').replaceAll('-', ' ');
   const percent = v => v == null ? '—' : `${fmt(v, 1)}%`;
-  const state = {key: '', report: null, training: null, tab: 'overview', page: 0, epoch: 0, pending: new Map(), managerId: '', manager: null, plan: null};
+  const state = {key: '', report: null, training: null, tab: 'overview', page: 0, epoch: 0, pending: new Map(), managerId: '', manager: null, plan: null,
+    autoRefresh: true, lastInteraction: 0, lastRefreshed: null, refreshError: '', deferredReport: null, refreshVersion: 0, rendered: new Map()};
   const pagesize = 40;
   const views = {
     overview: ['THE BIG PICTURE', 'Season overview'], scout: ['THE OPENFPL SCOUT', 'Scout'], gameweek: ['EVERY MATCH. EVERY RETURN.', 'Gameweek centre'],
@@ -23,7 +24,13 @@
   function message(text) { $('message').textContent = text; $('message').hidden = !text; }
   function badge(id, text, good = false) { $(id).textContent = text; $(id).className = `badge ${good ? 'good' : 'warn'}`; }
   function metric(label, score, detail, tone = '') { const n = el('article', null, 'metric'); n.append(el('div', label, 'label'), el('div', score, `value ${tone}`), el('p', detail)); return n; }
-  function options(id, items, selected) { $(id).replaceChildren(...items.map(([v, label]) => {const n = el('option', label); n.value = v; n.selected = String(v) === String(selected); return n;})); }
+  function options(id, items, selected) {
+    const select = $(id), existing = [...select.options];
+    if (existing.length !== items.length || items.some(([v, label], i) => existing[i]?.value !== String(v) || existing[i]?.textContent !== label)) {
+      select.replaceChildren(...items.map(([v, label]) => {const n = el('option', label); n.value = v; return n;}));
+    }
+    if (selected != null) select.value = String(selected);
+  }
   function table(id, headers, rows) {
     const t = el('table'), h = el('thead'), tr = el('tr'), body = el('tbody');
     headers.forEach(label => { const th = el('th', label); th.scope = 'col'; tr.append(th); }); h.append(tr);
@@ -31,7 +38,7 @@
     if (!rows.length) { const row = el('tr'), cell = el('td', 'No comparable records in this view.', 'empty'); cell.colSpan = headers.length; row.append(cell); body.append(row); }
     t.append(h, body); $(id).replaceChildren(t);
   }
-  function playerLink(p) { const n = el('button', p.name, 'link-button'); n.type = 'button'; n.addEventListener('click', () => openPlayer(p.id)); return n; }
+  function playerLink(p) { const n = el('button', p.name, 'link-button'); n.type = 'button'; n.dataset.focusKey = `player-${p.id}`; n.addEventListener('click', () => openPlayer(p.id)); return n; }
   function playerName(p) { const n = el('div'); n.append(playerLink(p), el('small', p.team || '')); return n; }
   function currentAnalytics() { return state.report.analytics[$('evaluation-mode').value === 'verified' ? 'verified' : 'all']; }
   async function api(path, {channel = 'main', method = 'GET', timeout = 90000} = {}) {
@@ -54,6 +61,7 @@
   }
   function lock() {
     state.epoch++; state.key = ''; state.report = null; state.training = null; state.page = 0;
+    state.rendered.clear(); state.deferredReport = null; state.lastRefreshed = null; state.refreshError = ''; state.autoRefresh = true;
     state.managerId = ''; state.manager = null; state.plan = null; $('manager-view').hidden = true;
     state.pending.forEach(t => t.controller.abort()); state.pending.clear();
     $('owner-key').value = ''; $('dashboard').hidden = true; $('login').hidden = false; $('lock').hidden = true;
@@ -62,24 +70,60 @@
     ['season','gameweek','training-model','capture-gameweek','optimize-gameweek'].forEach(id => $(id).replaceChildren());
     ['scout-context','scout-population','scout-result','scout-season-context','search','player-title','player-subtitle','capture-result','capture-availability','training-context','evaluation-context','updated','season-population','season-bias','week-context','result-badge','fixture-progress','decision-context','formation-title','player-count','page-count','model-context','runtime-scope','manager-id','manager-status','manager-formation','optimize-status','optimize-free-transfers','optimize-bank'].forEach(id => {if ($(id).tagName === 'INPUT') $(id).value = ''; else $(id).textContent = '';});
     $('scout-decisions').open = false;
+    $('freshness-details').open = false;
+    ['freshness','freshness-summary','filter-scope','refresh-status','capture-history','capture-history-context'].forEach(id => $(id).replaceChildren());
+    updateRefreshStatus();
     $('evaluation-mode').value = 'all'; $('scope').value = 'all'; $('position').value = '';
     $('unlock').disabled = false; $('refresh').disabled = false; $('capture').disabled = false;
     $('dashboard').classList.remove('loading'); setTab('overview'); message(''); $('owner-key').focus();
   }
-  async function refresh(initial = false) {
+  function refreshBlocked() {
+    return document.hidden || $('player-dialog').open || state.pending.size > 0 || Date.now() - state.lastInteraction < 8000
+      || Boolean(document.activeElement?.closest('input, select, textarea, [contenteditable="true"]'));
+  }
+  function updateRefreshStatus() {
+    $('auto-refresh').textContent = state.autoRefresh ? 'Pause auto-refresh' : 'Resume auto-refresh';
+    $('auto-refresh').setAttribute('aria-pressed', String(state.autoRefresh));
+    const status = state.refreshError || (state.deferredReport ? 'New snapshot ready; refresh to apply, or wait until idle.' : state.pending.has('main') ? 'Checking for updates…' : state.autoRefresh ? 'Auto-refresh on · checks every 60 seconds while idle.' : 'Auto-refresh paused. Manual refresh is available.');
+    $('refresh-status').textContent = `${status}${state.lastRefreshed ? ` Last refreshed ${date(state.lastRefreshed)}.` : ''}`;
+  }
+  function applyReport(data) {
+    const scroll = {x: window.scrollX, y: window.scrollY};
+    const scrollers = [...document.querySelectorAll('.table-scroll, .chart')].map(node => [node, node.scrollLeft]);
+    const active = document.activeElement, activeId = active?.id;
+    const parentId = active?.parentElement?.closest('[id]')?.id, focusKey = active?.dataset.focusKey;
+    state.report = data; state.lastRefreshed = new Date().toISOString(); state.refreshError = ''; state.deferredReport = null;
+    render();
+    scrollers.forEach(([node, left]) => { if (node.isConnected) node.scrollLeft = left; });
+    if (active?.isConnected) active.focus({preventScroll: true});
+    else if (activeId && $(activeId)) $(activeId).focus({preventScroll: true});
+    else if (parentId && focusKey) $(parentId)?.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({preventScroll: true});
+    window.scrollTo(scroll.x, scroll.y);
+    updateRefreshStatus();
+  }
+  async function refresh(initial = false, background = false) {
     if (!state.key) return;
-    const epoch = state.epoch, query = new URLSearchParams();
+    if (background && (!state.autoRefresh || refreshBlocked())) return;
+    if (background && state.deferredReport) { applyReport(state.deferredReport); return; }
+    state.deferredReport = null;
+    const epoch = state.epoch, version = ++state.refreshVersion, query = new URLSearchParams();
     if (!initial && $('season').value) query.set('season', $('season').value);
     if (!initial && $('gameweek').value) query.set('gameweek', $('gameweek').value);
-    $('unlock').disabled = true; $('refresh').disabled = true; $('dashboard').classList.add('loading');
-    message(initial ? 'Opening your observatory…' : 'Refreshing archived estimates and official results…');
+    $('unlock').disabled = true; $('refresh').disabled = true;
+    if (initial) { $('dashboard').classList.add('loading'); message('Opening your observatory…'); }
     try {
-      const data = await api(`/api/admin/dashboard?${query}`);
+      const request = api(`/api/admin/dashboard?${query}`); updateRefreshStatus();
+      const data = await request;
       if (!data) return;
-      state.report = data; render();
+      if (background && (!state.autoRefresh || refreshBlocked())) { state.deferredReport = data; return; }
+      applyReport(data);
       $('login').hidden = true; $('dashboard').hidden = false; $('lock').hidden = false; message('');
-    } catch(e) { message(`${e.message}${state.report ? ' The previous snapshot remains visible.' : ''}`); if (initial) state.key = ''; }
-    finally { if (epoch === state.epoch) { $('unlock').disabled = false; $('refresh').disabled = false; $('dashboard').classList.remove('loading'); } }
+    } catch(e) {
+      if (epoch !== state.epoch || version !== state.refreshVersion) return;
+      state.refreshError = `${e.message}${state.report ? ' Previous snapshot retained.' : ''}`;
+      if (initial) { message(state.refreshError); state.key = ''; }
+    }
+    finally { if (epoch === state.epoch && version === state.refreshVersion) { $('unlock').disabled = false; $('refresh').disabled = false; $('dashboard').classList.remove('loading'); updateRefreshStatus(); } }
   }
   function setTab(tab, focus = false) {
     const audit = tab === 'decisions';
@@ -88,6 +132,7 @@
     Object.keys(views).forEach(name => { $(`view-${name}`).hidden = name !== tab; const b = $(`tab-${name}`); b.setAttribute('aria-selected', String(name === tab)); b.tabIndex = name === tab ? 0 : -1; });
     $('view-eyebrow').textContent = views[tab][0]; $('view-title').replaceChildren(document.createTextNode(views[tab][1]), el('span', '.', 'lime'));
     if (focus) $(`tab-${tab}`).focus();
+    if (state.report) { renderScope(); renderActive(); }
     if (audit) $('scout-decisions').scrollIntoView({block: 'start'});
     if (tab === 'models' && state.report && !state.training && !state.pending.has('models')) loadTraining();
   }
@@ -95,14 +140,67 @@
     const r = state.report, w = r.selected;
     options('season', r.seasons.map(s => [s, s.replace('-', ' / ')]), r.season);
     options('gameweek', r.gameweeks.map(g => [g.gameweek, `GW ${g.gameweek}${g.prediction_count ? '' : ' · no forecast'}`]), w?.gameweek);
-    $('updated').textContent = `Snapshot ${date(r.generated_at_utc)} · Times in your timezone`;
+    $('updated').textContent = `Report assembled ${date(r.generated_at_utc)} · Source ages below · Times in your timezone`;
     $('warnings').replaceChildren(...r.warnings.map(note)); $('warnings').hidden = !r.warnings.length;
-    const verified = $('evaluation-mode').value === 'verified', summary = verified ? r.summary : r.comparison_summary;
-    $('evaluation-context').textContent = verified
-      ? `${summary.evaluated_gameweeks} completed gameweeks with pre-deadline points forecasts. Other saved runs remain available in the gameweek review.`
-      : `${summary.evaluated_gameweeks} completed gameweeks with points estimates · ${r.comparison_summary.post_deadline_gameweeks} late or retrospective runs. Retrospective comparisons are not proof of advance accuracy.`;
-    renderOverview(); renderScout(); renderGameweek(); renderDecisions(); renderManager(); renderPlan(); renderPlayers(); renderLiveModels(); renderSystem();
+    renderScope(); renderFreshness(); renderActive();
     if (state.tab === 'models' && !state.training && !state.pending.has('models')) loadTraining();
+  }
+  function renderScope() {
+    const tab = state.tab, season = state.report.season || 'No season', gw = state.report.selected?.gameweek || '—';
+    const seasonModels = $('live-model-window').value === 'season';
+    const scoped = ['overview','scout','players'].includes(tab) || (tab === 'models' && seasonModels);
+    $('evaluation-mode').disabled = !scoped;
+    $('gameweek').disabled = tab === 'overview';
+    const descriptions = {
+      overview: `${season}: season totals and trends follow Season evidence. Gameweek selection does not change these totals.`,
+      scout: `GW${gw}: shortlist and derived XI use the saved run, regardless of Season evidence. Season trends and XI history below follow Season evidence.`,
+      gameweek: `GW${gw}: fixtures, rankings and comparisons use this saved run. Season evidence does not filter this view.`,
+      entry: `GW${gw}: requested team review against ${season} forecasts; the loaded team’s actual gameweek is shown below. Season evidence does not apply. Team data and transfer plans update only when loaded or run.`,
+      players: `GW${gw}: the player table and CSV use this saved run and the local filters. The season leaders below follow Season evidence; player dossiers include all saved runs.`,
+      models: `${seasonModels ? `${season}: live model totals follow Season evidence.` : `GW${gw}: live model comparison uses this saved run; Season evidence does not apply.`} Training benchmarks use their own Evaluation and Model controls, independent of these filters.`,
+      system: `${season}: inference diagnostics, feature coverage and archive ledger. Freshness uses GW${gw}. Capture history and runtime span all seasons; Season evidence does not apply. The capture form has its own gameweek selector.`,
+    };
+    $('filter-scope').textContent = descriptions[tab];
+    $('evaluation-context').hidden = !scoped;
+    const verified = $('evaluation-mode').value === 'verified', summary = verified ? state.report.summary : state.report.comparison_summary;
+    $('evaluation-context').textContent = verified
+      ? `${summary.evaluated_gameweeks} completed gameweeks with verified pre-deadline points forecasts.`
+      : `${summary.evaluated_gameweeks} completed gameweeks with points estimates · ${state.report.comparison_summary.post_deadline_gameweeks} late or retrospective runs. These are not proof of advance accuracy.`;
+  }
+  function age(seconds) {
+    if (seconds == null) return 'Age unknown';
+    if (seconds < -60) return 'Timestamp in the future';
+    if (seconds < 60) return 'Less than a minute ago';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+    return `${Math.floor(seconds / 86400)} days ago`;
+  }
+  function renderFreshness() {
+    const rows = window.OpenFPLHealth.freshness(state.report);
+    $('freshness-summary').textContent = `GW${state.report.selected?.gameweek || '—'} · forecast: ${age(rows[0].age_seconds)} · results: ${age(rows[1].age_seconds)}`;
+    $('freshness').replaceChildren(...rows.map(row => {
+      const card = el('article');
+      card.append(el('h3', row.label), el('strong', human(row.status)), note(`${date(row.timestamp)} · ${age(row.age_seconds)}`), note(row.detail));
+      return card;
+    }));
+  }
+  function renderActive() {
+    const r = state.report, tab = state.tab, a = currentAnalytics();
+    const upcoming = r.gameweeks.filter(w => Date.parse(w.deadline_time) > Date.now()).map(w => w.gameweek);
+    const inputs = {
+      overview: [a, r.gameweeks, r.selected?.gameweek],
+      scout: [r.selected, a.scout, a.decisions, $('evaluation-mode').value],
+      gameweek: [r.selected],
+      entry: [state.manager, state.plan, r.season, upcoming],
+      players: [r.selected, a.players, state.page, ...['search','position','scope','sort'].map(id => $(id).value)],
+      models: [r.selected?.analysis.models, r.selected?.result_state, a.models, $('live-model-window').value],
+      system: [r.system, r.runtime, r.gameweeks, r.official_status, r.season, upcoming],
+    };
+    const signature = JSON.stringify(inputs[tab]);
+    if (state.rendered.get(tab) === signature) return;
+    const renderers = {overview: renderOverview, scout: () => {renderScout(); renderDecisions();}, gameweek: renderGameweek,
+      entry: () => {renderManager(); renderPlan();}, players: renderPlayers, models: renderLiveModels, system: renderSystem};
+    renderers[tab](); state.rendered.set(tab, signature);
   }
   function renderOverview() {
     const r = state.report, a = currentAnalytics(), m = a.metrics, weeks = a.timeline.filter(w => w.count);
@@ -116,7 +214,7 @@
     lineChart('season-chart',a.timeline.map(w=>({...w,actual_mean:w.actual.mean})),'gameweek',[['predicted_mean','Our mean forecast','ours'],['actual_mean','Official mean return','actual']],{label:'Mean predicted and actual points by gameweek; ranking-only weeks show actual points with no invented prediction',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
     $('trend-context').textContent = 'Mean absolute error in points. Includes only final points comparisons within the selected evidence scope.';
     lineChart('trend',weeks,'gameweek',[['mae','Mean absolute error','ours']],{label:'Prediction error by gameweek',tick:w=>`GW${w.gameweek}`,click:w=>selectWeek(w.gameweek)});
-    $('week-map').replaceChildren(...r.gameweeks.map(w=>{const b=el('button',String(w.gameweek));b.type='button';b.dataset.state=!w.prediction_count?'missing':w.result_state==='final'?(w.eligible?'final':'retrospective'):w.result_state==='awaiting-results'?'upcoming':'retrospective';b.classList.toggle('active',w.gameweek===r.selected?.gameweek);b.title=`GW${w.gameweek} · ${human(w.forecast_state)} · ${human(w.result_state)}`;b.setAttribute('aria-label',b.title);b.addEventListener('click',()=>selectWeek(w.gameweek));return b;}));
+    $('week-map').replaceChildren(...r.gameweeks.map(w=>{const b=el('button',String(w.gameweek));b.type='button';b.dataset.focusKey=`gw-${w.gameweek}`;b.dataset.state=!w.prediction_count?'missing':w.result_state==='final'?(w.eligible?'final':'retrospective'):w.result_state==='awaiting-results'?'upcoming':'retrospective';b.classList.toggle('active',w.gameweek===r.selected?.gameweek);b.title=`GW${w.gameweek} · ${human(w.forecast_state)} · ${human(w.result_state)}`;b.setAttribute('aria-label',b.title);b.addEventListener('click',()=>selectWeek(w.gameweek));return b;}));
     const best = [...a.clubs].filter(x=>x.count).sort((x,y)=>x.mae-y.mae)[0];
     const hardest = [...a.positions].filter(x=>x.count).sort((x,y)=>y.mae-x.mae)[0];
     const latest = r.gameweeks.filter(w=>w.eligible&&w.result_state==='awaiting-results').slice(-1)[0];
@@ -231,7 +329,7 @@
     table('decision-history',['GW','Evidence','Our XI pts','Actual XI pts','FPL average','Hindsight','Opportunity'],currentAnalytics().decisions.map(d=>[gwButton(d.gameweek,'decisions'),human(d.forecast_state),value(d.predicted_points,'ours'),value(d.actual_points,'actual'),fmt(d.official_average,0),fmt(d.hindsight_points),fmt(d.selection_gap)]));
   }
   function squadCard(p){
-    const b=el('button',null,'pitch-player');b.type='button';
+    const b=el('button',null,'pitch-player');b.type='button';b.dataset.focusKey=`squad-${p.id}`;
     const name=el('span',p.name,'name');
     if(p.is_captain)name.append(el('span','C','captain-chip'));
     if(p.is_vice_captain&&!p.is_captain)name.append(el('span','V','captain-chip'));
@@ -309,7 +407,7 @@
     try{
       const data=await api(`/api/admin/manager/${encodeURIComponent(id)}?season=${encodeURIComponent(state.report.season)}${gw?`&gameweek=${gw}`:''}`,{channel:'manager'});
       if(!data)return;
-      state.manager=data;state.plan=null;renderManager();renderPlan();
+      state.manager=data;state.plan=null;state.rendered.delete('entry');if(state.tab==='entry')renderActive();
     }catch(e){if(epoch===state.epoch){state.manager=null;state.plan=null;$('manager-view').hidden=true;$('manager-status').textContent=e.message;}}
     finally{if(epoch===state.epoch)$('manager-load').disabled=false;}
   }
@@ -325,11 +423,11 @@
     try{
       const data=await api(`/api/admin/manager/${encodeURIComponent(state.managerId)}/optimize?${query}`,{method:'POST',channel:'optimize',timeout:180000});
       if(!data)return;
-      state.plan=data;renderPlan();
+      state.plan=data;state.rendered.delete('entry');if(state.tab==='entry')renderActive();
     }catch(e){if(epoch===state.epoch){state.plan=null;renderPlan();$('optimize-status').textContent=e.message;}}
     finally{if(epoch===state.epoch)$('optimize').disabled=false;}
   }
-  function gwButton(gw, tab = 'gameweek'){const b=el('button',`GW${gw}`,'link-button');b.type='button';b.addEventListener('click',()=>selectWeek(gw, tab));return b;}
+  function gwButton(gw, tab = 'gameweek'){const b=el('button',`GW${gw}`,'link-button');b.type='button';b.dataset.focusKey=`gw-${gw}`;b.addEventListener('click',()=>selectWeek(gw, tab));return b;}
   function filteredPlayers() {
     const q=$('search').value.trim().toLocaleLowerCase(),pos=$('position').value,scope=$('scope').value,sort=$('sort').value;
     return (state.report?.selected?.players||[]).filter(p=>(!q||`${p.name} ${p.team}`.toLocaleLowerCase().includes(q))&&(!pos||p.position===pos)&&(scope!=='squad'||p.in_squad)&&(scope!=='matched'||p.actual_points!=null)&&(scope!=='missing'||p.actual_points==null)&&(scope!=='played'||p.minutes>=60)).sort((a,b)=>{if(sort==='name')return a.name.localeCompare(b.name);const v=p=>sort==='expected_points'?(p.expected_points??p.selection_score??-Infinity):p[sort]==null?-Infinity:sort==='error'?Math.abs(p.error):p[sort];return v(b)-v(a)||a.name.localeCompare(b.name);});
@@ -389,7 +487,7 @@
       const card = el('article', null, 'suggestion'), copy = el('div');
       const priority = el('span', item.priority, `badge ${item.priority === 'Review' ? 'warn' : ''}`);
       copy.append(priority, el('h3', item.title), note(item.detail));
-      const action = el('button', 'Review ↗', 'quiet'); action.type = 'button';
+      const action = el('button', 'Review ↗', 'quiet'); action.type = 'button'; action.dataset.focusKey = `suggestion-${item.id}`;
       action.setAttribute('aria-label', `${item.title}: review details`);
       action.addEventListener('click', () => {
         const target = $(item.target);
@@ -418,6 +516,32 @@
     table('archive-ledger',['GW','Forecast','Saved at','Snapshot','Official deadline','Results','Matched','Points MAE'],r.gameweeks.map(w=>[gwButton(w.gameweek),human(w.forecast_state),w.captured_at_utc?date(w.captured_at_utc):'—',w.snapshot_kind?`${human(w.snapshot_kind)} · ${date(w.snapshot_created_at_utc)}`:w.preserved?'Preserved':'Latest run',date(w.deadline_time),human(w.result_state),`${w.matched_actuals} / ${w.prediction_count}`,fmt(w.metrics.mae)]));
     $('runtime').replaceChildren(metric('UPTIME',`${fmt(t.uptime_seconds==null?null:t.uptime_seconds/3600,1)} h`,'Since this process started'),metric('REQUESTS',fmt(t.requests,0),'Excludes dashboard activity'),metric('SERVER ERRORS',fmt(t.server_errors,0),'HTTP 5xx responses'),metric('P95 LATENCY',`${fmt(t.p95_latency_ms,0)} ms`,`${t.latency_sample_size||0} recent request samples`));
     $('runtime-scope').textContent=t.scope||'';
+    renderCaptureHistory();
+  }
+  function renderCaptureHistory() {
+    const history = state.report.system.capture_history || {attempts: []};
+    $('capture-history-context').textContent = `${history.scope || 'Owner capture attempts recorded from this release onward.'} Showing up to ${history.limit || 100} attempts. ${history.warning || ''}`;
+    table('capture-history', ['Started / finished','Season / GW','Outcome','Duration','Models succeeded / failed','Forecast / shortlist','Diagnostic','Action'], history.attempts.map(attempt => {
+      const times = el('div', date(attempt.started_at_utc)); times.append(el('small', attempt.finished_at_utc ? `Finished ${date(attempt.finished_at_utc)}` : 'No recorded finish'));
+      const models = el('div', (attempt.successful_models || []).join(', ') || 'No successes recorded');
+      models.append(el('small', (attempt.failed_models || []).length ? `Failed: ${attempt.failed_models.join(', ')}` : 'No component failures recorded'));
+      let action = '—';
+      if (['failed','incomplete'].includes(attempt.status)) {
+        const available = attempt.season === state.report.season && state.report.gameweeks.some(w => w.gameweek === attempt.gameweek && Date.parse(w.deadline_time) > Date.now());
+        if (available) {
+          action = el('button', `Retry GW${attempt.gameweek}`, 'quiet'); action.type = 'button'; action.disabled = state.pending.has('capture');
+          action.dataset.focusKey = `retry-${attempt.id}`;
+          action.addEventListener('click', () => {
+            if (state.pending.has('capture')) return;
+            $('capture-gameweek').value = String(attempt.gameweek);
+            captureForecast({preventDefault() {}});
+          });
+        } else action = attempt.season !== state.report.season ? 'Select its season to retry' : 'Deadline unavailable or passed';
+      }
+      const diagnostic = el('div', attempt.error || (attempt.status === 'running' ? `Last recorded stage: ${attempt.phase}. No outcome yet.` : '—'), 'capture-diagnostic');
+      return [times, `${attempt.season || 'Unknown season'} / GW${attempt.gameweek}`, human(attempt.status), attempt.duration_seconds == null ? '—' : `${fmt(attempt.duration_seconds,1)} s`, models, `${human(attempt.archive_status)} / ${human(attempt.squad_status)}`, diagnostic, action];
+    }));
+    if (!history.attempts.length) empty('capture-history', 'No owner capture attempts recorded yet. Earlier forecasts remain in the archive ledger below.');
   }
   async function captureForecast(event){
     event.preventDefault();if(state.pending.has('capture')||!state.key)return;
@@ -428,7 +552,7 @@
       const ok=r.archive?.status==='saved'&&r.squad?.status==='saved';
       $('capture-result').textContent=ok?`GW${r.gameweek} forecast, model outputs and shortlist saved. The archive records their actual capture time.`:`Capture incomplete: predictions ${human(r.archive?.status)}, squad ${human(r.squad?.status)}. ${r.archive?.error||r.squad?.error||'Check archive configuration in the service.'}`;
       await refresh();
-    }catch(e){if(epoch===state.epoch)$('capture-result').textContent=e.message;}
+    }catch(e){if(epoch===state.epoch){$('capture-result').textContent=e.message;await refresh();}}
     finally{if(epoch===state.epoch)$('capture').disabled=!$('capture-gameweek').value;}
   }
   async function openPlayer(id){
@@ -454,7 +578,7 @@
   function chart(id,label){const svg=svgNode('svg',{viewBox:'0 0 620 240',role:'img','aria-label':label});svg.append(svgNode('title',{},label));$(id).replaceChildren(svg);return svg;}
   function chartRange(values){const valid=values.filter(v=>v!=null&&Number.isFinite(v));let lo=Math.min(0,...valid),hi=Math.max(1,...valid);const pad=(hi-lo)*.07;return [lo<0?lo-pad:lo,hi+pad];}
   function yAxis(svg,lo,hi){const y=v=>200-(v-lo)/(hi-lo)*180;for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4;svg.append(svgNode('line',{x1:46,x2:604,y1:y(v),y2:y(v),class:'grid-line'}),svgNode('text',{x:38,y:y(v)+3,'text-anchor':'end'},fmt(v,1)));}return y;}
-  function chartTip(node,text,action){node.append(svgNode('title',{},text));if(action){node.setAttribute('role','button');node.setAttribute('tabindex','0');node.setAttribute('aria-label',text);node.addEventListener('click',action);node.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();action();}});}}
+  function chartTip(node,text,action){node.append(svgNode('title',{},text));if(action){node.dataset.focusKey=text;node.setAttribute('role','button');node.setAttribute('tabindex','0');node.setAttribute('aria-label',text);node.addEventListener('click',action);node.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();action();}});}}
   function lineChart(id,rows,xfield,series,{label='Predicted and actual points',tick,click}={}){
     if(!rows.length||!rows.some(r=>series.some(([field])=>r[field]!=null))){empty(id,'No comparable values in this view yet. Check another gameweek or evidence scope.');return;}
     const svg=chart(id,label),[lo,hi]=chartRange(rows.flatMap(r=>series.map(([field])=>r[field]))),y=yAxis(svg,lo,hi),x=i=>rows.length===1?325:54+i/(rows.length-1)*540;
@@ -492,7 +616,7 @@
   $('login-form').addEventListener('submit',e=>{e.preventDefault();state.key=$('owner-key').value.trim();$('owner-key').value='';refresh(true);});
   $('lock').addEventListener('click',lock);
   $('refresh').addEventListener('click',()=>refresh());
-  $('season').addEventListener('change',()=>{state.page=0;state.manager=null;state.plan=null;$('manager-view').hidden=true;$('manager-status').textContent='';options('gameweek',[],null);$('player-dialog').close();refresh();});
+  $('season').addEventListener('change',()=>{state.page=0;state.manager=null;state.plan=null;state.deferredReport=null;state.pending.get('manager')?.controller.abort();state.pending.delete('manager');$('manager-view').hidden=true;$('manager-status').textContent='';options('gameweek',[],null);$('player-dialog').close();refresh();});
   $('gameweek').addEventListener('change',async()=>{state.page=0;await refresh();if(state.managerId&&state.key)loadManager();});
   $('evaluation-mode').addEventListener('change',()=>{if(state.report)render();});
   Object.keys(views).forEach(tab=>$(`tab-${tab}`).addEventListener('click',()=>setTab(tab)));
@@ -500,18 +624,20 @@
   const orientNavigation = () => $('navigation').setAttribute('aria-orientation', compactNavigation.matches ? 'horizontal' : 'vertical');
   compactNavigation.addEventListener('change', orientNavigation); orientNavigation();
   $('navigation').addEventListener('keydown',e=>{const keys=Object.keys(views),i=keys.indexOf(state.tab);let next;if(['ArrowDown','ArrowRight'].includes(e.key))next=keys[(i+1)%keys.length];if(['ArrowUp','ArrowLeft'].includes(e.key))next=keys[(i-1+keys.length)%keys.length];if(e.key==='Home')next=keys[0];if(e.key==='End')next=keys.at(-1);if(next){e.preventDefault();setTab(next,true);}});
-  ['search','position','scope','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',()=>{state.page=0;if(state.report)renderPlayers();}));
-  $('previous-page').addEventListener('click',()=>{state.page--;renderPlayers();});$('next-page').addEventListener('click',()=>{state.page++;renderPlayers();});
+  ['search','position','scope','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',()=>{state.page=0;if(state.report)renderActive();}));
+  $('previous-page').addEventListener('click',()=>{state.page--;renderActive();});$('next-page').addEventListener('click',()=>{state.page++;renderActive();});
   $('export').addEventListener('click',exportCSV);
   $('scout-export').addEventListener('click',()=>{if(state.report)exportPlayers(state.report.selected?.analysis.scout.players||[], 'openfpl-scout');});
   $('scout-capture').addEventListener('click',()=>{setTab('system');$('capture-form').scrollIntoView({block:'center'});$('capture-gameweek').focus({preventScroll:true});});
-  $('live-model-window').addEventListener('change',()=>{if(state.report)renderLiveModels();});
+  $('live-model-window').addEventListener('change',()=>{if(state.report){renderScope();renderActive();}});
   $('training-dataset').addEventListener('change',loadTraining);$('reload-models').addEventListener('click',loadTraining);$('training-model').addEventListener('change',renderTrainingModel);
   $('capture-form').addEventListener('submit',captureForecast);
   $('manager-form').addEventListener('submit',loadManager);
   $('optimize-form').addEventListener('submit',runOptimize);
   $('close-player').addEventListener('click',()=>$('player-dialog').close());
   $('player-dialog').addEventListener('close',()=>{state.pending.get('player')?.controller.abort();state.pending.delete('player');});
-  setInterval(()=>{if(state.key&&!document.hidden&&!state.pending.has('main')&&!state.pending.has('capture')&&!state.pending.has('optimize'))refresh();},60000);
+  $('auto-refresh').addEventListener('click',()=>{state.autoRefresh=!state.autoRefresh;updateRefreshStatus();});
+  ['pointerdown','keydown','input','wheel','touchstart'].forEach(event => document.addEventListener(event,()=>{state.lastInteraction=Date.now();},{passive:true}));
+  setInterval(()=>{if(state.key){if(state.report&&!document.hidden)renderFreshness();refresh(false,true);}},60000);
   window.addEventListener('pagehide',lock);
 })();

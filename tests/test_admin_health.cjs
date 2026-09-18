@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {suggestions} = require('../static/admin/health.js');
+const {suggestions, freshness} = require('../static/admin/health.js');
 
 const now = Date.parse('2026-09-18T12:00:00Z');
 const week = (gameweek, deadline_time, eligible = false) => ({gameweek, deadline_time, eligible});
@@ -44,4 +44,34 @@ test('feature gaps are deduplicated and repairs precede improvements', () => {
 test('missing telemetry and disabled optional enrichment invent no failures', () => {
   assert.deepEqual(suggestions({}, now), []);
   assert.deepEqual(suggestions({system: {enrichment_enabled: false}, runtime: {server_errors: 0}}, now), []);
+});
+
+test('freshness uses source timestamps, not the newly assembled report time', () => {
+  const rows = freshness({generated_at_utc: new Date(now).toISOString(), selected: {
+    captured_at_utc: '2026-09-17T12:00:00Z', actuals_at_utc: '2026-09-18T11:00:00Z', result_state: 'final',
+    metadata: {captured_at_utc: '2026-09-17T12:00:00Z', enrichment: {status: 'applied', source_observed_gameweek: 4, required_history_gameweek: 4}},
+  }}, now);
+  assert.equal(rows[0].age_seconds, 86400);
+  assert.equal(rows[1].age_seconds, 3600);
+  assert.equal(rows[1].status, 'final');
+  assert.match(rows[1].detail, /does not make them stale/);
+  assert.equal(rows[2].age_seconds, 86400);
+  assert.match(rows[2].detail, /source update time is not recorded/);
+  assert.match(rows[2].detail, /through GW4/);
+});
+
+test('missing and invalid source timestamps stay unknown', () => {
+  for (const row of freshness({selected: {captured_at_utc: 'bad date'}}, now)) {
+    assert.equal(row.timestamp, null);
+    assert.equal(row.age_seconds, null);
+  }
+});
+
+test('retrospective estimates use the replay time and retain their label', () => {
+  const rows = freshness({selected: {captured_at_utc: '2026-09-01T12:00:00Z',
+    replay: {generated_at_utc: '2026-09-18T11:00:00Z'}, forecast_state: 'retrospective-model',
+  }}, now);
+  assert.equal(rows[0].label, 'Retrospective estimate');
+  assert.equal(rows[0].age_seconds, 3600);
+  assert.equal(rows[0].status, 'retrospective-model');
 });
