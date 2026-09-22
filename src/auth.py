@@ -1,5 +1,6 @@
 import logging
 import os
+import secrets
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -7,6 +8,7 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
+admin_security = HTTPBearer(auto_error=False)
 
 # Local development reads .env; existing process/container variables retain
 # precedence because python-dotenv does not override them by default.
@@ -38,3 +40,20 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
 
     logger.info("Valid API key authenticated")
     return credentials.credentials
+
+
+async def verify_admin_key(
+    credentials: HTTPAuthorizationCredentials = Depends(admin_security),
+):
+    """Owner access is separate from keys shared with ordinary API clients."""
+    expected = os.environ.get("OPENFPL_ADMIN_KEY", "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="Owner dashboard is not configured")
+    supplied = credentials.credentials if credentials else ""
+    if not secrets.compare_digest(supplied.encode(), expected.encode()):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid owner key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return supplied

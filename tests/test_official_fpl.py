@@ -100,6 +100,16 @@ def add_player(payload, player_id=11, web_name="New Player"):
 
 
 class OfficialFPLClientTests(unittest.TestCase):
+    def test_final_scores_can_bypass_a_provisional_live_cache(self):
+        path = "event/1/live/"
+        session = FakeSession({path: {"elements": [{"id": 10, "stats": {"total_points": 2}}]}})
+        client = OfficialFPLClient(session=session)
+        self.assertEqual(client.event_live(1)["elements"][0]["stats"]["total_points"], 2)
+        session.responses[path] = {"elements": [{"id": 10, "stats": {"total_points": 5}}]}
+        self.assertEqual(client.event_live(1)["elements"][0]["stats"]["total_points"], 2)
+        self.assertEqual(client.event_live(1, refresh=True)["elements"][0]["stats"]["total_points"], 5)
+        self.assertEqual(len(session.calls), 2)
+
     def test_preseason_uses_official_bootstrap_baseline(self):
         session = FakeSession({"bootstrap-static/": bootstrap()})
         client = OfficialFPLClient(session=session)
