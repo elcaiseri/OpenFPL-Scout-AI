@@ -246,6 +246,7 @@ async def optimize_admin_manager(
     free_transfers: Optional[int] = Query(None, ge=0, le=15),
     bank: Optional[float] = Query(None, ge=0, le=200),
     max_transfers: int = Query(3, ge=1, le=3),
+    wildcard: bool = Query(False),
 ):
     """Explicit owner action: plan transfers for a gameweek that has not started."""
     bootstrap = await _official_call(scout.official_client.bootstrap)
@@ -265,6 +266,7 @@ async def optimize_admin_manager(
                 free_transfers=free_transfers,
                 bank=bank,
                 max_transfers=max_transfers,
+                wildcard=wildcard,
             )
         )
     except OfficialFPLNotFoundError as error:

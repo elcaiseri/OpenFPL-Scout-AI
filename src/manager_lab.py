@@ -12,6 +12,7 @@ needs a forecast for a gameweek whose deadline has not passed.
 from __future__ import annotations
 
 from collections import Counter
+from math import floor
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.observatory import best_xi, numeric
@@ -26,8 +27,8 @@ UNAVAILABLE = {"i", "s", "u", "n"}
 
 SELLING_PRICE_NOTE = (
     "Selling prices are not public. Every sale is valued at the player's current "
-    "price, so a squad holding price risers is undervalued here and one holding "
-    "fallers is overvalued. Confirm affordability in the official game."
+    "price, which may overestimate the funds available from sales. "
+    "Confirm affordability in the official game."
 )
 PLAN_NOTE = (
     "One-transfer plans are searched exhaustively. Two- and three-transfer plans "
@@ -254,6 +255,7 @@ def optimize(
     bank: float,
     free_transfers: int,
     max_transfers: int = 3,
+    wildcard: bool = False,
     width: int = 20,
     beam: int = 60,
 ) -> dict:
@@ -271,6 +273,8 @@ def optimize(
     baseline, base_xi, base_captain = xi_value(squad)
     if baseline is None:
         raise ValueError("The squad has no complete predicted XI")
+    if wildcard:
+        return _optimize_wildcard(squad, pool, bank=bank, free_transfers=free_transfers)
 
     held = {p["id"] for p in squad}
     by_position: dict[str, list[dict]] = {position: [] for position in SQUAD_SHAPE}
@@ -347,9 +351,114 @@ def optimize(
         },
         "bank": float(bank),
         "free_transfers": int(free_transfers),
+        "wildcard": False,
         "plans": [plans[k] for k in sorted(plans)],
         "recommended": max(worthwhile, key=lambda p: p["net_gain"]) if worthwhile else None,
         "notes": [SELLING_PRICE_NOTE, PLAN_NOTE],
+    }
+
+
+def _optimize_wildcard(squad, pool, *, bank, free_transfers):
+    """Select the whole squad, XI and captain jointly, without a transfer cap.
+
+    Binary variables represent squad membership, starting and captaincy. The
+    budget constrains the final squad, allowing simultaneous sales and buys.
+    """
+    import numpy as np
+    from scipy.optimize import Bounds, LinearConstraint, milp
+    from scipy.sparse import lil_matrix
+
+    held = {p["id"] for p in squad}
+    candidates = {p["id"]: dict(p) for p in squad}
+    for p in pool:
+        if (p["id"] not in held and p.get("position") in SQUAD_SHAPE
+                and numeric(p.get("price")) is not None
+                and numeric(p.get("expected_points")) is not None
+                and p.get("status") not in UNAVAILABLE):
+            candidates[p["id"]] = dict(p)
+    players = sorted(candidates.values(), key=lambda p: p["id"])
+    count = len(players)
+    prices = np.array([round(p["price"] * 10) for p in players])
+    funds = sum(p["price"] for p in squad) + bank
+    budget = floor(funds * 10 + 1e-7)
+    points = np.array([numeric(p.get("expected_points")) or 0 for p in players])
+    objective = np.concatenate((np.zeros(count), -points, -points))
+    upper = np.ones(3 * count)
+    for i, p in enumerate(players):
+        if numeric(p.get("expected_points")) is None:
+            upper[count + i] = upper[2 * count + i] = 0
+    rows, lower, limits = [], [], []
+
+    def constrain(coefficients, low, high):
+        rows.append(coefficients)
+        lower.append(low)
+        limits.append(high)
+
+    constrain(dict(enumerate(prices)), -np.inf, budget)
+    for position, size in SQUAD_SHAPE.items():
+        indices = [i for i, p in enumerate(players) if p["position"] == position]
+        constrain({i: 1 for i in indices}, size, size)
+        min_xi, max_xi = {"GK": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}[position]
+        constrain({count + i: 1 for i in indices}, min_xi, max_xi)
+    for club in sorted({p["team"] for p in players}):
+        constrain({i: 1 for i, p in enumerate(players) if p["team"] == club}, 0, MAX_PER_CLUB)
+    constrain({count + i: 1 for i in range(count)}, 11, 11)
+    constrain({2 * count + i: 1 for i in range(count)}, 1, 1)
+    for i in range(count):
+        constrain({count + i: 1, i: -1}, -np.inf, 0)
+        constrain({2 * count + i: 1, count + i: -1}, -np.inf, 0)
+    matrix = lil_matrix((len(rows), 3 * count))
+    for row, coefficients in enumerate(rows):
+        for col, value in coefficients.items():
+            matrix[row, col] = value
+    constraints = LinearConstraint(matrix.tocsr(), lower, limits)
+    result = milp(objective, integrality=np.ones(3 * count),
+                  bounds=Bounds(0, upper), constraints=constraints,
+                  options={"time_limit": 30, "mip_rel_gap": 0})
+    if result.x is None:
+        raise ValueError("No legal wildcard squad was found within the budget and search time limit.")
+    optimal = result.status == 0
+    # Among equally strong XIs, prefer keeping existing players to avoid
+    # suggesting unnecessary bench transfers just because they are free.
+    if optimal:
+        tie = milp(np.concatenate(([0 if p["id"] in held else 1 for p in players], np.zeros(2 * count))),
+                   integrality=np.ones(3 * count), bounds=Bounds(0, upper),
+                   constraints=[constraints, LinearConstraint(objective, -np.inf, result.fun + 1e-7)],
+                   options={"time_limit": 5, "mip_rel_gap": 0})
+        if tie.x is not None:
+            result = tie
+    selected = np.rint(result.x)
+    values = constraints.A @ selected
+    if (np.any(np.abs(result.x - selected) > 1e-5)
+            or np.any(selected < 0) or np.any(selected > upper)
+            or np.any(values < np.array(lower) - 1e-6)
+            or np.any(values > np.array(limits) + 1e-6)):
+        raise ValueError("The wildcard search did not return a valid squad; try again.")
+    chosen = [p for i, p in enumerate(players) if selected[i]]
+    chosen_ids = {p["id"] for p in chosen}
+    outs = sorted((p for p in squad if p["id"] not in chosen_ids), key=lambda p: (p["position"], p["id"]))
+    ins = sorted((p for p in chosen if p["id"] not in held), key=lambda p: (p["position"], p["id"]))
+    baseline, _, captain = xi_value(squad)
+    score, _, _ = xi_value(chosen)
+    plan = {
+        "transfers": len(ins), "hits": 0, "hit_cost": 0,
+        "gain": score - baseline, "net_gain": score - baseline,
+        "predicted_points": score, "net_predicted_points": score,
+        "remaining_bank": round(funds - sum(p["price"] for p in chosen), 10),
+        "moves": [{"out": _brief(o), "in": _brief(i), "cost": i["price"] - o["price"],
+                   "gain": i["expected_points"] - o["expected_points"] if numeric(o.get("expected_points")) is not None else None}
+                  for o, i in zip(outs, ins)],
+        "exhaustive": optimal, "search_method": "integer-optimization",
+        **_shape(chosen),
+    }
+    return {
+        "baseline": {"predicted_points": baseline, "captain": _brief(captain), **_shape(squad)},
+        "bank": float(bank), "free_transfers": int(free_transfers), "wildcard": True,
+        "plans": [plan], "recommended": plan if plan["net_gain"] > 1e-9 else None,
+        "notes": [SELLING_PRICE_NOTE,
+                  "Wildcard planning allows up to 15 transfers with no points hits. The bank, squad positions, legal XI and three-player club limit still apply. This does not activate a chip in FPL.",
+                  "The full squad was optimized for the captain-doubled predicted XI."
+                  if optimal else "The search reached its time limit; this is a legal candidate, not a proven optimum."],
     }
 
 

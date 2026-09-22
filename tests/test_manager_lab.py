@@ -1,4 +1,5 @@
 import unittest
+from collections import Counter
 
 from src.manager_lab import (
     HIT_COST,
@@ -164,6 +165,82 @@ class OptimizeTests(unittest.TestCase):
         result = optimize(squad(), [], bank=0.0, free_transfers=1)
         self.assertTrue(any('Selling prices are not public' in n for n in result['notes']))
         self.assertTrue(any('not proven optima' in n for n in result['notes']))
+
+
+class WildcardTests(unittest.TestCase):
+    def assert_legal(self, plan, roster, bank):
+        chosen = plan['xi'] + plan['bench']
+        self.assertEqual(len(chosen), 15)
+        self.assertEqual(len({p['id'] for p in chosen}), 15)
+        self.assertEqual(Counter(p['position'] for p in chosen), Counter(SHAPE))
+        self.assertLessEqual(max(Counter(p['team'] for p in chosen).values()), 3)
+        self.assertEqual(len(plan['xi']), 11)
+        self.assertEqual(sum(p['is_captain'] for p in plan['xi']), 1)
+        self.assertEqual(sum(p['position'] == 'GK' for p in plan['xi']), 1)
+        self.assertGreaterEqual(sum(p['position'] == 'DEF' for p in plan['xi']), 3)
+        self.assertGreaterEqual(sum(p['position'] == 'MID' for p in plan['xi']), 2)
+        self.assertGreaterEqual(sum(p['position'] == 'FWD' for p in plan['xi']), 1)
+        spent = sum(p['price'] for p in chosen)
+        budget = bank + sum(p['price'] for p in roster)
+        self.assertLessEqual(spent, budget + 1e-9)
+        self.assertAlmostEqual(plan['remaining_bank'], budget - spent)
+        self.assertEqual(plan['hits'], 0)
+        self.assertEqual(plan['hit_cost'], 0)
+        self.assertAlmostEqual(plan['net_gain'], plan['gain'])
+        self.assertEqual(len(plan['moves']), plan['transfers'])
+        self.assertTrue(all(m['out']['position'] == m['in']['position'] for m in plan['moves']))
+
+    def test_can_replace_all_fifteen_with_no_hits_and_fund_starters_from_bench_sales(self):
+        roster = squad()
+        for p in roster:
+            p['price'] = 10.0
+        starters = ['GK'] + ['DEF'] * 3 + ['MID'] * 5 + ['FWD'] * 2
+        pool = [player(100 + i, pos, 30, price=13) for i, pos in enumerate(starters)]
+        pool += [player(200 + i, pos, 1, price=1) for i, pos in enumerate(['GK', 'DEF', 'DEF', 'FWD'])]
+        result = optimize(roster, pool, bank=0, free_transfers=0, max_transfers=1, wildcard=True)
+        plan = result['recommended']
+        self.assertTrue(result['wildcard'])
+        self.assertEqual(plan['transfers'], 15)
+        self.assertAlmostEqual(plan['predicted_points'], 360)
+        self.assert_legal(plan, roster, 0)
+
+    def test_club_limit_and_unavailable_candidates_still_apply(self):
+        roster = squad()
+        pool = [player(100 + i, pos, 30, team='Loaded') for i, pos in enumerate(SHAPE)]
+        pool += [player(300, 'MID', 1000, status='i')]
+        result = optimize(roster, pool, bank=0, free_transfers=0, wildcard=True)
+        plan = result['recommended']
+        self.assert_legal(plan, roster, 0)
+        self.assertEqual(sum(p['team'] == 'Loaded' for p in plan['xi'] + plan['bench']), 3)
+        self.assertNotIn(300, {p['id'] for p in plan['xi'] + plan['bench']})
+
+    def test_bank_is_available_but_cannot_be_exceeded(self):
+        roster = squad()
+        pool = [player(100, 'MID', 30, price=5.6)]
+        short = optimize(roster, pool, bank=0.55, free_transfers=0, wildcard=True)
+        self.assertIsNone(short['recommended'])
+        self.assertEqual(short['plans'][0]['transfers'], 0)
+        enough = optimize(roster, pool, bank=0.6, free_transfers=0, wildcard=True)
+        self.assertEqual(enough['recommended']['transfers'], 1)
+        self.assert_legal(enough['recommended'], roster, 0.6)
+
+    def test_simultaneous_club_swaps_do_not_require_legal_intermediate_squads(self):
+        roster = squad()
+        for p in roster[2:5]:
+            p['team'] = 'A'
+        for p in roster[7:10]:
+            p['team'] = 'B'
+        pool = [player(100, 'DEF', 30, team='B'), player(101, 'MID', 30, team='A')]
+        self.assertEqual(optimize(roster, pool, bank=0, free_transfers=0)['plans'], [])
+        plan = optimize(roster, pool, bank=0, free_transfers=0, wildcard=True)['recommended']
+        self.assertEqual(plan['transfers'], 2)
+        self.assert_legal(plan, roster, 0)
+
+    def test_no_improvement_keeps_the_current_squad(self):
+        result = optimize(squad(), [], bank=0, free_transfers=0, wildcard=True)
+        self.assertIsNone(result['recommended'])
+        self.assertEqual(result['plans'][0]['transfers'], 0)
+        self.assert_legal(result['plans'][0], squad(), 0)
 
 
 class CatalogTests(unittest.TestCase):

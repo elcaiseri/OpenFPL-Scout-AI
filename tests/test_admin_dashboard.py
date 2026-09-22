@@ -646,6 +646,14 @@ class ManagerViewTests(unittest.TestCase):
         result = self.dashboard.manager_plan(7, 2)
         self.assertTrue(any("Selling prices are not public" in n for n in result["notes"]))
 
+    def test_wildcard_uses_official_bank_and_ignores_free_transfer_hits(self):
+        result = self.dashboard.manager_plan(7, 2, free_transfers=0, wildcard=True)
+        self.assertTrue(result["wildcard"])
+        self.assertEqual(result["bank"], 1.5)
+        self.assertEqual(result["recommended"]["hit_cost"], 0)
+        self.assertEqual(len(result["recommended"]["xi"] + result["recommended"]["bench"]), 15)
+        self.assertFalse(any("hit costs use your figure" in w for w in result["warnings"]))
+
     def test_an_entry_without_completed_gameweeks_is_refused(self):
         self.client.manager_history = lambda entry_id: {"chips": [], "current": []}
         with self.assertRaises(ValueError):
@@ -653,6 +661,23 @@ class ManagerViewTests(unittest.TestCase):
 
 
 class AccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wildcard_query_is_forwarded_to_manager_planning(self):
+        calls = []
+
+        def manager_plan(entry_id, gameweek, **kwargs):
+            calls.append((entry_id, gameweek, kwargs))
+            return {"wildcard": kwargs["wildcard"]}
+
+        fake = SimpleNamespace(official_client=OfficialClient())
+        fake.official_client.events.append({"id": 4, "deadline_time": "2099-08-15T10:00:00Z"})
+        with patch.dict("os.environ", {"OPENFPL_ADMIN_KEY": "owner-test-key"}), patch.object(main, "scout", fake, create=True), patch.object(main, "admin_dashboard", SimpleNamespace(manager_plan=manager_plan), create=True):
+            for suffix, wildcard in [("&wildcard=true", True), ("&max_transfers=2", False)]:
+                status, _, body = await asgi_get("/api/admin/manager/7/optimize?gameweek=4" + suffix, "owner-test-key", "POST")
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body)["wildcard"], wildcard)
+                self.assertEqual(calls[-1][0:2], (7, 4))
+                self.assertEqual(calls[-1][2]["wildcard"], wildcard)
+
     async def test_capture_service_response_and_failure_keep_owner_route_contract(self):
         for error, expected_status in [(None, 200), (CaptureDeadlineError('Deadline passed'), 422), (ValueError('Inference unavailable'), 502)]:
             def capture(gameweek):

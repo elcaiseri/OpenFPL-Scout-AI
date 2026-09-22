@@ -253,7 +253,7 @@ class AdminDashboard:
             ),
         })
 
-    def manager_plan(self, entry_id, gameweek, *, free_transfers=None, bank=None, max_transfers=3):
+    def manager_plan(self, entry_id, gameweek, *, free_transfers=None, bank=None, max_transfers=3, wildcard=False):
         """Plan transfers for an upcoming gameweek. Runs inference when no forecast is archived."""
         client = self.scout.official_client
         bootstrap = client.bootstrap()
@@ -286,16 +286,16 @@ class AdminDashboard:
         transfers = int(free_transfers) if free_transfers is not None else estimate["free_transfers"]
         pool = [p for p in players.values() if p["id"] not in {s["id"] for s in squad}]
         result = optimize_transfers(
-            squad, pool, bank=funds, free_transfers=transfers, max_transfers=max_transfers
+            squad, pool, bank=funds, free_transfers=transfers, max_transfers=max_transfers, wildcard=wildcard
         )
         warnings = []
         if unforecast:
-            warnings.append("No forecast for " + ", ".join(sorted(unforecast)) + "; they are held but never fielded in a planned XI.")
+            warnings.append("No forecast for " + ", ".join(sorted(unforecast)) + "; they are never fielded in a planned XI.")
         if unresolved:
             warnings.append(f"{len(unresolved)} pick(s) are not in the official player list and were dropped; the plan is incomplete.")
         if bank is not None and official_bank is not None and abs(funds - official_bank / 10) > 1e-9:
             warnings.append("Bank was overridden; affordability uses your figure, not the official one.")
-        if free_transfers is not None and transfers != estimate["free_transfers"]:
+        if not wildcard and free_transfers is not None and transfers != estimate["free_transfers"]:
             warnings.append("Free transfers were overridden; hit costs use your figure.")
         return _json_safe({
             **result,

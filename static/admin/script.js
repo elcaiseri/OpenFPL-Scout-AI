@@ -456,17 +456,21 @@
     $('optimize-summary').replaceChildren(
       metric('CURRENT XI · PREDICTED',fmt(plan.baseline.predicted_points),`Captain ${plan.baseline.captain?.name||'—'} doubled · squad worth £${fmt(plan.baseline.squad_value,1)}m`,'ours'),
       metric('BEST NET GAIN',best?signed(best.net_gain):'—',best?`${best.transfers} transfer(s), ${best.hits} hit(s)`:'No plan beats holding the current squad','ours'),
-      metric('FREE TRANSFERS',fmt(plan.free_transfers,0),human(plan.free_transfer_source)),
+      plan.wildcard?metric('WILDCARD','Unlimited','No points hits · all squad rules apply'):metric('FREE TRANSFERS',fmt(plan.free_transfers,0),human(plan.free_transfer_source)),
       metric('BANK',`£${fmt(plan.bank,1)}m`,human(plan.bank_source)));
     $('optimize-plans').replaceChildren();
     if(!plan.plans.length){empty('optimize-plans','No affordable transfer improves the predicted XI within the club and position limits.');}
     else plan.plans.forEach(p=>{
       const panel=el('div',null,'plan');
-      panel.append(el('h3',`${p.transfers} transfer${p.transfers>1?'s':''}${p.hits?` · ${p.hits} hit${p.hits>1?'s':''} (−${fmt(p.hit_cost,0)})`:' · no hit'}${p.exhaustive?'':' · beam search'}`));
+      panel.append(el('h3',`${plan.wildcard?'Wildcard · ':''}${p.transfers} transfer${p.transfers!==1?'s':''}${p.hits?` · ${p.hits} hit${p.hits>1?'s':''} (−${fmt(p.hit_cost,0)})`:' · no hit'}${p.exhaustive?'':plan.wildcard?' · time-limited search':' · beam search'}`));
       const rows=p.moves.map(m=>[`${m.out.name} (${m.out.team})`,`${m.in.name} (${m.in.team})`,money(m.cost),signed(m.gain)]);
       const holder=el('div',null,'table-scroll');panel.append(holder);holder.id=`plan-${p.transfers}`;$('optimize-plans').append(panel);
       table(`plan-${p.transfers}`,['Out','In','Net cost','xPts change'],rows);
       panel.append(note(`Predicted XI ${fmt(p.predicted_points)} · net of hits ${fmt(p.net_predicted_points)} · net gain ${signed(p.net_gain)} · bank left £${fmt(p.remaining_bank,1)}m.`));
+      if(plan.wildcard){
+        const squadTable=el('div',null,'table-scroll');squadTable.id=`wildcard-squad-${p.transfers}`;panel.append(squadTable);
+        table(squadTable.id,['Role','Player','Club','Position','Price','xPts'],[...p.xi,...p.bench].map((player,index)=>[index<11?(player.is_captain?'Captain':'Starting XI'):'Bench',player.name,player.team,player.position,money(player.price),fmt(player.expected_points)]));
+      }
     });
     $('optimize-notes').replaceChildren(...[...plan.notes,...plan.warnings].map(note));
     $('optimize-status').textContent=`Forecast source: ${human(plan.forecast_source.kind)} for GW${plan.gameweek}, from the squad that played GW${plan.squad_gameweek}. Captured ${date(plan.forecast_source.captured_at_utc)}.`;
@@ -490,11 +494,13 @@
     event.preventDefault();
     if(state.pending.has('optimize')||!state.key||!state.managerId)return;
     const gw=$('optimize-gameweek').value;if(!gw)return;
-    const query=new URLSearchParams({gameweek:gw,max_transfers:$('optimize-max').value});
-    if($('optimize-free-transfers').value!=='')query.set('free_transfers',$('optimize-free-transfers').value);
+    const wildcard=$('optimize-max').value==='wildcard';
+    const query=new URLSearchParams({gameweek:gw});
+    if(wildcard)query.set('wildcard','true');else query.set('max_transfers',$('optimize-max').value);
+    if(!wildcard&&$('optimize-free-transfers').value!=='')query.set('free_transfers',$('optimize-free-transfers').value);
     if($('optimize-bank').value!=='')query.set('bank',$('optimize-bank').value);
     const epoch=state.epoch;
-    $('optimize').disabled=true;$('optimize-status').textContent=`Planning GW${gw} transfers. Running the models if no forecast is archived…`;
+    $('optimize').disabled=true;$('optimize-status').textContent=`Planning GW${gw} ${wildcard?'wildcard':'transfers'}. Running the models if no forecast is archived…`;
     try{
       const data=await api(`/api/admin/manager/${encodeURIComponent(state.managerId)}/optimize?${query}`,{method:'POST',channel:'optimize',timeout:180000});
       if(!data)return;
@@ -744,6 +750,9 @@
   $('capture-form').addEventListener('submit',captureForecast);
   $('manager-form').addEventListener('submit',loadManager);
   $('optimize-form').addEventListener('submit',runOptimize);
+  $('optimize-max').addEventListener('change',()=>{
+    $('optimize-free-transfers').disabled=$('optimize-max').value==='wildcard';
+  });
   $('close-player').addEventListener('click',()=>$('player-dialog').close());
   $('player-dialog').addEventListener('close',()=>{state.pending.get('player')?.controller.abort();state.pending.delete('player');});
   $('auto-refresh').addEventListener('click',()=>{state.autoRefresh=!state.autoRefresh;updateRefreshStatus();});
