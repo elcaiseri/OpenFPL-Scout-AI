@@ -320,6 +320,10 @@ class DataArchive:
             "prediction_archived": prediction_archived,
             "files_updated": written,
         }
+        if prediction_archived:
+            deadline = self._gameweek_deadline(bootstrap, prediction_gameweek)
+            # Cached predictions outlive this decision; squad capture re-checks.
+            result["open_until_utc"] = deadline.isoformat() if deadline else None
         if skipped_reason:
             result["prediction_skipped_reason"] = skipped_reason
         logger.info(
@@ -354,6 +358,11 @@ class DataArchive:
                     "reason": archive.get("prediction_skipped_reason")
                     or "prediction-not-archived",
                 }
+            # Predictions can be served from cache after the deadline passes;
+            # the squad file must still hold only a pre-deadline selection.
+            open_until = _parse_deadline(archive.get("open_until_utc"))
+            if open_until is not None and self.clock() >= open_until:
+                return {"status": "skipped", "reason": "gameweek-closed"}
             prediction_gameweek = int(predictions.attrs["gameweek"])
             season = str(archive["season"])
             target = (
@@ -478,6 +487,20 @@ class DataArchive:
                 temporary_path.unlink(missing_ok=True)
             self._digests[path] = digest
         return True
+
+    @staticmethod
+    def _gameweek_deadline(
+        bootstrap: Mapping[str, Any], gameweek: int
+    ) -> Optional[datetime]:
+        event = next(
+            (
+                event
+                for event in bootstrap.get("events", [])
+                if int(event["id"]) == gameweek
+            ),
+            None,
+        )
+        return _parse_deadline(event.get("deadline_time")) if event else None
 
     def _open_gameweek(self, bootstrap: Mapping[str, Any]) -> Optional[int]:
         """Return the next gameweek whose deadline has not yet passed."""

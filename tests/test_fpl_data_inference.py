@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from scripts.download_fpl_data import Season
+from test_download_fpl_data import fail_replacing
 from src.fpl_data_inference import FPLDataHistoryProvider
 
 
@@ -24,6 +25,15 @@ def source_csv():
                 f"Chelsea,True,{gameweek},90,2,{player_id + gameweek},3\n"
             )
     return (header + "".join(rows)).encode()
+
+
+def grown_csv(extra_players):
+    """The source CSV plus ``extra_players`` more GW1 rows (newer coverage)."""
+    rows = "".join(
+        f"{900 + index},2,Extra {index},Arsenal,Chelsea,True,1,90,2,1,3\n"
+        for index in range(extra_players)
+    )
+    return source_csv() + rows.encode()
 
 
 def official_history():
@@ -344,13 +354,127 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             )
 
             now[0] = 61
-            with patch("src.fpl_data_inference._atomic_write") as write:
+            with patch("src.fpl_data_inference._atomic_write") as write, patch(
+                "src.fpl_data_inference.atomic_write_pair"
+            ) as write_pair:
                 _, diagnostics = provider.enrich(official_history(), target_gameweek=3)
 
             self.assertEqual(diagnostics["cache"], "remote")
             write.assert_not_called()
+            write_pair.assert_not_called()
             self.assertEqual(metadata["source_filename"], "fpl-data-stats.csv")
             self.assertEqual(metadata["rows"], 120)
+
+    def test_failed_metadata_commit_keeps_the_cached_pair_consistent(self):
+        now = [0.0]
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=client,
+                runtime_cache_path=cache,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            provider.enrich(official_history(), target_gameweek=3)
+            original = cache.read_bytes()
+
+            client.download_csv = lambda season: (grown_csv(5), "fpl-data-stats.csv")
+            now[0] = 61
+            with fail_replacing(cache.with_suffix(".metadata.json").name):
+                provider.enrich(official_history(), target_gameweek=3)
+
+            self.assertEqual(cache.read_bytes(), original)
+            provider._read_local(cache)  # Checksum still matches its metadata.
+
+    def test_smaller_download_never_replaces_the_dataset_in_use(self):
+        now = [0.0]
+        client = FakeClient()
+        client.download_csv = lambda season: (grown_csv(10), "fpl-data-stats.csv")
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=60,
+            acknowledge_permission_pending=True,
+            clock=lambda: now[0],
+        )
+        _, first = provider.enrich(official_history(), target_gameweek=3)
+
+        # 130 rows and 70 players shrink to 120 and 60: inside the importer's
+        # 20% churn allowance, but never acceptable for an unattended refresh.
+        client.download_csv = lambda season: (source_csv(), "fpl-data-stats.csv")
+        now[0] = 61
+        _, second = provider.enrich(official_history(), target_gameweek=3)
+
+        self.assertEqual(second["dataset_sha256"], first["dataset_sha256"])
+        self.assertIn("row count dropped", second["refresh_error"])
+
+    def test_failed_refresh_keeps_a_newer_dataset_than_the_local_copy(self):
+        now = [0.0]
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=client,
+                runtime_cache_path=cache,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            provider.enrich(official_history(), target_gameweek=3)
+
+            # A newer download that cannot be persisted, then an outage.
+            client.download_csv = lambda season: (grown_csv(5), "fpl-data-stats.csv")
+            now[0] = 61
+            with patch(
+                "src.fpl_data_inference.atomic_write_pair",
+                side_effect=OSError("read-only"),
+            ):
+                _, newer = provider.enrich(official_history(), target_gameweek=3)
+
+            def outage(season):
+                raise RuntimeError("FPL Data is down")
+
+            client.download_csv = outage
+            now[0] = 122
+            _, after = provider.enrich(official_history(), target_gameweek=3)
+
+            self.assertEqual(after["dataset_sha256"], newer["dataset_sha256"])
+            self.assertEqual(after["cache"], "stale-memory-fallback")
+            self.assertIn("FPL Data is down", after["refresh_error"])
+
+    def test_identical_download_upgrades_old_metadata_without_rewriting_data(self):
+        now = [0.0]
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=FakeClient(),
+                runtime_cache_path=cache,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            provider.enrich(official_history(), target_gameweek=3)
+            metadata_file = cache.with_suffix(".metadata.json")
+            current = json.loads(metadata_file.read_text(encoding="utf-8"))
+            legacy_keys = ("cached_at_utc", "license_status", "season", "sha256")
+            metadata_file.write_text(
+                json.dumps({key: current[key] for key in legacy_keys}),
+                encoding="utf-8",
+            )
+
+            now[0] = 61
+            with patch("src.fpl_data_inference.atomic_write_pair") as write_pair:
+                provider.enrich(official_history(), target_gameweek=3)
+
+            write_pair.assert_not_called()
+            upgraded = json.loads(metadata_file.read_text(encoding="utf-8"))
+            self.assertEqual(upgraded["source_filename"], "fpl-data-stats.csv")
+            self.assertEqual(upgraded["sha256"], current["sha256"])
 
 
 if __name__ == "__main__":

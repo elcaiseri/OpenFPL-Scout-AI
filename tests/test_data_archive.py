@@ -331,6 +331,38 @@ class DataArchiveTests(unittest.TestCase):
             self.assertEqual(first["status"], "saved")
             self.assertEqual(second["status"], "unchanged")
 
+    def test_cached_predictions_never_write_a_squad_after_the_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 29, 9, 58, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            history = client.player_history(3)
+            predictions = prediction_frame()
+            predictions.attrs["archive"] = archive.capture_inference(
+                official_client=client,
+                prediction_gameweek=3,
+                official_history=history,
+                enriched_history=history,
+                predictions=predictions,
+                source="official-fpl",
+                enrichment={"status": "disabled"},
+                model_versions={},
+            )
+
+            # The same cached predictions are served two minutes after the
+            # GW3 deadline (10:00 UTC).
+            moment[0] = datetime(2026, 8, 29, 10, 2, tzinfo=timezone.utc)
+            result = archive.capture_squad(predictions, predictions)
+
+            self.assertEqual(
+                predictions.attrs["archive"]["open_until_utc"],
+                "2026-08-29T10:00:00+00:00",
+            )
+            self.assertEqual(result, {"status": "skipped", "reason": "gameweek-closed"})
+            self.assertFalse((Path(directory) / "2026-2027/squads/gw_03.json").exists())
+
     def test_archive_failure_does_not_escape(self):
         with tempfile.TemporaryDirectory() as directory:
             root_file = Path(directory) / "not-a-directory"

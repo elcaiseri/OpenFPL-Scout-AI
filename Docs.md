@@ -220,10 +220,17 @@ refreshes the dataset while others keep using the previous one.
 
 Runtime refreshes follow the importer's safety rules:
 
-- A download that regresses coverage (fewer rows or players, an earlier latest
-  gameweek, or lost feature columns) is rejected; the current dataset and the
-  file on disk stay in place, and `/api/health` reports `refresh_error`.
-- Identical downloads are not rewritten to the data volume.
+- A download with any fewer rows or players than the dataset in use, an
+  earlier latest gameweek, or lost feature columns is rejected (the importer
+  allows 20% churn; an unattended refresh allows none). The current dataset
+  and the file on disk stay in place, and `/api/health` reports
+  `refresh_error`.
+- A failed refresh keeps the dataset already in memory. The local copy is a
+  fallback only when nothing is loaded yet, so an older file never replaces
+  newer data.
+- The CSV and its checksum metadata are committed together; if the metadata
+  cannot be written, the previous CSV is restored. Identical downloads are not
+  rewritten, although outdated provenance metadata is refreshed.
 - Official history shows a gameweek as its fixtures are played, before FPL Data
   publishes it. Up to `max_gameweek_lag` (default 1) gameweeks of lag are
   tolerated: covered gameweeks are enriched, newer ones stay official-only and

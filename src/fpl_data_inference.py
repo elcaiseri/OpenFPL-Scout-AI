@@ -22,6 +22,7 @@ from scripts.download_fpl_data import (
     DatasetSummary,
     FPLDataClient,
     Season,
+    atomic_write_pair,
     check_for_regression,
     validate_csv,
 )
@@ -202,18 +203,25 @@ class FPLDataHistoryProvider:
             return
         path = self.runtime_cache_path
         metadata_file = _metadata_path(path)
-        # Most refreshes download identical bytes; skip rewriting a large file
+        # Most refreshes download identical bytes; never rewrite a large file
         # on the shared data volume when the cached copy already matches.
         try:
+            data_matches = hashlib.sha256(path.read_bytes()).hexdigest() == (
+                summary.sha256
+            )
+        except OSError:
+            data_matches = False
+        try:
             existing = json.loads(metadata_file.read_text(encoding="utf-8"))
-            if (
+            metadata_matches = (
                 existing.get("sha256") == summary.sha256
                 and existing.get("season", {}).get("value") == season.value
-                and hashlib.sha256(path.read_bytes()).hexdigest() == summary.sha256
-            ):
-                return
+                and "source_filename" in existing
+            )
         except (OSError, ValueError, AttributeError):
-            pass
+            metadata_matches = False
+        if data_matches and metadata_matches:
+            return
         metadata = {
             "access_method": "public Download CSV button (Dash callback)",
             "cached_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -224,11 +232,14 @@ class FPLDataHistoryProvider:
             "status": "runtime-refresh",
             **asdict(summary),
         }
-        _atomic_write(path, raw)
-        _atomic_write(
-            metadata_file,
-            (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
-        )
+        metadata_bytes = (
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        if data_matches:
+            # Repair or upgrade the provenance of an unchanged file.
+            _atomic_write(metadata_file, metadata_bytes)
+        else:
+            atomic_write_pair(path, raw, metadata_file, metadata_bytes)
 
     def _current_summary(self) -> Optional[DatasetSummary]:
         """Return the dataset a download would replace, if one exists."""
@@ -257,9 +268,10 @@ class FPLDataHistoryProvider:
         raw, source_filename = self.client.download_csv(season)
         summary = validate_csv(raw)
         if current is not None:
-            # Same guard as the import CLI: never replace the dataset in use
-            # (or the imported file) with a truncated or lower-coverage one.
-            check_for_regression(current, summary)
+            # The import CLI's guard, without its churn allowance: a season's
+            # dataset only grows, so an unattended refresh may never replace
+            # the dataset in use (or the imported file) with a smaller one.
+            check_for_regression(current, summary, minimum_ratio=1.0)
         frame = normalize_fpl_columns(pd.read_csv(io.BytesIO(raw)))
         try:
             self._write_runtime_cache(raw, season, summary, source_filename)
@@ -281,7 +293,11 @@ class FPLDataHistoryProvider:
         raise FPLDataInferenceError(detail)
 
     def _fetch(self) -> tuple[_LoadedDataset, str]:
-        """Load the dataset from FPL Data when allowed, else from local files."""
+        """Load the dataset from FPL Data when allowed, else from local files.
+
+        After a failed download the local copy is used only when no dataset
+        is loaded yet; otherwise the caller keeps the dataset already in use.
+        """
         if self.remote_download_allowed:
             try:
                 dataset = self._download(self._current_summary())
@@ -289,6 +305,9 @@ class FPLDataHistoryProvider:
                 remote_error = str(error)
                 self._last_refresh_error = remote_error
                 logger.warning("FPL Data refresh failed: %s", remote_error)
+                if self._dataset is not None:
+                    # Keep the dataset in use; the local copy may be older.
+                    raise FPLDataInferenceError(remote_error) from error
             else:
                 self._last_refresh_error = None
                 return dataset, "remote"
