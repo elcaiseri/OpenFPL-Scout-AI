@@ -2,8 +2,11 @@
 
 No model files are needed and nothing is archived. Each gameweek becomes
 ``gw_NN.csv``: one row per player fixture, ``id`` plus every model feature in
-model order. ``feature_sources.csv`` labels each feature's source and coverage
-per gameweek, and ``summary.json`` records the strategy and FPL Data status.
+model order. ``feature_sources.csv`` labels each feature per gameweek as
+``official-fpl``, ``fpl-data``, ``official-fpl+fpl-data``, ``request``, or
+``missing``, with its coverage. ``summary.json`` records the strategy and FPL
+Data status, or the error for a gameweek that could not be exported; the
+command then exits with status 1 after exporting every other gameweek.
 
     uv run python -m scripts.export_model_inputs --gameweeks 1-7
 """
@@ -78,9 +81,17 @@ def main(
 
     summary: List[Dict[str, Any]] = []
     sources: List[Dict[str, Any]] = []
+    failed = 0
     for gameweek in gameweeks:
-        frame, metadata = scout.export_model_inputs(gameweek)
         path = args.output / f"gw_{gameweek:02d}.csv"
+        try:
+            frame, metadata = scout.export_model_inputs(gameweek)
+        except Exception as error:  # Report it and keep exporting the rest.
+            failed += 1
+            path.unlink(missing_ok=True)
+            summary.append({"gameweek": gameweek, "error": str(error)})
+            print(f"GW{gameweek}: failed: {error}")
+            continue
         frame.to_csv(path, index=False)
         enrichment = metadata["data_enrichment"]
         for feature, source in metadata["feature_sources"].items():
@@ -123,8 +134,11 @@ def main(
         print(f"\nFeature sources for GW{int(latest['gameweek'].iloc[0])}:")
         for source, group in latest.groupby("source", sort=False):
             print(f"  {source} ({len(group)}): {', '.join(group['feature'])}")
-    print(f"\nWrote {len(gameweeks)} gameweek file(s) to {args.output}")
-    return 0
+    print(
+        f"\nWrote {len(gameweeks) - failed} of {len(gameweeks)} gameweek file(s) "
+        f"to {args.output}"
+    )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

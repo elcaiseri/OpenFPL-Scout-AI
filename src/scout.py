@@ -919,7 +919,12 @@ class FPLScout:
     def _feature_sources(
         official: pd.DataFrame, enriched: pd.DataFrame
     ) -> Dict[str, str]:
-        """Label each model feature by the source that supplied its values."""
+        """Label each model feature by the source that supplied its values.
+
+        Labels: ``official-fpl``, ``fpl-data``, ``official-fpl+fpl-data`` (FPL
+        Data filled cells official history left empty), ``request`` (the
+        gameweek being predicted), or ``missing`` (no values at all).
+        """
         sources = {feature: "official-fpl" for feature in CATEGORICAL_FEATURES}
         sources["gameweek"] = "request"
 

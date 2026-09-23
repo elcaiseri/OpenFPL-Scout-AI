@@ -216,7 +216,7 @@ class FPLDataHistoryProvider:
             metadata_matches = (
                 existing.get("sha256") == summary.sha256
                 and existing.get("season", {}).get("value") == season.value
-                and "source_filename" in existing
+                and existing.get("source_filename") == source_filename
             )
         except (OSError, ValueError, AttributeError):
             metadata_matches = False

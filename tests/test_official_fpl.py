@@ -435,6 +435,19 @@ class OfficialFPLClientTests(unittest.TestCase):
         self.assertLessEqual(len(client._cache), 10)
         self.assertEqual(len(session.calls), 50)
 
+    def test_one_entry_cache_keeps_the_newest_entry(self):
+        session = FakeSession(
+            {f"entry/{entry_id}/history/": {"current": []} for entry_id in range(2)}
+        )
+        client = OfficialFPLClient(session=session, max_cache_entries=1)
+
+        client.manager_history(0)
+        client.manager_history(1)
+        client.manager_history(1)
+
+        self.assertEqual(list(client._cache), ["entry/1/history/"])
+        self.assertEqual(len(session.calls), 2)
+
     def test_rejects_invalid_bootstrap_schema(self):
         client = OfficialFPLClient(
             session=FakeSession({"bootstrap-static/": {"elements": []}})

@@ -130,7 +130,8 @@ class OfficialFPLClient:
         expired = [key for key, entry in self._cache.items() if entry.expires_at <= now]
         for key in expired:
             del self._cache[key]
-        overflow = len(self._cache) - int(self.max_cache_entries * 0.9)
+        target = max(1, int(self.max_cache_entries * 0.9))
+        overflow = len(self._cache) - target
         if len(self._cache) > self.max_cache_entries and overflow > 0:
             oldest = sorted(self._cache, key=lambda key: self._cache[key].expires_at)
             for key in oldest[:overflow]:

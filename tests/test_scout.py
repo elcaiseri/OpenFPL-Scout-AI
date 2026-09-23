@@ -645,6 +645,25 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(sources["minutes"], "missing")
         self.assertEqual(sources["gameweek"], "request")
 
+    def test_feature_sources_label_every_documented_case(self):
+        official = pd.DataFrame(
+            {"gameweek": [0, 1, 2], "goals": [None, 1.0, None], "minutes": [0, 90, 90]}
+        )
+        enriched = official.assign(goals=[None, 1.0, 2.0], total_shots=[None, 3, 4])
+
+        sources = FPLScout._feature_sources(official, enriched)
+
+        self.assertEqual(sources["goals"], "official-fpl+fpl-data")
+        self.assertEqual(sources["minutes"], "official-fpl")
+        self.assertEqual(sources["total_shots"], "fpl-data")
+        self.assertEqual(sources["touches"], "missing")
+        self.assertEqual(sources["gameweek"], "request")
+        self.assertEqual(sources["team_name"], "official-fpl")
+        self.assertEqual(
+            set(sources.values()),
+            {"official-fpl", "fpl-data", "official-fpl+fpl-data", "request", "missing"},
+        )
+
     def test_gameweek_one_cold_start_exports_no_model_input(self):
         scout = FPLScout(
             scout_config(),

@@ -476,6 +476,32 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             self.assertEqual(upgraded["source_filename"], "fpl-data-stats.csv")
             self.assertEqual(upgraded["sha256"], current["sha256"])
 
+    def test_identical_download_with_a_new_filename_refreshes_provenance(self):
+        now = [0.0]
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=client,
+                runtime_cache_path=cache,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            provider.enrich(official_history(), target_gameweek=3)
+
+            client.download_csv = lambda season: (source_csv(), "renamed.csv")
+            now[0] = 61
+            with patch("src.fpl_data_inference.atomic_write_pair") as write_pair:
+                provider.enrich(official_history(), target_gameweek=3)
+
+            write_pair.assert_not_called()
+            metadata = json.loads(
+                cache.with_suffix(".metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(metadata["source_filename"], "renamed.csv")
+
 
 if __name__ == "__main__":
     unittest.main()

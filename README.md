@@ -216,9 +216,12 @@ uv run python -m scripts.export_model_inputs --gameweeks 1-7
 
 `data/model-inputs/gw_NN.csv` holds one row per player fixture (`id` plus every
 model feature in model order). `feature_sources.csv` labels each feature as
-`official-fpl`, `fpl-data`, `request`, or `missing` with its coverage, and
-`summary.json` records the strategy and FPL Data status per gameweek. GW1
-without match history uses the ownership cold start, so its file is empty.
+`official-fpl`, `fpl-data`, `official-fpl+fpl-data` (FPL Data filled cells
+official history left empty), `request`, or `missing`, with its coverage.
+`summary.json` records the strategy and FPL Data status per gameweek, or the
+error for a gameweek that could not be exported (the command then exits with
+status 1). GW1 without match history uses the ownership cold start, so its
+file is empty.
 
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:

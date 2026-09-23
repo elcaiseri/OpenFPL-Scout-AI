@@ -81,6 +81,33 @@ class ExportModelInputsTests(unittest.TestCase):
                 ["ownership-cold-start", "model-ensemble"],
             )
 
+    def test_a_failed_gameweek_is_reported_without_stopping_the_rest(self):
+        scout = FakeScout()
+        original = scout.export_model_inputs
+
+        def export(gameweek):
+            if gameweek == 3:
+                raise RuntimeError("Official FPL returned HTTP 503")
+            return original(gameweek)
+
+        scout.export_model_inputs = export
+        with TemporaryDirectory() as directory, patch("builtins.print"):
+            output = Path(directory)
+            (output / "gw_03.csv").write_text("stale")
+            status = main(
+                ["--gameweeks", "2-4", "--output", str(output)],
+                scout_factory=lambda config: scout,
+            )
+
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertEqual(status, 1)
+            self.assertEqual(scout.gameweeks, [2, 4])
+            self.assertFalse((output / "gw_03.csv").exists())
+            self.assertTrue((output / "gw_04.csv").is_file())
+            self.assertEqual(
+                summary[1], {"gameweek": 3, "error": "Official FPL returned HTTP 503"}
+            )
+
     def test_defaults_to_the_next_gameweek(self):
         scout = FakeScout()
         with TemporaryDirectory() as directory, patch("builtins.print"):
