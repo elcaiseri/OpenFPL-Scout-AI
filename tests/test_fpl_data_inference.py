@@ -1,5 +1,9 @@
+import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -118,12 +122,57 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             "2026_27",
             client=client,
             refresh_ttl_seconds=3600,
+            max_gameweek_lag=0,
             acknowledge_permission_pending=True,
         )
 
         result, diagnostics = provider.enrich(official_history(), target_gameweek=3)
 
         self.assertEqual(diagnostics["status"], "stale")
+        self.assertNotIn("clearances", result.columns)
+
+    def test_one_gameweek_lag_enriches_covered_rows_only(self):
+        # FPL Data has not published GW2 yet (its GW2 rows are unplayed
+        # placeholders), as during a live gameweek or just after it.
+        raw = source_csv().replace(b",2,90,2,", b",2,0,2,")
+        client = FakeClient()
+        client.download_csv = lambda season: (raw, "fpl-data-stats.csv")
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            minimum_match_ratio=1.0,
+            refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
+        )
+
+        result, diagnostics = provider.enrich(official_history(), target_gameweek=3)
+
+        self.assertEqual(diagnostics["status"], "applied")
+        self.assertEqual(diagnostics["unenriched_gameweeks"], [2])
+        self.assertEqual(diagnostics["covered_rows"], 1)
+        self.assertEqual(result.loc[0, "clearances"], 3)
+        self.assertTrue(pd.isna(result.loc[1, "clearances"]))
+        self.assertTrue(pd.isna(result.loc[1, "total_shots"]))
+
+    def test_rejects_source_beyond_the_allowed_lag(self):
+        raw = source_csv().replace(b",2,90,2,", b",2,0,2,")
+        client = FakeClient()
+        client.download_csv = lambda season: (raw, "fpl-data-stats.csv")
+        history = pd.concat(
+            [official_history(), official_history().iloc[[1]].assign(gameweek=3)],
+            ignore_index=True,
+        )
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
+        )
+
+        result, diagnostics = provider.enrich(history, target_gameweek=4)
+
+        self.assertEqual(diagnostics["status"], "stale")
+        self.assertIn("at most 1 gameweek", diagnostics["error"])
         self.assertNotIn("clearances", result.columns)
 
     def test_rejects_low_match_ratio_instead_of_partially_merging(self):
@@ -141,6 +190,7 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
 
         self.assertEqual(diagnostics["status"], "rejected-low-match-ratio")
         self.assertEqual(diagnostics["match_ratio"], 0.5)
+        self.assertEqual(diagnostics["unmatched_opponents"], {"liverpool": 1})
         self.assertNotIn("clearances", result.columns)
 
     def test_double_gameweek_rows_match_by_opponent_and_home_away(self):
@@ -243,6 +293,64 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
         self.assertEqual(diagnostics["status"], "applied")
         self.assertEqual(diagnostics["cache"], "stale-memory-refreshing")
         self.assertFalse(refresher.is_alive())
+
+    def test_regressed_download_never_replaces_the_dataset_in_use(self):
+        now = [0.0]
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=client,
+                runtime_cache_path=cache,
+                minimum_match_ratio=1.0,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            _, first = provider.enrich(official_history(), target_gameweek=3)
+            cached_bytes = cache.read_bytes()
+
+            # The source drops the clearances column: a coverage regression.
+            regressed = b"".join(
+                line.rsplit(b",", 1)[0] + b"\n"
+                for line in source_csv().splitlines()
+            )
+            client.download_csv = lambda season: (regressed, "fpl-data-stats.csv")
+            now[0] = 61
+            result, second = provider.enrich(official_history(), target_gameweek=3)
+
+            self.assertEqual(second["status"], "applied")
+            self.assertEqual(second["dataset_sha256"], first["dataset_sha256"])
+            self.assertIn("loses model feature columns", second["refresh_error"])
+            self.assertEqual(result.loc[0, "clearances"], 3)
+            self.assertEqual(cache.read_bytes(), cached_bytes)
+
+    def test_unchanged_download_does_not_rewrite_the_cache(self):
+        now = [0.0]
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            provider = FPLDataHistoryProvider(
+                "2026_27",
+                client=FakeClient(),
+                runtime_cache_path=cache,
+                refresh_ttl_seconds=60,
+                acknowledge_permission_pending=True,
+                clock=lambda: now[0],
+            )
+            provider.enrich(official_history(), target_gameweek=3)
+            metadata = json.loads(
+                cache.with_suffix(".metadata.json").read_text(encoding="utf-8")
+            )
+
+            now[0] = 61
+            with patch("src.fpl_data_inference._atomic_write") as write:
+                _, diagnostics = provider.enrich(official_history(), target_gameweek=3)
+
+            self.assertEqual(diagnostics["cache"], "remote")
+            write.assert_not_called()
+            self.assertEqual(metadata["source_filename"], "fpl-data-stats.csv")
+            self.assertEqual(metadata["rows"], 120)
 
 
 if __name__ == "__main__":

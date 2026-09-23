@@ -284,6 +284,30 @@ class DataArchiveTests(unittest.TestCase):
                     )
                     self.assertEqual(frame["official_selected"].tolist(), [120])
 
+    def test_enriched_stats_skip_gameweeks_fpl_data_has_not_published(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = DataArchive(Path(directory), enabled=True, clock=fixed_clock())
+            client = FakeOfficialClient()
+            history = pd.concat(
+                [client.player_history(3), client.player_history(3).assign(gameweek=2)],
+                ignore_index=True,
+            )
+
+            archive.capture_inference(
+                official_client=client,
+                prediction_gameweek=3,
+                official_history=history,
+                enriched_history=history,
+                predictions=prediction_frame(),
+                source="official-fpl+fpl-data",
+                enrichment={"status": "applied", "unenriched_gameweeks": [2]},
+                model_versions={},
+            )
+
+            stats = Path(directory) / "2026-2027/enriched/player-stats"
+            self.assertTrue((stats / "gw_01.csv").is_file())
+            self.assertFalse((stats / "gw_02.csv").exists())
+
     def test_unchanged_squad_is_not_rewritten(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = DataArchive(Path(directory), enabled=True, clock=fixed_clock())

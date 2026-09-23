@@ -232,12 +232,17 @@ class DataArchive:
         )
         if enrichment.get("status") == "applied":
             # A failed or skipped enrichment must not replace enriched files
-            # with official-only rows.
+            # with official-only rows, nor may gameweeks FPL Data has not
+            # published yet.
             self._record_gameweek_frames(
                 written,
                 season_root,
                 season_root / "enriched" / "player-stats",
                 enriched_history,
+                skip_gameweeks={
+                    int(gameweek)
+                    for gameweek in enrichment.get("unenriched_gameweeks", [])
+                },
             )
         live_gameweeks = self._archive_live_gameweeks(
             official_client, bootstrap, season_root, written
@@ -417,12 +422,13 @@ class DataArchive:
         season_root: Path,
         directory: Path,
         frame: pd.DataFrame,
+        skip_gameweeks: Optional[set[int]] = None,
     ) -> None:
         if "gameweek" not in frame.columns or frame.empty:
             return
         gameweeks = pd.to_numeric(frame["gameweek"], errors="coerce")
         for gameweek in sorted(int(value) for value in gameweeks.dropna().unique()):
-            if gameweek < 1:
+            if gameweek < 1 or gameweek in (skip_gameweeks or set()):
                 continue
             rows = frame.loc[gameweeks == gameweek].copy()
             self._record_frame(

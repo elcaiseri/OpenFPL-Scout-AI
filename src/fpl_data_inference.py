@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -21,6 +22,7 @@ from scripts.download_fpl_data import (
     DatasetSummary,
     FPLDataClient,
     Season,
+    check_for_regression,
     validate_csv,
 )
 from src.features import normalize_fpl_columns
@@ -102,6 +104,7 @@ class FPLDataHistoryProvider:
         runtime_cache_path: Optional[Path] = None,
         refresh_ttl_seconds: int = 21600,
         minimum_match_ratio: float = 0.8,
+        max_gameweek_lag: int = 1,
         timeout_seconds: float = 60.0,
         permission_status: str = "pending",
         acknowledge_permission_pending: bool = False,
@@ -118,6 +121,8 @@ class FPLDataHistoryProvider:
             raise ValueError(
                 "fpl_data_inference.minimum_match_ratio must be between 0 and 1"
             )
+        if max_gameweek_lag < 0:
+            raise ValueError("fpl_data_inference.max_gameweek_lag must be at least 0")
         self.season_value = season_value
         self.local_path = Path(local_path) if local_path else None
         self.runtime_cache_path = (
@@ -125,6 +130,11 @@ class FPLDataHistoryProvider:
         )
         self.refresh_ttl_seconds = int(refresh_ttl_seconds)
         self.minimum_match_ratio = float(minimum_match_ratio)
+        # FPL Data publishes a gameweek after Official FPL already shows it
+        # (live fixtures appear in official history as they are played).
+        # Within this lag the covered gameweeks are enriched and the newest
+        # stay official-only; a source further behind is rejected as stale.
+        self.max_gameweek_lag = int(max_gameweek_lag)
         self.permission_status = permission_status
         # Like the import CLI's --acknowledge-permission-pending flag, the
         # service contacts FPL Data only when reuse permission is granted or
@@ -142,8 +152,10 @@ class FPLDataHistoryProvider:
         self._dataset: Optional[_LoadedDataset] = None
         self._last_attempt_at: Optional[float] = None
         self._last_error: Optional[str] = None
+        self._last_refresh_error: Optional[str] = None
 
-    def _read_local(self, path: Path) -> _LoadedDataset:
+    def _read_local_source(self, path: Path) -> tuple[bytes, DatasetSummary]:
+        """Return a local copy's bytes after season, schema, and checksum checks."""
         metadata_file = _metadata_path(path)
         if not path.is_file() or not metadata_file.is_file():
             raise FPLDataInferenceError(
@@ -169,6 +181,10 @@ class FPLDataHistoryProvider:
             raise FPLDataInferenceError(
                 f"Local FPL Data checksum does not match metadata: {path}"
             )
+        return raw, summary
+
+    def _read_local(self, path: Path) -> _LoadedDataset:
+        raw, summary = self._read_local_source(path)
         return _LoadedDataset(
             frame=normalize_fpl_columns(pd.read_csv(io.BytesIO(raw))),
             summary=summary,
@@ -176,24 +192,58 @@ class FPLDataHistoryProvider:
         )
 
     def _write_runtime_cache(
-        self, raw: bytes, season: Season, summary: DatasetSummary
+        self,
+        raw: bytes,
+        season: Season,
+        summary: DatasetSummary,
+        source_filename: str,
     ) -> None:
         if self.runtime_cache_path is None:
             return
+        path = self.runtime_cache_path
+        metadata_file = _metadata_path(path)
+        # Most refreshes download identical bytes; skip rewriting a large file
+        # on the shared data volume when the cached copy already matches.
+        try:
+            existing = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if (
+                existing.get("sha256") == summary.sha256
+                and existing.get("season", {}).get("value") == season.value
+                and hashlib.sha256(path.read_bytes()).hexdigest() == summary.sha256
+            ):
+                return
+        except (OSError, ValueError, AttributeError):
+            pass
         metadata = {
+            "access_method": "public Download CSV button (Dash callback)",
             "cached_at_utc": datetime.now(timezone.utc).isoformat(),
             "license_status": f"permission-{self.permission_status}",
             "season": asdict(season),
-            "sha256": summary.sha256,
+            "source_filename": source_filename,
             "source_page": SOURCE_PAGE,
+            "status": "runtime-refresh",
+            **asdict(summary),
         }
-        _atomic_write(self.runtime_cache_path, raw)
+        _atomic_write(path, raw)
         _atomic_write(
-            _metadata_path(self.runtime_cache_path),
+            metadata_file,
             (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         )
 
-    def _download(self) -> _LoadedDataset:
+    def _current_summary(self) -> Optional[DatasetSummary]:
+        """Return the dataset a download would replace, if one exists."""
+        if self._dataset is not None:
+            return self._dataset.summary
+        for candidate in (self.runtime_cache_path, self.local_path):
+            if candidate is None:
+                continue
+            try:
+                return self._read_local_source(candidate)[1]
+            except (FPLDataInferenceError, OSError, ValueError):
+                continue
+        return None
+
+    def _download(self, current: Optional[DatasetSummary] = None) -> _LoadedDataset:
         seasons = self.client.available_seasons()
         season = next(
             (item for item in seasons if item.value == self.season_value), None
@@ -204,11 +254,15 @@ class FPLDataHistoryProvider:
                 f"FPL Data does not offer configured season {self.season_value}; "
                 f"offered: {offered}"
             )
-        raw, _ = self.client.download_csv(season)
+        raw, source_filename = self.client.download_csv(season)
         summary = validate_csv(raw)
+        if current is not None:
+            # Same guard as the import CLI: never replace the dataset in use
+            # (or the imported file) with a truncated or lower-coverage one.
+            check_for_regression(current, summary)
         frame = normalize_fpl_columns(pd.read_csv(io.BytesIO(raw)))
         try:
-            self._write_runtime_cache(raw, season, summary)
+            self._write_runtime_cache(raw, season, summary, source_filename)
         except OSError as error:
             logger.warning("Could not persist the FPL Data runtime cache: %s", error)
         return _LoadedDataset(frame=frame, summary=summary, origin="remote")
@@ -230,9 +284,14 @@ class FPLDataHistoryProvider:
         """Load the dataset from FPL Data when allowed, else from local files."""
         if self.remote_download_allowed:
             try:
-                return self._download(), "remote"
+                dataset = self._download(self._current_summary())
             except Exception as error:
                 remote_error = str(error)
+                self._last_refresh_error = remote_error
+                logger.warning("FPL Data refresh failed: %s", remote_error)
+            else:
+                self._last_refresh_error = None
+                return dataset, "remote"
             origin = "local-fallback"
         else:
             remote_error = (
@@ -308,6 +367,8 @@ class FPLDataHistoryProvider:
             dataset, cache_status = self._load()
             diagnostics["cache"] = cache_status
             diagnostics["dataset_sha256"] = dataset.summary.sha256
+            if self._last_refresh_error:
+                diagnostics["refresh_error"] = self._last_refresh_error
 
             official = _with_match_keys(official_history)
             external = _with_match_keys(dataset.frame)
@@ -329,16 +390,33 @@ class FPLDataHistoryProvider:
                 return official_history.copy(), diagnostics
 
             required_gameweek = int(official.loc[eligible, "_fpl_data_gameweek"].max())
+            latest_gameweek = int(dataset.summary.latest_observed_gameweek)
             diagnostics["required_history_gameweek"] = required_gameweek
-            diagnostics["source_observed_gameweek"] = (
-                dataset.summary.latest_observed_gameweek
-            )
-            if dataset.summary.latest_observed_gameweek < required_gameweek:
+            diagnostics["source_observed_gameweek"] = latest_gameweek
+            if required_gameweek - latest_gameweek > self.max_gameweek_lag:
                 diagnostics["status"] = "stale"
                 diagnostics["error"] = (
                     "FPL Data has not caught up with official history "
-                    f"({dataset.summary.latest_observed_gameweek} < "
-                    f"{required_gameweek})"
+                    f"({latest_gameweek} < {required_gameweek}; at most "
+                    f"{self.max_gameweek_lag} gameweek(s) of lag allowed)"
+                )
+                return official_history.copy(), diagnostics
+
+            # Rows after the source's latest played gameweek stay official-only;
+            # FPL Data rows for them may be unplayed placeholders.
+            covered = eligible & (official["_fpl_data_gameweek"] <= latest_gameweek)
+            covered_rows = int(covered.sum())
+            diagnostics["covered_rows"] = covered_rows
+            diagnostics["unenriched_gameweeks"] = sorted(
+                int(gameweek)
+                for gameweek in official.loc[
+                    eligible & ~covered, "_fpl_data_gameweek"
+                ].unique()
+            )
+            if covered_rows == 0:
+                diagnostics["status"] = "stale"
+                diagnostics["error"] = (
+                    "FPL Data does not cover any played official gameweek yet"
                 )
                 return official_history.copy(), diagnostics
 
@@ -365,7 +443,8 @@ class FPLDataHistoryProvider:
             ]
             external = external.loc[
                 (external["_fpl_data_gameweek"] >= 1)
-                & (external["_fpl_data_gameweek"] < int(target_gameweek)),
+                & (external["_fpl_data_gameweek"] < int(target_gameweek))
+                & (external["_fpl_data_gameweek"] <= latest_gameweek),
                 [*helper_keys, *available_features],
             ].copy()
             duplicate_keys = int(external.duplicated(helper_keys, keep=False).sum())
@@ -387,16 +466,26 @@ class FPLDataHistoryProvider:
                 validate="many_to_one",
                 indicator="_fpl_data_match",
             )
-            matched = eligible & merged["_fpl_data_match"].eq("both")
+            is_match = merged["_fpl_data_match"].eq("both")
+            matched = covered & is_match
             matched_rows = int(matched.sum())
-            match_ratio = matched_rows / eligible_rows
+            match_ratio = matched_rows / covered_rows
             diagnostics["matched_rows"] = matched_rows
             diagnostics["match_ratio"] = round(match_ratio, 6)
+            unmatched = covered & ~is_match
+            if unmatched.any():
+                # A spelling mismatch in one club's name shows up here as a
+                # single dominant opponent instead of silently missing rows.
+                counts = merged.loc[unmatched, "_fpl_data_opponent"].value_counts()
+                diagnostics["unmatched_opponents"] = {
+                    str(opponent): int(count)
+                    for opponent, count in counts.head(5).items()
+                }
             if match_ratio < self.minimum_match_ratio:
                 diagnostics["status"] = "rejected-low-match-ratio"
                 diagnostics["error"] = (
-                    f"Only {matched_rows}/{eligible_rows} official history rows "
-                    "matched FPL Data"
+                    f"Only {matched_rows}/{covered_rows} covered official history "
+                    "rows matched FPL Data"
                 )
                 return official_history.copy(), diagnostics
 

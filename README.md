@@ -75,12 +75,14 @@ Optional FPL Data enrichment can be disabled immediately with:
 FPL_DATA_INFERENCE_ENABLED=false
 ```
 
-While reuse permission is pending, the service reads only FPL Data files
-imported with the guarded CLI below. It downloads from FPL Data itself only
-after an operator explicitly accepts the pending status:
+FPL Data enrichment is on by default: `config/config.yaml` records the
+owner's acceptance of the pending reuse permission
+(`acknowledge_permission_pending: true`), so the service downloads the
+configured season itself. To use only files imported with the guarded CLI
+below, set:
 
 ```dotenv
-FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=true
+FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false
 ```
 
 ## Docker
@@ -155,8 +157,12 @@ See [Docs.md](Docs.md) for authentication and response details, or the
 
 Runtime data flows from official FPL through the shared feature pipeline, model
 ensemble, and squad selector. The optional enrichment layer accepts only the
-configured season, fills missing values only, rejects stale or poorly matched
-data, and falls back to official-only inference on failure.
+configured season, fills missing values only, and falls back to official-only
+inference on failure. FPL Data usually publishes a gameweek after it appears in
+official history, so a one-gameweek lag is tolerated: covered gameweeks are
+enriched and the newest stays official-only. Sources further behind, poorly
+matched, or from another season are rejected, and a download never replaces a
+more complete dataset.
 
 Every successful scout inference (at most once per Gameweek every five
 minutes) also maintains a durable, season-scoped archive under
