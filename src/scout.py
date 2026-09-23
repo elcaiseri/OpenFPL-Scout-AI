@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src.features import (
+    CATEGORICAL_FEATURES,
     HISTORY_FEATURES,
     MODEL_FEATURES,
     TEAM_NAME_ALIASES,
@@ -121,7 +122,9 @@ class FPLScout:
         official_client: Optional[OfficialFPLClient] = None,
         fpl_data_provider: Optional[FPLDataHistoryProvider] = None,
         data_archive: Optional[DataArchive] = None,
+        load_models: bool = True,
     ) -> None:
+        """Create the scout. ``load_models=False`` supports feature export only."""
         self.config = dict(config)
         official_config = self.config.get("official_fpl", {})
         self.official_client = official_client or OfficialFPLClient(
@@ -223,14 +226,16 @@ class FPLScout:
             raise ValueError("inference.history_window must be at least 1")
 
         logger.info("Initializing FPLScout...")
-        self.model_artifacts = self._load_models(model_loader)
+        self.model_artifacts = self._load_models(model_loader) if load_models else []
         # Retain the old list attribute for callers that inspect loaded models.
         self.models: List[Any] = [item.estimator for item in self.model_artifacts]
         requested_minimum = inference_config.get(
             "minimum_successful_models", len(self.model_artifacts)
         )
-        self.minimum_successful_models = int(requested_minimum)
-        if not 1 <= self.minimum_successful_models <= len(self.model_artifacts):
+        self.minimum_successful_models = int(requested_minimum) if load_models else 0
+        if load_models and not (
+            1 <= self.minimum_successful_models <= len(self.model_artifacts)
+        ):
             raise ValueError(
                 "inference.minimum_successful_models must be between 1 and the "
                 "number of configured models"
@@ -437,6 +442,10 @@ class FPLScout:
     def _predict_ensemble(
         self, features: pd.DataFrame
     ) -> tuple[np.ndarray, Dict[str, Any]]:
+        if not self.model_artifacts:
+            raise InferenceError(
+                "No models are loaded; this scout only exports features"
+            )
         predictions: List[np.ndarray] = []
         weights: List[float] = []
         successful_models: List[str] = []
@@ -506,6 +515,58 @@ class FPLScout:
             )
         )
 
+    def _uses_cold_start(self, normalized: pd.DataFrame, gameweek: int) -> bool:
+        return (
+            self.cold_start_enabled
+            and gameweek == 1
+            and not self._has_usable_pre_gameweek_data(normalized)
+        )
+
+    def _build_model_input(
+        self,
+        normalized: pd.DataFrame,
+        gameweek: int,
+        availability: Optional[pd.DataFrame],
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Return players, their fixture rows, and the exact model input."""
+        players = prepare_recent_player_features(
+            normalized,
+            gameweek=gameweek,
+            history_window=self.history_window,
+        )
+        players = self._attach_fixture_context(players, gameweek)
+        players = self._attach_availability(players, availability)
+        fixture_rows = self._fixture_model_rows(players)
+        model_input = ensure_feature_columns(fixture_rows, MODEL_FEATURES)
+        populated_features = [
+            feature for feature in MODEL_FEATURES if model_input[feature].notna().any()
+        ]
+        entirely_missing_features = [
+            feature for feature in MODEL_FEATURES if model_input[feature].isna().all()
+        ]
+
+        logger.info(
+            "Generating gameweek %d predictions for %d players across %d fixtures",
+            gameweek,
+            len(players),
+            len(fixture_rows),
+        )
+        logger.info(
+            "Scout inference model features (%d): %s",
+            len(MODEL_FEATURES),
+            ", ".join(MODEL_FEATURES),
+        )
+        logger.info(
+            "Scout inference feature coverage for gameweek %d: "
+            "populated (%d): %s; entirely missing (%d): %s",
+            gameweek,
+            len(populated_features),
+            ", ".join(populated_features) or "none",
+            len(entirely_missing_features),
+            ", ".join(entirely_missing_features) or "none",
+        )
+        return players, fixture_rows, model_input
+
     def predict_players(
         self,
         data: pd.DataFrame,
@@ -520,48 +581,11 @@ class FPLScout:
         """
         normalized = normalize_fpl_columns(data)
         resolved_gameweek = self._resolve_gameweek(normalized, gameweek)
-        if (
-            self.cold_start_enabled
-            and resolved_gameweek == 1
-            and not self._has_usable_pre_gameweek_data(normalized)
-        ):
+        if self._uses_cold_start(normalized, resolved_gameweek):
             return self._predict_ownership_cold_start(normalized, availability)
 
-        players = prepare_recent_player_features(
-            normalized,
-            gameweek=resolved_gameweek,
-            history_window=self.history_window,
-        )
-        players = self._attach_fixture_context(players, resolved_gameweek)
-        players = self._attach_availability(players, availability)
-        fixture_rows = self._fixture_model_rows(players)
-        model_input = ensure_feature_columns(fixture_rows, MODEL_FEATURES)
-        populated_features = [
-            feature for feature in MODEL_FEATURES if model_input[feature].notna().any()
-        ]
-        entirely_missing_features = [
-            feature for feature in MODEL_FEATURES if model_input[feature].isna().all()
-        ]
-
-        logger.info(
-            "Generating gameweek %d predictions for %d players across %d fixtures",
-            resolved_gameweek,
-            len(players),
-            len(fixture_rows),
-        )
-        logger.info(
-            "Scout inference model features (%d): %s",
-            len(MODEL_FEATURES),
-            ", ".join(MODEL_FEATURES),
-        )
-        logger.info(
-            "Scout inference feature coverage for gameweek %d: "
-            "populated (%d): %s; entirely missing (%d): %s",
-            resolved_gameweek,
-            len(populated_features),
-            ", ".join(populated_features) or "none",
-            len(entirely_missing_features),
-            ", ".join(entirely_missing_features) or "none",
+        players, fixture_rows, model_input = self._build_model_input(
+            normalized, resolved_gameweek, availability
         )
         ensemble, diagnostics = self._predict_ensemble(model_input)
         diagnostics["strategy"] = "model-ensemble"
@@ -761,6 +785,20 @@ class FPLScout:
         return players[columns]
 
     def _compute_official_predictions(self, resolved_gameweek: int) -> pd.DataFrame:
+        official_history, history, enrichment = self._load_history(resolved_gameweek)
+        result = self.predict_players(
+            history,
+            gameweek=resolved_gameweek,
+            availability=self._official_availability(),
+        )
+        return self._finish_official_predictions(
+            result, resolved_gameweek, official_history, history, enrichment
+        )
+
+    def _load_history(
+        self, resolved_gameweek: int
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+        """Return official history, the (possibly) enriched history, and why."""
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
         history = official_history
@@ -798,12 +836,16 @@ class FPLScout:
                     "status": "unavailable",
                     "error": str(error),
                 }
+        return official_history, history, enrichment
 
-        result = self.predict_players(
-            history,
-            gameweek=resolved_gameweek,
-            availability=self._official_availability(),
-        )
+    def _finish_official_predictions(
+        self,
+        result: pd.DataFrame,
+        resolved_gameweek: int,
+        official_history: pd.DataFrame,
+        history: pd.DataFrame,
+        enrichment: Dict[str, Any],
+    ) -> pd.DataFrame:
         self.last_data_enrichment = dict(enrichment)
         result.attrs["inference"]["data_enrichment"] = enrichment
         result.attrs["source"] = (
@@ -831,6 +873,75 @@ class FPLScout:
         )
         result.attrs["archive"] = archive_result
         return result
+
+    def export_model_inputs(
+        self, gameweek: Optional[int] = None
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Return exactly what the models would receive for a gameweek.
+
+        The frame has one row per player fixture: ``id`` identifies the player
+        and every other column is a model feature, in model order. No model is
+        run and nothing is archived. GW1 without match history uses the
+        ownership cold start, so its frame is empty.
+        """
+        resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        official_history, history, enrichment = self._load_history(resolved_gameweek)
+        normalized = normalize_fpl_columns(history)
+        metadata: Dict[str, Any] = {
+            "gameweek": resolved_gameweek,
+            "data_enrichment": enrichment,
+        }
+        if self._uses_cold_start(normalized, resolved_gameweek):
+            metadata.update(
+                strategy="ownership-cold-start",
+                rows=0,
+                players=0,
+                feature_sources={},
+            )
+            return pd.DataFrame(columns=["id", *MODEL_FEATURES]), metadata
+
+        _, fixture_rows, model_input = self._build_model_input(
+            normalized, resolved_gameweek, self._official_availability()
+        )
+        frame = model_input.reset_index(drop=True)
+        frame.insert(0, "id", fixture_rows["id"].to_numpy())
+        metadata.update(
+            strategy="model-ensemble",
+            rows=len(frame),
+            players=int(frame["id"].nunique()),
+            feature_sources=self._feature_sources(
+                normalize_fpl_columns(official_history), normalized
+            ),
+        )
+        return frame, metadata
+
+    @staticmethod
+    def _feature_sources(
+        official: pd.DataFrame, enriched: pd.DataFrame
+    ) -> Dict[str, str]:
+        """Label each model feature by the source that supplied its values."""
+        sources = {feature: "official-fpl" for feature in CATEGORICAL_FEATURES}
+        sources["gameweek"] = "request"
+
+        def played_values(frame: pd.DataFrame, feature: str) -> int:
+            if feature not in frame.columns or "gameweek" not in frame.columns:
+                return 0
+            played = pd.to_numeric(frame["gameweek"], errors="coerce").ge(1)
+            values = pd.to_numeric(frame.loc[played, feature], errors="coerce")
+            return int(values.notna().sum())
+
+        for feature in HISTORY_FEATURES:
+            from_official = played_values(official, feature)
+            after_enrichment = played_values(enriched, feature)
+            if after_enrichment == 0:
+                sources[feature] = "missing"
+            elif from_official == 0:
+                sources[feature] = "fpl-data"
+            elif after_enrichment > from_official:
+                sources[feature] = "official-fpl+fpl-data"
+            else:
+                sources[feature] = "official-fpl"
+        return {feature: sources[feature] for feature in MODEL_FEATURES}
 
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
         """Select the highest-ranked 15-player positional squad."""

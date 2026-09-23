@@ -207,6 +207,19 @@ once before each deadline and after each Gameweek is finalized (for example
 with Cloud Scheduler) to guarantee a complete season even when the service
 otherwise receives no traffic.
 
+To inspect exactly what the models receive, export each gameweek's feature
+rows without loading any model or writing to the archive:
+
+```bash
+uv run python -m scripts.export_model_inputs --gameweeks 1-7
+```
+
+`data/model-inputs/gw_NN.csv` holds one row per player fixture (`id` plus every
+model feature in model order). `feature_sources.csv` labels each feature as
+`official-fpl`, `fpl-data`, `request`, or `missing` with its coverage, and
+`summary.json` records the strategy and FPL Data status per gameweek. GW1
+without match history uses the ownership cold start, so its file is empty.
+
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:
 
@@ -226,7 +239,7 @@ uv run python -m scripts.download_fpl_data \
 | `src/features.py` | Shared model-inference feature contract |
 | `src/fpl_data_inference.py` | Guarded optional stat enrichment |
 | `static/` | Responsive dashboard |
-| `scripts/` | Official archive collection and guarded data import |
+| `scripts/` | Official archive collection, guarded data import, and model-input export |
 | `tests/` | API, data, feature, inference, and selection tests |
 
 ## License

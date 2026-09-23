@@ -606,6 +606,70 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(enrichment["status"], "season-mismatch")
         self.assertIn("2027-2028", enrichment["error"])
 
+    def test_exported_model_input_is_exactly_what_the_models_receive(self):
+        model = RecordingModel(2)
+        predicting = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: model,
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=FakeFPLDataProvider(),
+        )
+
+        def no_models(path):
+            raise AssertionError("feature export must not load models")
+
+        exporting = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=no_models,
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=FakeFPLDataProvider(),
+            load_models=False,
+        )
+
+        predicting.get_official_predictions(gameweek=2)
+        frame, metadata = exporting.export_model_inputs(gameweek=2)
+
+        self.assertEqual(list(frame.columns), ["id", *MODEL_FEATURES])
+        pd.testing.assert_frame_equal(
+            frame.drop(columns="id"), model.features.reset_index(drop=True)
+        )
+        self.assertEqual(metadata["strategy"], "model-ensemble")
+        self.assertEqual(metadata["rows"], 20)
+        self.assertEqual(metadata["data_enrichment"]["status"], "applied")
+        sources = metadata["feature_sources"]
+        self.assertEqual(sources["element_type"], "official-fpl")
+        self.assertEqual(sources["goals"], "official-fpl")
+        self.assertEqual(sources["total_shots"], "fpl-data")
+        self.assertEqual(sources["minutes"], "missing")
+        self.assertEqual(sources["gameweek"], "request")
+
+    def test_gameweek_one_cold_start_exports_no_model_input(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+            official_client=FakeOfficialClient(),
+            load_models=False,
+        )
+
+        frame, metadata = scout.export_model_inputs(gameweek=1)
+
+        self.assertTrue(frame.empty)
+        self.assertEqual(metadata["strategy"], "ownership-cold-start")
+
+    def test_model_free_scout_refuses_to_predict(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+            load_models=False,
+        )
+
+        with self.assertRaisesRegex(InferenceError, "No models are loaded"):
+            scout.predict_players(player_history(), gameweek=3)
+
     def test_environment_kill_switch_disables_enrichment(self):
         provider = FakeFPLDataProvider()
         with patch.dict(
