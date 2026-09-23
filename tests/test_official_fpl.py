@@ -421,6 +421,20 @@ class OfficialFPLClientTests(unittest.TestCase):
         with self.assertRaises(OfficialFPLNotFoundError):
             client.regions()
 
+    def test_response_cache_stays_bounded(self):
+        responses = {
+            f"entry/{entry_id}/history/": {"current": []} for entry_id in range(50)
+        }
+        session = FakeSession(responses)
+        client = OfficialFPLClient(session=session, max_cache_entries=10)
+
+        for entry_id in range(50):
+            client.manager_history(entry_id)
+        client.manager_history(49)
+
+        self.assertLessEqual(len(client._cache), 10)
+        self.assertEqual(len(session.calls), 50)
+
     def test_rejects_invalid_bootstrap_schema(self):
         client = OfficialFPLClient(
             session=FakeSession({"bootstrap-static/": {"elements": []}})

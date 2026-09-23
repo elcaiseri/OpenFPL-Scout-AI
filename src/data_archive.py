@@ -10,7 +10,7 @@ import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -51,16 +51,49 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _parse_deadline(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def training_safe_history(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep capture-time ownership out of historical match rows.
+
+    Official history rows carry the player's ownership *when the archive was
+    captured*, not when the match was played. Training on it would leak
+    future information, so played rows leave ``selected_by_percent`` empty and
+    the capture-time value moves to ``selected_by_percent_at_capture``. The
+    point-in-time manager count remains available as ``official_selected``.
+    """
+    if "selected_by_percent" not in frame.columns:
+        return frame
+    result = frame.copy()
+    result["selected_by_percent_at_capture"] = result["selected_by_percent"]
+    if "gameweek" in result.columns:
+        played = pd.to_numeric(result["gameweek"], errors="coerce").ge(1)
+    else:
+        played = pd.Series(True, index=result.index)
+    result["selected_by_percent"] = result["selected_by_percent"].mask(played)
+    return result
+
+
 class DataArchive:
     """Write reproducible gameweek artifacts to a mounted data directory.
 
     Writes are deliberately fail-open: prediction requests continue if an
-    archive bucket is temporarily unavailable. Stable gameweek paths are
-    replaced with the freshest snapshot, while finalized live event files are
-    treated as immutable.
+    archive bucket is temporarily unavailable. Per-gameweek prediction
+    artifacts are written only while that gameweek is still open (before its
+    deadline), so the archive keeps the last pre-deadline forecast. Cumulative
+    official history is refreshed on every capture, and live event files are
+    immutable once Official FPL marks them ``data_checked``.
     """
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,
@@ -68,12 +101,15 @@ class DataArchive:
         *,
         enabled: bool = True,
         configured_season: str = "auto",
+        clock: Optional[Callable[[], datetime]] = None,
     ) -> None:
         self.root_path = Path(root_path)
         self.enabled = bool(enabled)
         self.configured_season = configured_season.strip() or "auto"
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
         self._digests: dict[Path, str] = {}
+        self._squad_digests: dict[Path, str] = {}
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -153,45 +189,32 @@ class DataArchive:
         model_versions: Mapping[str, Any],
     ) -> dict[str, Any]:
         bootstrap = official_client.bootstrap()
-        fixtures = official_client.fixtures()
         season = self._season_name(bootstrap)
         season_root = self.root_path / season
         gameweek_name = f"gw_{prediction_gameweek:02d}"
-        captured_at = datetime.now(timezone.utc).isoformat()
+        captured_at = self.clock().isoformat()
         finished_gameweeks = [
             int(event["id"])
             for event in bootstrap.get("events", [])
             if event.get("finished")
         ]
-        history_cutoff_gameweek = max(
-            prediction_gameweek,
-            max(finished_gameweeks, default=0) + 1,
-        )
+        # Only finished gameweeks enter the cumulative history, so a live or
+        # far-future request never archives partial match data. The cutoff
+        # reaches 39 after GW38 so the final event is not omitted.
+        history_cutoff_gameweek = max(finished_gameweeks, default=0) + 1
 
         # Archive removed/unavailable players too. Existing official HTTP cache
         # makes this inexpensive for the selectable players already fetched.
-        # The cutoff reaches 39 after GW38 so the final event is not omitted.
         try:
             complete_official_history = official_client.player_history(
                 history_cutoff_gameweek, selectable_only=False
             )
         except TypeError:
             complete_official_history = official_history
+        complete_official_history = training_safe_history(complete_official_history)
+        enriched_history = training_safe_history(enriched_history)
 
         written: list[str] = []
-        snapshot_root = season_root / "official" / "snapshots" / gameweek_name
-        self._record_write(
-            written,
-            season_root,
-            snapshot_root / "bootstrap.json",
-            self._json_bytes(bootstrap),
-        )
-        self._record_write(
-            written,
-            season_root,
-            snapshot_root / "fixtures.json",
-            self._json_bytes(fixtures),
-        )
         self._record_frame(
             written,
             season_root,
@@ -207,62 +230,100 @@ class DataArchive:
             season_root / "official" / "player-stats",
             complete_official_history,
         )
-        self._record_frame(
-            written,
-            season_root,
-            season_root / "enriched" / "history" / f"before_{gameweek_name}.csv",
-            enriched_history,
-        )
-        self._record_gameweek_frames(
-            written,
-            season_root,
-            season_root / "enriched" / "player-stats",
-            enriched_history,
-        )
-        self._record_frame(
-            written,
-            season_root,
-            season_root / "predictions" / f"{gameweek_name}.csv",
-            predictions,
-        )
-
+        if enrichment.get("status") == "applied":
+            # A failed or skipped enrichment must not replace enriched files
+            # with official-only rows.
+            self._record_gameweek_frames(
+                written,
+                season_root,
+                season_root / "enriched" / "player-stats",
+                enriched_history,
+            )
         live_gameweeks = self._archive_live_gameweeks(
             official_client, bootstrap, season_root, written
         )
-        metadata = {
-            "archive_schema_version": self.SCHEMA_VERSION,
-            "captured_at_utc": captured_at,
-            "season": season,
-            "prediction_gameweek": prediction_gameweek,
-            "official_history_before_gameweek": history_cutoff_gameweek,
-            "source": source,
-            "rows": {
-                "official_history": len(complete_official_history),
-                "enriched_history": len(enriched_history),
-                "predictions": len(predictions),
-            },
-            "live_gameweeks": live_gameweeks,
-            "enrichment": enrichment,
-            "inference": predictions.attrs.get("inference", {}),
-            "models": model_versions,
-        }
-        self._record_write(
-            written,
-            season_root,
-            season_root / "metadata" / f"{gameweek_name}.json",
-            self._json_bytes(metadata),
-        )
+
+        open_gameweek = self._open_gameweek(bootstrap)
+        prediction_archived = prediction_gameweek == open_gameweek
+        skipped_reason = None
+        if prediction_archived:
+            snapshot_root = season_root / "official" / "snapshots" / gameweek_name
+            self._record_write(
+                written,
+                season_root,
+                snapshot_root / "bootstrap.json",
+                self._json_bytes(bootstrap),
+            )
+            self._record_write(
+                written,
+                season_root,
+                snapshot_root / "fixtures.json",
+                self._json_bytes(official_client.fixtures()),
+            )
+            self._record_frame(
+                written,
+                season_root,
+                season_root / "enriched" / "history" / f"before_{gameweek_name}.csv",
+                enriched_history,
+            )
+            self._record_frame(
+                written,
+                season_root,
+                season_root / "predictions" / f"{gameweek_name}.csv",
+                predictions,
+            )
+            metadata = {
+                "archive_schema_version": self.SCHEMA_VERSION,
+                "captured_at_utc": captured_at,
+                "season": season,
+                "prediction_gameweek": prediction_gameweek,
+                "official_history_before_gameweek": history_cutoff_gameweek,
+                "official_total_players": bootstrap.get("total_players"),
+                "ownership_note": (
+                    "Played history rows leave selected_by_percent empty; "
+                    "selected_by_percent_at_capture is ownership at capture "
+                    "time and official_selected is the point-in-time count."
+                ),
+                "source": source,
+                "rows": {
+                    "official_history": len(complete_official_history),
+                    "enriched_history": len(enriched_history),
+                    "predictions": len(predictions),
+                },
+                "live_gameweeks": live_gameweeks,
+                "enrichment": enrichment,
+                "inference": predictions.attrs.get("inference", {}),
+                "models": model_versions,
+            }
+            self._record_write(
+                written,
+                season_root,
+                season_root / "metadata" / f"{gameweek_name}.json",
+                self._json_bytes(metadata),
+            )
+        else:
+            skipped_reason = (
+                "no-open-gameweek"
+                if open_gameweek is None
+                else f"gameweek-not-open (open: {open_gameweek})"
+            )
+
         result = {
             "status": "saved",
             "season": season,
             "prediction_gameweek": prediction_gameweek,
+            "prediction_archived": prediction_archived,
             "files_updated": written,
         }
+        if skipped_reason:
+            result["prediction_skipped_reason"] = skipped_reason
         logger.info(
-            "Archived prediction GW%d under %s (%d files updated)",
-            prediction_gameweek,
+            "Archived official data under %s (%d files updated); prediction "
+            "GW%d %s",
             season_root,
             len(written),
+            prediction_gameweek,
+            "archived" if prediction_archived else f"not archived: {skipped_reason}",
         )
         return result
 
@@ -271,16 +332,25 @@ class DataArchive:
         predictions: pd.DataFrame,
         squad: pd.DataFrame,
     ) -> dict[str, Any]:
-        """Persist the selected squad after a successful optimization."""
+        """Persist the selected squad when its predictions were archived.
+
+        The season and archive decision come from the predictions' own
+        ``attrs["archive"]`` result, never from another request's state.
+        """
         if not self.enabled:
             return {"status": "disabled"}
         try:
+            archive = predictions.attrs.get("archive") or {}
+            if archive.get("status") != "saved" or not archive.get(
+                "prediction_archived"
+            ):
+                return {
+                    "status": "skipped",
+                    "reason": archive.get("prediction_skipped_reason")
+                    or "prediction-not-archived",
+                }
             prediction_gameweek = int(predictions.attrs["gameweek"])
-            season = str(
-                self.last_result.get("season") or self.configured_season
-            )
-            if season == "auto":
-                raise ValueError("Season is unavailable before inference is archived")
+            season = str(archive["season"])
             target = (
                 self.root_path
                 / season
@@ -289,14 +359,19 @@ class DataArchive:
             )
             payload = {
                 "archive_schema_version": self.SCHEMA_VERSION,
-                "captured_at_utc": datetime.now(timezone.utc).isoformat(),
                 "season": season,
                 "prediction_gameweek": prediction_gameweek,
                 "strategy": predictions.attrs.get("inference", {}).get("strategy"),
                 "source": predictions.attrs.get("source", "official-fpl"),
                 "players": squad.to_dict(orient="records"),
             }
-            updated = self._write_bytes(target, self._json_bytes(payload))
+            content_digest = hashlib.sha256(self._json_bytes(payload)).hexdigest()
+            with self._lock:
+                if self._squad_digests.get(target) == content_digest:
+                    return {"status": "unchanged", "path": str(target)}
+                payload["captured_at_utc"] = self.clock().isoformat()
+                updated = self._write_bytes(target, self._json_bytes(payload))
+                self._squad_digests[target] = content_digest
             return {
                 "status": "saved",
                 "path": str(target),
@@ -321,7 +396,9 @@ class DataArchive:
             if not finished and not current:
                 continue
             target = season_root / "official" / "live" / f"gw_{gameweek:02d}.json"
-            if finished and target.is_file():
+            # Points can still be corrected after "finished"; only the final
+            # data check makes a live payload immutable.
+            if event.get("data_checked") and target.is_file():
                 archived.append(gameweek)
                 continue
             try:
@@ -395,6 +472,26 @@ class DataArchive:
                 temporary_path.unlink(missing_ok=True)
             self._digests[path] = digest
         return True
+
+    def _open_gameweek(self, bootstrap: Mapping[str, Any]) -> Optional[int]:
+        """Return the next gameweek whose deadline has not yet passed."""
+        events = bootstrap.get("events", [])
+        now = self.clock()
+        deadlines = [
+            (_parse_deadline(event.get("deadline_time")), int(event["id"]))
+            for event in events
+        ]
+        upcoming = [
+            (deadline, gameweek)
+            for deadline, gameweek in deadlines
+            if deadline is not None and deadline > now
+        ]
+        if upcoming:
+            return min(upcoming)[1]
+        if any(deadline is not None for deadline, _ in deadlines):
+            return None
+        next_event = next((event for event in events if event.get("is_next")), None)
+        return int(next_event["id"]) if next_event else None
 
     def _season_name(self, bootstrap: Mapping[str, Any]) -> str:
         if self.configured_season.casefold() != "auto":

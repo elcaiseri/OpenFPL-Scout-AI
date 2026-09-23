@@ -153,7 +153,14 @@ Team ratings use the latest picks made public by official FPL. When planning a
 future Gameweek, OpenFPL scores that published lineup with the selected
 Gameweek's projections. The 100-point rating allocates 80 points to starting-XI
 quality against the budget-free AI benchmark, 10 to captaincy, and 10 to
-availability.
+availability. A picked player FPL no longer lets managers select (for example,
+after leaving the league) is scored with zero points and zero availability and
+is marked `projection_missing`.
+
+Projections are made per fixture: double-gameweek players receive the sum of
+both matches, and players whose club has no fixture receive zero. Model points
+are multiplied by `availability_factor`, the player's current official chance
+of playing, and players with zero availability are never selected.
 
 ## Response
 
@@ -179,6 +186,9 @@ uv run python -m scripts.collect_official_fpl --gameweek 39
 ```
 
 Official archives are written to `data/official`, the trainer's default input.
+Played rows leave `selected_by_percent` empty because Official FPL exposes only
+current ownership; use `official_selected` with `total_players` from the
+metadata for point-in-time ownership.
 The exact current-season file under `data/external` can be a validated local
 fallback for inference enrichment but is not the default retraining input.
 
@@ -199,3 +209,10 @@ an 80% match rate, and falls back safely when enrichment cannot be applied.
 Permission remains pending; keep attribution and provenance, do not
 redistribute the CSV, and disable the integration if the owner declines. Set
 `FPL_DATA_INFERENCE_ENABLED=false` for an immediate production kill switch.
+
+The running service follows the same guard as the importer. While permission
+is pending it reads only the imported local files, and it downloads from FPL
+Data only when `fpl_data_inference.acknowledge_permission_pending` (or
+`FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING`) is true or `permission_status` is
+`granted`. Refreshes run in the background of one request while other requests
+keep using the previous dataset.

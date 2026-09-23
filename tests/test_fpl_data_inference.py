@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 import pandas as pd
@@ -74,6 +75,7 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             client=client,
             minimum_match_ratio=1.0,
             refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
         )
 
         result, diagnostics = provider.enrich(official_history(), target_gameweek=3)
@@ -88,7 +90,10 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
     def test_rejects_wrong_season_and_negative_caches_failure(self):
         client = FakeClient(seasons=[Season("2025/26", "2025_26", 2025, 2026)])
         provider = FPLDataHistoryProvider(
-            "2026_27", client=client, refresh_ttl_seconds=3600
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
         )
 
         first, first_diagnostics = provider.enrich(
@@ -110,7 +115,10 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
         client = FakeClient()
         client.download_csv = lambda season: (raw, "fpl-data-stats.csv")
         provider = FPLDataHistoryProvider(
-            "2026_27", client=client, refresh_ttl_seconds=3600
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
         )
 
         result, diagnostics = provider.enrich(official_history(), target_gameweek=3)
@@ -126,6 +134,7 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             client=FakeClient(),
             minimum_match_ratio=0.8,
             refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
         )
 
         result, diagnostics = provider.enrich(history, target_gameweek=3)
@@ -167,6 +176,7 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
             client=client,
             minimum_match_ratio=1.0,
             refresh_ttl_seconds=3600,
+            acknowledge_permission_pending=True,
         )
 
         result, diagnostics = provider.enrich(history, target_gameweek=3)
@@ -174,6 +184,65 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
         self.assertEqual(diagnostics["status"], "applied")
         self.assertEqual(diagnostics["matched_rows"], 3)
         self.assertEqual(result.loc[2, "total_shots"], 8)
+
+    def test_pending_permission_without_acknowledgement_never_downloads(self):
+        client = FakeClient()
+        provider = FPLDataHistoryProvider(
+            "2026_27", client=client, refresh_ttl_seconds=3600
+        )
+
+        result, diagnostics = provider.enrich(official_history(), target_gameweek=3)
+
+        self.assertEqual(diagnostics["status"], "unavailable")
+        self.assertFalse(diagnostics["remote_download_allowed"])
+        self.assertIn("not acknowledged", diagnostics["error"])
+        self.assertEqual(client.available_calls, 0)
+        self.assertEqual(client.download_calls, 0)
+        self.assertTrue(result.equals(official_history()))
+
+    def test_granted_permission_allows_downloads(self):
+        provider = FPLDataHistoryProvider(
+            "2026_27", client=FakeClient(), permission_status="granted"
+        )
+
+        self.assertTrue(provider.remote_download_allowed)
+
+    def test_refresh_does_not_block_requests_that_have_a_dataset(self):
+        now = [0.0]
+        client = FakeClient()
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=60,
+            minimum_match_ratio=1.0,
+            acknowledge_permission_pending=True,
+            clock=lambda: now[0],
+        )
+        provider.enrich(official_history(), target_gameweek=3)
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_download(season):
+            started.set()
+            release.wait(5)
+            return source_csv(), "fpl-data-stats.csv"
+
+        client.download_csv = slow_download
+        now[0] = 61
+        refresher = threading.Thread(
+            target=provider.enrich, args=(official_history(), 3)
+        )
+        refresher.start()
+        self.assertTrue(started.wait(5))
+
+        _, diagnostics = provider.enrich(official_history(), target_gameweek=3)
+        release.set()
+        refresher.join(5)
+
+        self.assertEqual(diagnostics["status"], "applied")
+        self.assertEqual(diagnostics["cache"], "stale-memory-refreshing")
+        self.assertFalse(refresher.is_alive())
 
 
 if __name__ == "__main__":

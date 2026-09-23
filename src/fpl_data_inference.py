@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
+from threading import Condition
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -104,6 +104,7 @@ class FPLDataHistoryProvider:
         minimum_match_ratio: float = 0.8,
         timeout_seconds: float = 60.0,
         permission_status: str = "pending",
+        acknowledge_permission_pending: bool = False,
         client: Optional[FPLDataClient] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -125,10 +126,19 @@ class FPLDataHistoryProvider:
         self.refresh_ttl_seconds = int(refresh_ttl_seconds)
         self.minimum_match_ratio = float(minimum_match_ratio)
         self.permission_status = permission_status
+        # Like the import CLI's --acknowledge-permission-pending flag, the
+        # service contacts FPL Data only when reuse permission is granted or
+        # an operator explicitly accepts the pending status. Otherwise it
+        # reads locally imported files only.
+        self.remote_download_allowed = (
+            permission_status.strip().casefold() == "granted"
+            or bool(acknowledge_permission_pending)
+        )
         self.client = client or FPLDataClient(timeout_seconds=timeout_seconds)
         self.clock = clock
 
-        self._lock = RLock()
+        self._condition = Condition()
+        self._refreshing = False
         self._dataset: Optional[_LoadedDataset] = None
         self._last_attempt_at: Optional[float] = None
         self._last_error: Optional[str] = None
@@ -216,45 +226,73 @@ class FPLDataHistoryProvider:
         detail = "; ".join(errors) if errors else "no local cache configured"
         raise FPLDataInferenceError(detail)
 
-    def _load(self) -> tuple[_LoadedDataset, str]:
-        now = self.clock()
-        with self._lock:
-            if (
-                self._dataset is not None
-                and self._last_attempt_at is not None
-                and now - self._last_attempt_at < self.refresh_ttl_seconds
-            ):
-                return self._dataset, "memory"
-            if (
-                self._dataset is None
-                and self._last_error is not None
-                and self._last_attempt_at is not None
-                and now - self._last_attempt_at < self.refresh_ttl_seconds
-            ):
-                raise FPLDataInferenceError(
-                    f"Cached FPL Data failure: {self._last_error}"
-                )
-
-            self._last_attempt_at = now
+    def _fetch(self) -> tuple[_LoadedDataset, str]:
+        """Load the dataset from FPL Data when allowed, else from local files."""
+        if self.remote_download_allowed:
             try:
-                dataset = self._download()
-            except Exception as download_error:
-                self._last_error = str(download_error)
+                return self._download(), "remote"
+            except Exception as error:
+                remote_error = str(error)
+            origin = "local-fallback"
+        else:
+            remote_error = (
+                f"remote downloads are disabled while permission is "
+                f"{self.permission_status!r} and not acknowledged"
+            )
+            origin = "local"
+        try:
+            return self._fallback_local(), origin
+        except FPLDataInferenceError as local_error:
+            raise FPLDataInferenceError(
+                f"Remote load failed ({remote_error}); local fallback "
+                f"failed ({local_error})"
+            ) from local_error
+
+    def _load(self) -> tuple[_LoadedDataset, str]:
+        """Return the dataset, refreshing it at most once per TTL.
+
+        Only one request refreshes at a time. While it runs, other requests
+        use the previous dataset instead of waiting on the download; they
+        wait only when no dataset has been loaded yet.
+        """
+        with self._condition:
+            while True:
+                now = self.clock()
+                fresh = (
+                    self._last_attempt_at is not None
+                    and now - self._last_attempt_at < self.refresh_ttl_seconds
+                )
+                if self._dataset is not None and fresh:
+                    return self._dataset, "memory"
+                if self._dataset is None and self._last_error is not None and fresh:
+                    raise FPLDataInferenceError(
+                        f"Cached FPL Data failure: {self._last_error}"
+                    )
+                if not self._refreshing:
+                    break
+                if self._dataset is not None:
+                    return self._dataset, "stale-memory-refreshing"
+                self._condition.wait()
+            self._refreshing = True
+
+        dataset: Optional[_LoadedDataset] = None
+        try:
+            dataset, origin = self._fetch()
+        except Exception as error:
+            with self._condition:
+                self._last_error = str(error)
                 if self._dataset is not None:
                     return self._dataset, "stale-memory-fallback"
-                try:
-                    dataset = self._fallback_local()
-                except FPLDataInferenceError as local_error:
-                    raise FPLDataInferenceError(
-                        f"Remote load failed ({download_error}); local fallback "
-                        f"failed ({local_error})"
-                    ) from download_error
-                self._dataset = dataset
-                return dataset, "local-fallback"
-
-            self._dataset = dataset
-            self._last_error = None
-            return dataset, "remote"
+            raise
+        finally:
+            with self._condition:
+                if dataset is not None:
+                    self._dataset = dataset
+                    self._last_error = None
+                self._last_attempt_at = self.clock()
+                self._refreshing = False
+                self._condition.notify_all()
+        return dataset, origin
 
     def enrich(
         self, official_history: pd.DataFrame, target_gameweek: int
@@ -263,6 +301,7 @@ class FPLDataHistoryProvider:
         diagnostics: dict[str, Any] = {
             "provider": "fpl-data",
             "permission_status": self.permission_status,
+            "remote_download_allowed": self.remote_download_allowed,
             "season": self.season_value,
         }
         try:

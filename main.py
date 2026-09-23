@@ -283,6 +283,9 @@ async def check_health():
             "start_gameweek": scout.fpl_data_start_gameweek,
             "season": scout.fpl_data_season,
             "permission_status": scout.fpl_data_permission_status,
+            "permission_pending_acknowledged": (
+                scout.fpl_data_permission_acknowledged
+            ),
             "last_result": scout.last_data_enrichment,
         },
         "data_archive": scout.data_archive.status(),
@@ -832,39 +835,25 @@ async def _generate_scout_response(
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
-        if public:
-            logger.info(
-                "Generated public scout team for gameweek %d",
-                prediction_gameweek,
-            )
-            return ResponseModel(
-                scout_team=json.loads(team.to_json(orient="records")),
-                player_points=[],
-                gameweek=prediction_gameweek,
-                strategy=str(
-                    predictions.attrs.get("inference", {}).get(
-                        "strategy", "model-ensemble"
-                    )
-                ),
-                version=config.get("version", "1.0.0"),
-                source=str(predictions.attrs.get("source", "official-fpl")),
-            )
-        else:
-            logger.info(
-                "Generated public scout team for gameweek %d", prediction_gameweek
-            )
-            return ResponseModel(
-                scout_team=json.loads(team.to_json(orient="records")),
-                player_points=json.loads(predictions.to_json(orient="records")),
-                gameweek=prediction_gameweek,
-                strategy=str(
-                    predictions.attrs.get("inference", {}).get(
-                        "strategy", "model-ensemble"
-                    )
-                ),
-                version=config.get("version", "1.0.0"),
-                source=str(predictions.attrs.get("source", "official-fpl")),
-            )
+        logger.info(
+            "Generated %s scout team for gameweek %d",
+            "public" if public else "authenticated",
+            prediction_gameweek,
+        )
+        return ResponseModel(
+            scout_team=json.loads(team.to_json(orient="records")),
+            player_points=[]
+            if public
+            else json.loads(predictions.to_json(orient="records")),
+            gameweek=prediction_gameweek,
+            strategy=str(
+                predictions.attrs.get("inference", {}).get(
+                    "strategy", "model-ensemble"
+                )
+            ),
+            version=config.get("version", "1.0.0"),
+            source=str(predictions.attrs.get("source", "official-fpl")),
+        )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -928,14 +917,19 @@ async def rate_public_manager_team(
             if player.get("id") is not None
         }
         squad = []
-        missing_players = []
         for pick in picks_payload.get("picks", []):
             player_id = int(pick.get("element") or 0)
+            official = pick.get("player") or {}
             prediction = predictions_by_id.get(player_id)
             if prediction is None:
-                missing_players.append(player_id)
-                continue
-            official = pick.get("player") or {}
+                # Only players FPL no longer lets managers select (for example,
+                # after leaving the league) lack a projection. They still count
+                # toward the published squad, with no points and no availability.
+                prediction = {
+                    "expected_points": 0.0,
+                    "availability_factor": 0.0,
+                    "projection_missing": True,
+                }
             role = (
                 "captain"
                 if pick.get("is_captain")
@@ -952,11 +946,6 @@ async def rate_public_manager_team(
                     "is_vice_captain": bool(pick.get("is_vice_captain")),
                     "role": role,
                 }
-            )
-        if missing_players:
-            raise ValueError(
-                "Could not project every published squad player: "
-                + ", ".join(str(player_id) for player_id in missing_players)
             )
 
         benchmark = await run_in_threadpool(scout.select_optimal_team, predictions)

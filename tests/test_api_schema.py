@@ -76,6 +76,16 @@ class FakeRatingScout:
         return predictions.copy()
 
 
+class DepartedPlayerRatingScout(FakeRatingScout):
+    """Player 5 is no longer selectable, so the model has no projection."""
+
+    def get_official_predictions(self, gameweek):
+        predictions = super().get_official_predictions(gameweek)
+        trimmed = predictions.loc[predictions["id"] != 5].reset_index(drop=True)
+        trimmed.attrs = predictions.attrs
+        return trimmed
+
+
 class APISchemaTests(unittest.TestCase):
     def test_public_team_rating_combines_manager_picks_and_predictions(self):
         with patch("main.scout", FakeRatingScout(), create=True):
@@ -86,6 +96,19 @@ class APISchemaTests(unittest.TestCase):
         self.assertEqual(result.rating, 100)
         self.assertEqual(result.grade, "A+")
         self.assertEqual(len(result.squad), 15)
+
+    def test_team_rating_scores_squads_holding_unprojectable_players(self):
+        with patch("main.scout", DepartedPlayerRatingScout(), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        departed = next(player for player in result.squad if player["id"] == 5)
+        self.assertEqual(len(result.squad), 15)
+        self.assertTrue(departed["projection_missing"])
+        self.assertEqual(departed["expected_points"], 0.0)
+        self.assertLess(result.rating, 100)
+        self.assertTrue(
+            any("Availability needs checking" in risk for risk in result.risks)
+        )
 
     def test_production_keeps_only_redoc_ui(self):
         documentation = _documentation_config(is_production=True)

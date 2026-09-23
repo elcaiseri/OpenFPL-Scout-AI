@@ -58,6 +58,9 @@ inference:
   history_window: 5
   minimum_successful_models: 3
   cache_fixtures: true
+  fixture_cache_ttl_seconds: 300
+  # Requests for the same gameweek share one inference and archive capture.
+  prediction_cache_ttl_seconds: 300
   clip_min: 0.0
   max_players_per_team: 3
   cold_start:
@@ -69,6 +72,7 @@ official_fpl:
   cache_ttl_seconds: 300
   history_cache_ttl_seconds: 900
   max_workers: 8
+  max_cache_entries: 5000
 
 # Temporary, permission-pending enrichment of missing historical match inputs.
 # Official FPL remains authoritative for player identity, history, and fixtures.
@@ -82,6 +86,10 @@ fpl_data_inference:
   minimum_match_ratio: 0.8
   timeout_seconds: 60
   permission_status: "pending"
+  # While permission is pending, the service reads only files imported with
+  # the guarded CLI. Set true (or FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=true)
+  # to let the service download from FPL Data itself.
+  acknowledge_permission_pending: false
 
 # Durable artifacts for future training. In Cloud Run, the data root must be a
 # writable bucket volume. Set OPENFPL_DATA_ROOT=/data for a /data mount.

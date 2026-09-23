@@ -32,6 +32,28 @@ class RecordingModel(ConstantModel):
         return super().predict(features)
 
 
+class GoalsModel(ConstantModel):
+    """Predict one point plus recent goals, so form drives the ranking."""
+
+    def predict(self, features):
+        return 1.0 + features["goals"].fillna(0).to_numpy()
+
+
+class VenueModel(ConstantModel):
+    """Predict three points at home and one away."""
+
+    def predict(self, features):
+        self.features = features.copy()
+        return np.where(features["was_home"].astype(bool), 3.0, 1.0)
+
+
+def every_club_plays_once(gameweek, mapping):
+    return {
+        f"Club {club}": {"opponent_team_name": "Chelsea", "was_home": True}
+        for club in range(7)
+    }
+
+
 class FakeOfficialClient:
     def next_gameweek(self):
         return 2
@@ -49,6 +71,15 @@ class FakeOfficialClient:
             history["chance_of_playing_next_round"] = np.nan
             return history
         return history.loc[history["gameweek"] < gameweek].copy()
+
+
+class CountingOfficialClient(FakeOfficialClient):
+    def __init__(self):
+        self.history_calls = 0
+
+    def player_history(self, gameweek):
+        self.history_calls += 1
+        return super().player_history(gameweek)
 
 
 class FakeFPLDataProvider:
@@ -90,6 +121,30 @@ def player_history():
                     "goals": player_id / 10,
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def league_history():
+    """Two played gameweeks for seven full clubs (15 players each)."""
+    rows = []
+    player_id = 1
+    for club in range(7):
+        for position, count in {1: 2, 2: 5, 3: 5, 4: 3}.items():
+            for _ in range(count):
+                for gameweek in (1, 2):
+                    rows.append(
+                        {
+                            "id": player_id,
+                            "element_type": position,
+                            "web_name": f"Player {player_id}",
+                            "team_name": f"Club {club}",
+                            "opponent_team_name": "Chelsea",
+                            "was_home": True,
+                            "gameweek": gameweek,
+                            "goals": 1.0,
+                        }
+                    )
+                player_id += 1
     return pd.DataFrame(rows)
 
 
@@ -172,7 +227,11 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertTrue(np.allclose(first.expected_points, 2.6))
         self.assertEqual(first.attrs["gameweek"], 3)
         self.assertEqual(first.attrs["inference"]["failed_models"], {})
-        expected_columns = scout_config()["categorical_columns"] + ["expected_points"]
+        expected_columns = scout_config()["categorical_columns"] + [
+            "expected_points",
+            "fixture_count",
+            "availability_factor",
+        ]
         self.assertEqual(list(first.columns), expected_columns)
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))
@@ -353,6 +412,135 @@ class ScoutInferenceTests(unittest.TestCase):
                 )
                 self.assertGreater(team["now_cost"].sum(), 100.0)
                 self.assertLessEqual(team["team_name"].value_counts().max(), 3)
+
+    def test_unavailable_players_are_scaled_and_never_selected(self):
+        history = league_history()
+        # Players 11 and 12 are Club 0 midfielders with the best recent form.
+        history.loc[history["id"] == 12, "goals"] = 5.0
+        history.loc[history["id"] == 11, "goals"] = 4.0
+        availability = pd.DataFrame(
+            {
+                "id": [11, 12],
+                "status": ["d", "i"],
+                "chance_of_playing_next_round": [50, 0],
+                "can_select": [True, True],
+            }
+        )
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=every_club_plays_once,
+            model_loader=lambda path: GoalsModel(),
+        )
+
+        predictions = scout.predict_players(
+            history, gameweek=3, availability=availability
+        )
+        team = scout.select_optimal_team(predictions)
+
+        by_id = predictions.set_index("id")
+        self.assertEqual(by_id.loc[12, "availability_factor"], 0.0)
+        self.assertEqual(by_id.loc[12, "expected_points"], 0.0)
+        self.assertEqual(by_id.loc[11, "availability_factor"], 0.5)
+        self.assertAlmostEqual(by_id.loc[11, "expected_points"], (1 + 4.0) * 0.5)
+        self.assertNotIn(12, team["id"].tolist())
+        self.assertIn(11, team["id"].tolist())
+
+    def test_blank_gameweek_players_project_zero_and_are_not_preferred(self):
+        history = league_history()
+        history.loc[history["team_name"] == "Club 0", "goals"] = 9.0
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=lambda gameweek, mapping: {
+                f"Club {club}": {"opponent_team_name": "Chelsea", "was_home": True}
+                for club in range(1, 7)
+            },
+            model_loader=lambda path: GoalsModel(),
+        )
+
+        predictions = scout.predict_players(history, gameweek=3)
+        team = scout.select_optimal_team(predictions)
+
+        blank = predictions.loc[predictions["team_name"] == "Club 0"]
+        self.assertTrue((blank["fixture_count"] == 0).all())
+        self.assertTrue((blank["expected_points"] == 0).all())
+        self.assertTrue(blank["opponent_team_name"].isna().all())
+        self.assertNotIn("Club 0", team["team_name"].tolist())
+
+    def test_double_gameweek_predicts_each_fixture_and_sums_points(self):
+        model = VenueModel()
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=lambda gameweek, mapping: {
+                "Arsenal": {
+                    "opponent_team_name": "Chelsea / Spurs",
+                    "fixtures": [
+                        {"opponent_team_name": "Chelsea", "was_home": True},
+                        {"opponent_team_name": "Spurs", "was_home": False},
+                    ],
+                }
+            },
+            model_loader=lambda path: model,
+        )
+
+        predictions = scout.predict_players(player_history(), gameweek=3)
+
+        self.assertEqual(len(predictions), 20)
+        self.assertTrue((predictions["fixture_count"] == 2).all())
+        self.assertTrue((predictions["expected_points"] == 3 + 1).all())
+        self.assertTrue(
+            (predictions["opponent_team_name"] == "Chelsea / Tottenham").all()
+        )
+        self.assertEqual(
+            sorted(model.features["opponent_team_name"].unique()),
+            ["Chelsea", "Tottenham"],
+        )
+        self.assertEqual(len(model.features), 40)
+
+    def test_fails_clearly_when_no_fixtures_are_published(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=lambda gameweek, mapping: {},
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "No fixtures are published"):
+            scout.predict_players(player_history(), gameweek=3)
+
+    def test_fixture_cache_expires(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+        now = [0.0]
+        scout.clock = lambda: now[0]
+
+        scout.predict_players(player_history(), gameweek=3)
+        now[0] = scout.fixture_cache_ttl + 1
+        scout.predict_players(player_history(), gameweek=3)
+
+        self.assertEqual(self.fixture_calls, 2)
+
+    def test_official_predictions_are_shared_within_cache_window(self):
+        client = CountingOfficialClient()
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(2),
+            official_client=client,
+        )
+        now = [0.0]
+        scout.clock = lambda: now[0]
+
+        first = scout.get_official_predictions(gameweek=3)
+        first.loc[:, "expected_points"] = 99.0
+        second = scout.get_official_predictions(gameweek=3)
+        now[0] = scout.prediction_cache_ttl + 1
+        scout.get_official_predictions(gameweek=3)
+
+        self.assertEqual(client.history_calls, 2)
+        self.assertTrue((second["expected_points"] == 2).all())
+        self.assertEqual(second.attrs["gameweek"], 3)
 
     def test_official_predictions_use_fpl_data_after_gameweek_one(self):
         provider = FakeFPLDataProvider()

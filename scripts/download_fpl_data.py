@@ -28,7 +28,7 @@ BASE_URL = "https://www.fpl-data.co.uk"
 SOURCE_PAGE = f"{BASE_URL}/statistics"
 DASH_UPDATE_URL = f"{BASE_URL}/_dash-update-component"
 USER_AGENT = (
-    "OpenFPL-Scout-AI/5.3 "
+    "OpenFPL-Scout-AI "
     "(+https://github.com/elcaiseri/OpenFPL-Scout-AI; permission pending)"
 )
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
