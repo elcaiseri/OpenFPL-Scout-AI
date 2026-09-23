@@ -62,11 +62,11 @@ Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
 available at [localhost:8000/docs](http://localhost:8000/docs).
 
 Protected routes read comma-separated bearer tokens from `.env` or the process
-environment:
+environment. Start from the documented sample, which lists every setting the
+app reads, and replace the example token:
 
-```dotenv
-VALID_API_KEYS=local-development-token
-OPENFPL_ENV=development
+```bash
+cp .env.example .env
 ```
 
 Optional FPL Data enrichment can be disabled immediately with:
