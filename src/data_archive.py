@@ -10,7 +10,7 @@ import os
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any, Callable, Mapping, Optional
 
 import numpy as np
@@ -96,6 +96,10 @@ class DataArchive:
     """
 
     SCHEMA_VERSION = 2
+    # The official client caches responses for minutes, so a live payload
+    # fetched just after ``data_checked`` may predate the final data. Live
+    # files keep being refreshed for this long after the check is first seen.
+    LIVE_SETTLE = timedelta(minutes=30)
 
     def __init__(
         self,
@@ -117,6 +121,7 @@ class DataArchive:
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
+        self._results_thread: Optional[Thread] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -191,6 +196,36 @@ class DataArchive:
                 self._results_due_at = self.clock() + self.results_interval
         self.last_result = result
         return result
+
+    def collect_results_in_background(self, official_client: Any) -> bool:
+        """Start ``collect_results`` on a background thread when it is due.
+
+        Serving a frozen forecast must not wait for hundreds of upstream
+        history requests, so this returns at once. At most one collection
+        runs at a time; returns whether one was started.
+        """
+        if not self.enabled:
+            return False
+        with self._lock:
+            thread = self._results_thread
+            running = thread is not None and thread.is_alive()
+            due_at = self._results_due_at
+            if running or (due_at is not None and self.clock() < due_at):
+                return False
+            self._results_thread = Thread(
+                target=self.collect_results,
+                args=(official_client,),
+                name="archive-results",
+                daemon=True,
+            )
+            self._results_thread.start()
+        return True
+
+    def wait_for_results(self, timeout: Optional[float] = None) -> None:
+        """Wait for a background results collection, if one is running."""
+        thread = self._results_thread
+        if thread is not None:
+            thread.join(timeout)
 
     def collect_results(self, official_client: Any) -> dict[str, Any]:
         """Archive official results without a prediction, once per interval.
@@ -610,13 +645,14 @@ class DataArchive:
         """Commit a forecast's files together while forecasts are accepted.
 
         Every file is staged first, and the deadline is re-checked right
-        before the renames, under the lock frozen reads take. The predictions
-        and their metadata are always rewritten as a pair, because another
-        instance sharing the volume may have replaced them; the metadata,
-        which proves the capture time and the predictions' digest, is renamed
-        last. Returns False, writing nothing, once the deadline is too close.
+        before the renames, under the lock frozen reads take. Every file is
+        rewritten, even if this process wrote the same bytes before, because
+        another instance sharing the volume may have replaced it since; this
+        keeps a forecast's inputs, predictions, and metadata from one capture.
+        The metadata, which proves the capture time and the predictions'
+        digest, is renamed last. Returns False, writing nothing, once the
+        deadline is too close.
         """
-        forecast = (predictions_path, metadata_path)
         with self._lock:
             if not self._accepts_forecasts(deadline):
                 return False
@@ -630,8 +666,7 @@ class DataArchive:
             try:
                 for path, content in contents.items():
                     digest = hashlib.sha256(content).hexdigest()
-                    if path in forecast or self._digests.get(path) != digest:
-                        staged.append((self._stage(path, content), path, digest))
+                    staged.append((self._stage(path, content), path, digest))
                 if not self._accepts_forecasts(deadline):
                     return False
                 for temporary_path, path, digest in staged:
@@ -659,9 +694,11 @@ class DataArchive:
             if not finished and not current:
                 continue
             target = season_root / "official" / "live" / f"gw_{gameweek:02d}.json"
-            # Points can still be corrected after "finished"; only the final
-            # data check makes a live payload immutable.
-            if event.get("data_checked") and target.is_file():
+            marker = target.with_suffix(".checked")
+            checked = bool(event.get("data_checked"))
+            # Points can still be corrected after "finished"; only a payload
+            # fetched well after the final data check is immutable.
+            if checked and target.is_file() and self._live_settled(marker):
                 archived.append(gameweek)
                 continue
             try:
@@ -671,8 +708,24 @@ class DataArchive:
             self._record_write(
                 written, season_root, target, self._json_bytes(payload)
             )
+            if checked and not marker.is_file():
+                self._write_bytes(
+                    marker,
+                    self._json_bytes(
+                        {"data_checked_seen_at_utc": self.clock().isoformat()}
+                    ),
+                )
             archived.append(gameweek)
         return archived
+
+    def _live_settled(self, marker: Path) -> bool:
+        """Whether ``data_checked`` was first seen at least LIVE_SETTLE ago."""
+        try:
+            seen = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        seen_at = _parse_deadline(seen.get("data_checked_seen_at_utc"))
+        return seen_at is not None and self.clock() >= seen_at + self.LIVE_SETTLE
 
     def _record_gameweek_frames(
         self,

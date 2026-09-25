@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -166,7 +166,10 @@ class DataArchiveTests(unittest.TestCase):
 
     def test_does_not_refetch_finalized_live_gameweek(self):
         with tempfile.TemporaryDirectory() as directory:
-            archive = DataArchive(Path(directory), enabled=True, clock=fixed_clock())
+            moment = [BEFORE_GW3_DEADLINE]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
             client = FakeOfficialClient()
             history = client.player_history(3)
             predictions = prediction_frame()
@@ -182,13 +185,20 @@ class DataArchiveTests(unittest.TestCase):
             }
 
             archive.capture_inference(**arguments)
+            # GW1 settled 30 minutes after its data check was first seen.
+            moment[0] += timedelta(minutes=31)
             archive.capture_inference(**arguments)
 
             self.assertEqual(client.live_calls, [1, 2, 2])
 
-    def test_refetches_finished_live_gameweek_until_data_checked(self):
+    def test_refetches_finished_live_gameweek_until_it_settles_after_data_check(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as directory:
-            archive = DataArchive(Path(directory), enabled=True, clock=fixed_clock())
+            moment = [BEFORE_GW3_DEADLINE]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
             client = FakeOfficialClient()
             payload = client.bootstrap()
             payload["events"][0]["data_checked"] = False
@@ -209,10 +219,14 @@ class DataArchiveTests(unittest.TestCase):
             archive.capture_inference(**arguments)
             payload["events"][0]["data_checked"] = True
             archive.capture_inference(**arguments)
+            moment[0] += timedelta(minutes=10)
+            archive.capture_inference(**arguments)
+            moment[0] += timedelta(minutes=21)
             archive.capture_inference(**arguments)
 
-            # Fetched on both captures before the data check, then frozen.
-            self.assertEqual(client.live_calls.count(1), 2)
+            # Fetched on both captures before the data check and until 30
+            # minutes after it was first seen, then frozen.
+            self.assertEqual(client.live_calls.count(1), 4)
 
     def test_requests_for_closed_gameweeks_never_replace_archived_forecasts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -454,20 +468,61 @@ class DataArchiveTests(unittest.TestCase):
                 for _ in range(2)
             )
             client = FakeOfficialClient()
+            # The second instance saw a rescheduled fixture list.
+            other_client = FakeOfficialClient()
+            other_client.fixtures = lambda: [{"id": 100, "event": 4}]
             other = prediction_frame()
             other["expected_points"] = 9.5
             self.capture(first, client, prediction_frame())
             moment[0] = datetime(2026, 8, 29, 9, 10, tzinfo=timezone.utc)
-            self.capture(second, client, other)
-            # The first instance predicts the same values again.
+            self.capture(second, other_client, other)
+            # The first instance predicts the same values from the same inputs.
             moment[0] = datetime(2026, 8, 29, 9, 20, tzinfo=timezone.utc)
             self.capture(first, client, prediction_frame())
             moment[0] = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
 
             frozen = second.frozen_forecast(client, 3)
+            snapshot = json.loads(
+                (
+                    Path(directory) / "2026-2027/official/snapshots/gw_03/fixtures.json"
+                ).read_text(encoding="utf-8")
+            )
 
             self.assertIsNotNone(frozen)
             self.assertEqual(frozen["expected_points"].tolist(), [5.5])
+            self.assertEqual(snapshot, client.fixtures())
+
+    def test_live_results_are_refetched_until_well_after_the_data_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 20, 12, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            payload = client.bootstrap()
+            payload["events"][0]["data_checked"] = False
+            client.bootstrap = lambda: payload
+            points = [3]
+            client.event_live = lambda gameweek: {
+                "elements": [{"id": 10, "stats": {"total_points": points[0]}}]
+            }
+            live = Path(directory) / "2026-2027/official/live/gw_01.json"
+            read = lambda: json.loads(live.read_text(encoding="utf-8"))  # noqa: E731
+
+            archive.collect_results(client)
+            # Bonus points are corrected, then FPL marks GW1 data_checked.
+            points[0] = 4
+            payload["events"][0]["data_checked"] = True
+            moment[0] += timedelta(minutes=10)
+            archive.collect_results(client)
+            corrected = read()["elements"][0]["stats"]["total_points"]
+            # Long after the check, the file is final and no longer fetched.
+            points[0] = 99
+            moment[0] += timedelta(hours=1)
+            archive.collect_results(client)
+
+            self.assertEqual(corrected, 4)
+            self.assertEqual(read()["elements"][0]["stats"]["total_points"], 4)
 
     def test_forecasts_stop_being_committed_shortly_before_the_deadline(self):
         with tempfile.TemporaryDirectory() as directory:

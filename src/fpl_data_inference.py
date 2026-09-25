@@ -268,10 +268,17 @@ class FPLDataHistoryProvider:
         raw, source_filename = self.client.download_csv(season)
         summary = validate_csv(raw)
         if current is not None:
-            # The import CLI's guard, without its churn allowance: a season's
-            # dataset only grows, so an unattended refresh may never replace
-            # the dataset in use (or the imported file) with a smaller one.
-            check_for_regression(current, summary, minimum_ratio=1.0)
+            # A season's dataset only grows, so an unattended refresh may not
+            # replace the dataset in use (or the imported file) with a smaller
+            # one. A download that adds a newer gameweek may drop up to 5% of
+            # rows or players (a departed player, say), or enrichment would
+            # stay on the old dataset for the rest of the season.
+            advances = (
+                summary.latest_observed_gameweek > current.latest_observed_gameweek
+            )
+            check_for_regression(
+                current, summary, minimum_ratio=0.95 if advances else 1.0
+            )
         frame = normalize_fpl_columns(pd.read_csv(io.BytesIO(raw)))
         try:
             self._write_runtime_cache(raw, season, summary, source_filename)

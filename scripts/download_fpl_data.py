@@ -335,8 +335,8 @@ def check_for_regression(
 
     ``minimum_ratio`` is the share of the current rows and players the
     incoming file must keep. The interactive importer tolerates some churn;
-    unattended runtime refreshes pass 1.0 so a season's append-only dataset
-    can never shrink.
+    unattended runtime refreshes pass 1.0, or 0.95 for a download that adds
+    a newer gameweek.
     """
     if incoming.latest_observed_gameweek < current.latest_observed_gameweek:
         raise ValueError(

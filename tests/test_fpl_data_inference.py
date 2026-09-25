@@ -411,6 +411,35 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
         self.assertEqual(second["dataset_sha256"], first["dataset_sha256"])
         self.assertIn("row count dropped", second["refresh_error"])
 
+    def test_a_download_adding_a_gameweek_may_drop_a_departed_player(self):
+        now = [0.0]
+        client = FakeClient()
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            refresh_ttl_seconds=60,
+            acknowledge_permission_pending=True,
+            clock=lambda: now[0],
+        )
+        _, first = provider.enrich(official_history(), target_gameweek=3)
+
+        # GW3 is published, and player 60 (who left the league) is gone.
+        header, *rows = source_csv().decode().splitlines(keepends=True)
+        rows = [row for row in rows if not row.startswith("60,")]
+        rows += [
+            f"{player_id},{player_id % 4 + 1},Player {player_id},Arsenal,"
+            f"Chelsea,True,3,90,2,{player_id},3\n"
+            for player_id in range(1, 60)
+        ]
+        newer = (header + "".join(rows)).encode()
+        client.download_csv = lambda season: (newer, "fpl-data-stats.csv")
+        now[0] = 61
+        _, second = provider.enrich(official_history(), target_gameweek=3)
+
+        self.assertNotEqual(second["dataset_sha256"], first["dataset_sha256"])
+        self.assertNotIn("refresh_error", second)
+        self.assertEqual(second["source_observed_gameweek"], 3)
+
     def test_failed_refresh_keeps_a_newer_dataset_than_the_local_copy(self):
         now = [0.0]
         client = FakeClient()

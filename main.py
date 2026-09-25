@@ -924,9 +924,11 @@ async def rate_public_manager_team(
             official = pick.get("player") or {}
             prediction = predictions_by_id.get(player_id)
             if prediction is None:
-                # Only players FPL no longer lets managers select (for example,
-                # after leaving the league) lack a projection. They still count
-                # toward the published squad, with no points and no availability.
+                # Players FPL no longer lets managers select (for example, after
+                # leaving the league) lack a projection, as do players added
+                # after a closed gameweek's frozen forecast was captured. They
+                # still count toward the published squad, with no points and no
+                # availability, and are flagged ``projection_missing``.
                 prediction = {
                     "expected_points": 0.0,
                     "availability_factor": 0.0,

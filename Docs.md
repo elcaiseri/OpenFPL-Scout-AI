@@ -234,9 +234,10 @@ Runtime refreshes follow the importer's safety rules:
 
 - A download with any fewer rows or players than the dataset in use, an
   earlier latest gameweek, or lost feature columns is rejected (the importer
-  allows 20% churn; an unattended refresh allows none). The current dataset
-  and the file on disk stay in place, and `/api/health` reports
-  `refresh_error`.
+  allows 20% churn; an unattended refresh allows none, except up to 5% for a
+  download that adds a newer gameweek, such as one without a departed player).
+  The current dataset and the file on disk stay in place, and `/api/health`
+  reports `refresh_error`.
 - A failed refresh keeps the dataset already in memory. The local copy is a
   fallback only when nothing is loaded yet, so an older file never replaces
   newer data.
