@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import os
@@ -377,6 +378,9 @@ class DataArchive:
                 "prediction_gameweek": prediction_gameweek,
                 "strategy": predictions.attrs.get("inference", {}).get("strategy"),
                 "source": predictions.attrs.get("source", "official-fpl"),
+                # Ties the squad to the exact predictions file it was picked
+                # from, so a frozen forecast never pairs mismatched files.
+                "predictions_sha256": self._frame_digest(predictions),
                 "players": squad.to_dict(orient="records"),
             }
             content_digest = hashlib.sha256(self._json_bytes(payload)).hexdigest()
@@ -394,6 +398,82 @@ class DataArchive:
         except Exception as error:  # Archive availability must not break the API.
             logger.exception("Could not persist the selected squad")
             return {"status": "failed", "error": str(error)}
+
+    def frozen_forecast(
+        self, official_client: Any, gameweek: int
+    ) -> Optional[pd.DataFrame]:
+        """Return a closed gameweek's archived pre-deadline forecast.
+
+        Once a gameweek's deadline has passed, its prediction must never
+        change, so the archived predictions are returned exactly as captured,
+        with the squad picked from them in ``attrs["frozen_squad"]``. Returns
+        None while the gameweek is still open, when the archive is disabled,
+        or when no forecast was captured before the deadline; callers then
+        predict live and mark the result as not frozen.
+        """
+        if not self.enabled:
+            return None
+        try:
+            bootstrap = official_client.bootstrap()
+            deadline = self._gameweek_deadline(bootstrap, gameweek)
+            if deadline is None or self.clock() < deadline:
+                return None
+            season_root = self.root_path / self._season_name(bootstrap)
+            name = f"gw_{gameweek:02d}"
+            predictions_path = season_root / "predictions" / f"{name}.csv"
+            metadata_path = season_root / "metadata" / f"{name}.json"
+            if not predictions_path.is_file() or not metadata_path.is_file():
+                logger.warning(
+                    "GW%d is closed but no pre-deadline forecast was archived; "
+                    "predicting live",
+                    gameweek,
+                )
+                return None
+            raw = predictions_path.read_bytes()
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            predictions = pd.read_csv(io.BytesIO(raw))
+            squad = self._frozen_squad(
+                season_root / "squads" / f"{name}.json",
+                hashlib.sha256(raw).hexdigest(),
+            )
+        except Exception:  # Fail open: a live prediction beats an error.
+            logger.exception("Could not read the archived GW%d forecast", gameweek)
+            return None
+
+        predictions.attrs.update(
+            gameweek=gameweek,
+            inference=metadata.get("inference", {}),
+            source=metadata.get("source", "official-fpl"),
+            frozen=True,
+            forecast_captured_at=metadata.get("captured_at_utc"),
+            frozen_squad=squad,
+            archive={
+                "status": "frozen",
+                "prediction_archived": False,
+                "prediction_skipped_reason": "gameweek-closed",
+            },
+        )
+        return predictions
+
+    @staticmethod
+    def _frozen_squad(path: Path, predictions_sha256: str) -> Optional[list]:
+        """Return the archived squad only if it was picked from these predictions."""
+        if not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("predictions_sha256") != predictions_sha256:
+            logger.warning(
+                "Archived squad %s does not match the archived predictions; "
+                "re-selecting it from the frozen predictions",
+                path,
+            )
+            return None
+        return payload.get("players")
+
+    @staticmethod
+    def _frame_digest(frame: pd.DataFrame) -> str:
+        """Digest of a frame exactly as ``_record_frame`` writes it."""
+        return hashlib.sha256(frame.to_csv(index=False).encode("utf-8")).hexdigest()
 
     def _archive_live_gameweeks(
         self,

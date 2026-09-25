@@ -172,9 +172,19 @@ of playing, and players with zero availability are never selected.
   "gameweek": 1,
   "version": "6.0.0",
   "source": "official-fpl+fpl-data",
+  "frozen": true,
+  "forecast_captured_at": "2026-08-29T09:58:12+00:00",
   "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
+
+`frozen` is true once the Gameweek's deadline has passed: the response is the
+archived pre-deadline forecast, captured at `forecast_captured_at`, and it does
+not change on later requests. Open Gameweeks are predicted live and report
+`frozen: false`, as does a closed Gameweek with no archived forecast. Player
+status shown alongside a frozen squad (for example on the dashboard) is
+current, but the picks and expected points are the ones made before the
+deadline.
 
 ## Historical model training
 

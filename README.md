@@ -201,7 +201,16 @@ manager count.
 Snapshots, predictions, squads, and metadata for a Gameweek are written only
 while that Gameweek is still open (before its deadline). Each file therefore
 holds the last pre-deadline forecast, and requests for past, live, or
-far-future Gameweeks never replace it. Live files become immutable once
+far-future Gameweeks never replace it.
+
+Once a Gameweek's deadline has passed, its prediction never changes. Every
+prediction endpoint (`/api/scout`, `/api/gw/scout`, `/api/gw/playerpoints`,
+and team ratings) serves the archived pre-deadline forecast and the squad
+picked from it, with `"frozen": true` and `forecast_captured_at`, instead of
+predicting again with newer injuries, ownership, or fixtures. Open Gameweeks
+are predicted live (`"frozen": false`). A closed Gameweek with no archived
+forecast, for example with the archive disabled, is also predicted live and
+reports `"frozen": false`. Live files become immutable once
 Official FPL marks the Gameweek `data_checked`. Invoke `/api/scout` at least
 once before each deadline and after each Gameweek is finalized (for example
 with Cloud Scheduler) to guarantee a complete season even when the service

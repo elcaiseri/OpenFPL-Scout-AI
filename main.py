@@ -853,6 +853,8 @@ async def _generate_scout_response(
             ),
             version=config.get("version", "1.0.0"),
             source=str(predictions.attrs.get("source", "official-fpl")),
+            frozen=bool(predictions.attrs.get("frozen", False)),
+            forecast_captured_at=predictions.attrs.get("forecast_captured_at"),
         )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")
@@ -969,6 +971,7 @@ async def rate_public_manager_team(
             ),
             version=config.get("version", "1.0.0"),
             source=str(predictions.attrs.get("source", "official-fpl")),
+            frozen=bool(predictions.attrs.get("frozen", False)),
             **rating,
         )
     except HTTPException as error:

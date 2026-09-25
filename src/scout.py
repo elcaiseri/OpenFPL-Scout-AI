@@ -725,11 +725,24 @@ class FPLScout:
     def get_official_predictions(self, gameweek: Optional[int] = None) -> pd.DataFrame:
         """Generate predictions from official history plus guarded enrichment.
 
-        Results are shared for ``prediction_cache_ttl_seconds`` so concurrent
-        and repeated requests run one inference and one archive capture.
-        Callers receive a copy and may modify it freely.
+        Once a gameweek's deadline has passed, the archived pre-deadline
+        forecast is returned unchanged (``attrs["frozen"]``), so recalling an
+        old gameweek never re-predicts it with newer data. Open gameweeks are
+        predicted live and shared for ``prediction_cache_ttl_seconds``, so
+        concurrent and repeated requests run one inference and one archive
+        capture. Callers receive a copy and may modify it freely.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        frozen = self.data_archive.frozen_forecast(
+            self.official_client, resolved_gameweek
+        )
+        if frozen is not None:
+            logger.info(
+                "Serving the frozen GW%d forecast captured at %s",
+                resolved_gameweek,
+                frozen.attrs.get("forecast_captured_at"),
+            )
+            return frozen
         if self.prediction_cache_ttl <= 0:
             return self._compute_official_predictions(resolved_gameweek)
 
@@ -847,6 +860,7 @@ class FPLScout:
         enrichment: Dict[str, Any],
     ) -> pd.DataFrame:
         self.last_data_enrichment = dict(enrichment)
+        result.attrs["frozen"] = False
         result.attrs["inference"]["data_enrichment"] = enrichment
         result.attrs["source"] = (
             "official-fpl+fpl-data"
@@ -949,7 +963,18 @@ class FPLScout:
         return {feature: sources[feature] for feature in MODEL_FEATURES}
 
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
-        """Select the highest-ranked 15-player positional squad."""
+        """Select the highest-ranked 15-player positional squad.
+
+        A frozen forecast returns the squad archived before the deadline, in
+        the original column order, instead of selecting it again.
+        """
+        frozen_squad = predictions.attrs.get("frozen_squad")
+        if frozen_squad:
+            squad = pd.DataFrame(frozen_squad)
+            ordered = [column for column in predictions.columns if column in squad]
+            return squad[
+                ordered + [column for column in squad.columns if column not in ordered]
+            ]
         required_columns = {"element_type", "web_name", "expected_points"}
         missing = sorted(required_columns.difference(predictions.columns))
         if missing:
