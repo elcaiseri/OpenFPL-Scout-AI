@@ -742,6 +742,9 @@ class FPLScout:
                 resolved_gameweek,
                 frozen.attrs.get("forecast_captured_at"),
             )
+            # Inference is what normally archives results; keep collecting
+            # them (throttled), even after the final deadline.
+            self.data_archive.collect_results(self.official_client)
             return frozen
         if self.prediction_cache_ttl <= 0:
             return self._compute_official_predictions(resolved_gameweek)

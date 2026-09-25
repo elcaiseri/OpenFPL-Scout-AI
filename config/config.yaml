@@ -100,6 +100,11 @@ data_archive:
   enabled: true
   root_path: "data/archive"
   season: "auto"
+  # Forecasts stop being written this long before a deadline, and frozen reads
+  # start at the deadline, so a forecast served as frozen never changes.
+  commit_margin_seconds: 60
+  # Serving frozen forecasts still archives official results this often.
+  results_interval_seconds: 300
 
 # Model Information
 models:

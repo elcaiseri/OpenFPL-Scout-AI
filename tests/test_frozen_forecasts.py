@@ -37,6 +37,7 @@ class FakeFPL:
 
     def __init__(self):
         self.current = 2
+        self.finished_through = 2
         self.elements = []
         for team in range(1, 7):
             for position in [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]:
@@ -73,8 +74,8 @@ class FakeFPL:
             {
                 "id": gameweek,
                 "deadline_time": deadline,
-                "finished": gameweek < self.current or gameweek <= 2,
-                "data_checked": gameweek <= 2,
+                "finished": gameweek <= self.finished_through,
+                "data_checked": gameweek <= self.finished_through,
                 "is_current": gameweek == self.current,
                 "is_next": gameweek == self.current + 1,
             }
@@ -131,6 +132,13 @@ class FakeFPL:
         self.elements[0]["selected_by_percent"] = "38.0"
         postponed = next(fixture for fixture in self.fixtures if fixture["id"] == 32)
         postponed["event"] = None
+
+    def finish(self, gameweek):
+        """Every fixture of the gameweek is played and the data is checked."""
+        self.finished_through = gameweek
+        for fixture in self.fixtures:
+            if fixture["event"] == gameweek:
+                fixture.update(started=True, finished=True)
 
 
 class FakeResponse:
@@ -246,6 +254,57 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertEqual(
             sorted(squad_after["id"].tolist()), sorted(squad_before["id"].tolist())
         )
+
+    def test_a_forecast_an_older_version_archived_after_the_deadline_is_not_frozen(
+        self,
+    ):
+        self.now[0] = AFTER_GW3_DEADLINE
+        live, _ = self.request()
+        # The previous version archived every request, even after the deadline.
+        root = Path(self.directory.name) / "2026-2027"
+        (root / "predictions").mkdir(parents=True, exist_ok=True)
+        (root / "metadata").mkdir(parents=True, exist_ok=True)
+        legacy = live.copy()
+        legacy["expected_points"] = 99.0
+        legacy.to_csv(root / "predictions/gw_03.csv", index=False)
+        (root / "metadata/gw_03.json").write_text(
+            json.dumps(
+                {
+                    "archive_schema_version": 1,
+                    "captured_at_utc": "2026-08-30T11:00:00+00:00",
+                    "prediction_gameweek": 3,
+                    "source": "official-fpl",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.monotonic[0] += 3600
+
+        again, _ = self.request()
+
+        self.assertFalse(again.attrs["frozen"])
+        self.assertEqual(records(again), records(live))
+
+    def test_serving_the_final_frozen_forecast_still_archives_its_results(self):
+        self.now[0] = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
+        self.fpl.current = 3
+        self.request(gameweek=4)
+        # GW4 is the season's last gameweek: once its deadline passes, the
+        # default request keeps resolving to it and is always served frozen.
+        self.now[0] = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+        self.fpl.current = 4
+        self.fpl.finish(4)
+        self.client.clear_cache()
+        self.monotonic[0] += 3600
+
+        predictions = self.scout.get_official_predictions()
+
+        root = Path(self.directory.name) / "2026-2027/official"
+        self.assertEqual(predictions.attrs["gameweek"], 4)
+        self.assertTrue(predictions.attrs["frozen"])
+        self.assertTrue((root / "player-stats/gw_04.csv").is_file())
+        self.assertTrue((root / "live/gw_04.json").is_file())
+        self.assertTrue((root / "history/before_gw_05.csv").is_file())
 
     def test_api_response_marks_the_frozen_forecast(self):
         before = asyncio.run(self.respond())

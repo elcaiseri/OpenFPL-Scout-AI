@@ -181,7 +181,9 @@ of playing, and players with zero availability are never selected.
 `frozen` is true once the Gameweek's deadline has passed: the response is the
 archived pre-deadline forecast, captured at `forecast_captured_at`, and it does
 not change on later requests. Open Gameweeks are predicted live and report
-`frozen: false`, as does a closed Gameweek with no archived forecast. Player
+`frozen: false`, as does a closed Gameweek without an archived forecast that
+provably predates its deadline (including files written by older versions).
+Player
 status shown alongside a frozen squad (for example on the dashboard) is
 current, but the picks and expected points are the ones made before the
 deadline.

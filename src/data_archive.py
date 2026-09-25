@@ -8,7 +8,7 @@ import json
 import math
 import os
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Mapping, Optional
@@ -88,8 +88,9 @@ class DataArchive:
 
     Writes are deliberately fail-open: prediction requests continue if an
     archive bucket is temporarily unavailable. Per-gameweek prediction
-    artifacts are written only while that gameweek is still open (before its
-    deadline), so the archive keeps the last pre-deadline forecast. Cumulative
+    artifacts are committed only until ``commit_margin_seconds`` before that
+    gameweek's deadline, so the archive keeps the last pre-deadline forecast
+    and never changes one that is already being served as frozen. Cumulative
     official history is refreshed on every capture, and live event files are
     immutable once Official FPL marks them ``data_checked``.
     """
@@ -103,14 +104,19 @@ class DataArchive:
         enabled: bool = True,
         configured_season: str = "auto",
         clock: Optional[Callable[[], datetime]] = None,
+        commit_margin_seconds: float = 60.0,
+        results_interval_seconds: float = 300.0,
     ) -> None:
         self.root_path = Path(root_path)
         self.enabled = bool(enabled)
         self.configured_season = configured_season.strip() or "auto"
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.commit_margin = timedelta(seconds=float(commit_margin_seconds))
+        self.results_interval = timedelta(seconds=float(results_interval_seconds))
         self._lock = RLock()
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
+        self._results_due_at: Optional[datetime] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -135,6 +141,12 @@ class DataArchive:
             Path(root),
             enabled=enabled,
             configured_season=str(archive_config.get("season", "auto")),
+            commit_margin_seconds=float(
+                archive_config.get("commit_margin_seconds", 60)
+            ),
+            results_interval_seconds=float(
+                archive_config.get("results_interval_seconds", 300)
+            ),
         )
 
     def status(self) -> dict[str, Any]:
@@ -174,6 +186,53 @@ class DataArchive:
         except Exception as error:  # Archive availability must not break inference.
             logger.exception("Could not persist the gameweek data archive")
             result = {"status": "failed", "error": str(error)}
+        else:
+            with self._lock:
+                self._results_due_at = self.clock() + self.results_interval
+        self.last_result = result
+        return result
+
+    def collect_results(self, official_client: Any) -> dict[str, Any]:
+        """Archive official results without a prediction, once per interval.
+
+        Serving a frozen forecast skips inference, which is what normally
+        collects results. This keeps the training archive complete, including
+        after the final deadline, when every request is served frozen.
+        """
+        if not self.enabled:
+            return {"status": "disabled"}
+        with self._lock:
+            now = self.clock()
+            if self._results_due_at is not None and now < self._results_due_at:
+                return {"status": "throttled"}
+            self._results_due_at = now + self.results_interval
+        try:
+            bootstrap = official_client.bootstrap()
+            season = self._season_name(bootstrap)
+            season_root = self.root_path / season
+            written: list[str] = []
+            history_cutoff_gameweek, _ = self._capture_official_history(
+                official_client, bootstrap, season_root, written
+            )
+            live_gameweeks = self._archive_live_gameweeks(
+                official_client, bootstrap, season_root, written
+            )
+            result = {
+                "status": "saved",
+                "season": season,
+                "results_only": True,
+                "official_history_before_gameweek": history_cutoff_gameweek,
+                "live_gameweeks": live_gameweeks,
+                "files_updated": written,
+            }
+            logger.info(
+                "Archived official results under %s (%d files updated)",
+                season_root,
+                len(written),
+            )
+        except Exception as error:  # Archive availability must not break the API.
+            logger.exception("Could not archive official results")
+            result = {"status": "failed", "error": str(error)}
         self.last_result = result
         return result
 
@@ -193,43 +252,14 @@ class DataArchive:
         season = self._season_name(bootstrap)
         season_root = self.root_path / season
         gameweek_name = f"gw_{prediction_gameweek:02d}"
-        captured_at = self.clock().isoformat()
-        finished_gameweeks = [
-            int(event["id"])
-            for event in bootstrap.get("events", [])
-            if event.get("finished")
-        ]
-        # Only finished gameweeks enter the cumulative history, so a live or
-        # far-future request never archives partial match data. The cutoff
-        # reaches 39 after GW38 so the final event is not omitted.
-        history_cutoff_gameweek = max(finished_gameweeks, default=0) + 1
-
-        # Archive removed/unavailable players too. Existing official HTTP cache
-        # makes this inexpensive for the selectable players already fetched.
-        try:
-            complete_official_history = official_client.player_history(
-                history_cutoff_gameweek, selectable_only=False
-            )
-        except TypeError:
-            complete_official_history = official_history
-        complete_official_history = training_safe_history(complete_official_history)
         enriched_history = training_safe_history(enriched_history)
 
         written: list[str] = []
-        self._record_frame(
-            written,
-            season_root,
-            season_root
-            / "official"
-            / "history"
-            / f"before_gw_{history_cutoff_gameweek:02d}.csv",
+        (
+            history_cutoff_gameweek,
             complete_official_history,
-        )
-        self._record_gameweek_frames(
-            written,
-            season_root,
-            season_root / "official" / "player-stats",
-            complete_official_history,
+        ) = self._capture_official_history(
+            official_client, bootstrap, season_root, written, official_history
         )
         if enrichment.get("status") == "applied":
             # A failed or skipped enrichment must not replace enriched files
@@ -250,37 +280,33 @@ class DataArchive:
         )
 
         open_gameweek = self._open_gameweek(bootstrap)
-        prediction_archived = prediction_gameweek == open_gameweek
+        deadline = self._gameweek_deadline(bootstrap, prediction_gameweek)
         skipped_reason = None
-        if prediction_archived:
+        if prediction_gameweek != open_gameweek:
+            skipped_reason = (
+                "no-open-gameweek"
+                if open_gameweek is None
+                else f"gameweek-not-open (open: {open_gameweek})"
+            )
+        else:
             snapshot_root = season_root / "official" / "snapshots" / gameweek_name
-            self._record_write(
-                written,
-                season_root,
-                snapshot_root / "bootstrap.json",
-                self._json_bytes(bootstrap),
+            enriched_path = (
+                season_root / "enriched" / "history" / f"before_{gameweek_name}.csv"
             )
-            self._record_write(
-                written,
-                season_root,
-                snapshot_root / "fixtures.json",
-                self._json_bytes(official_client.fixtures()),
-            )
-            self._record_frame(
-                written,
-                season_root,
-                season_root / "enriched" / "history" / f"before_{gameweek_name}.csv",
-                enriched_history,
-            )
-            self._record_frame(
-                written,
-                season_root,
-                season_root / "predictions" / f"{gameweek_name}.csv",
-                predictions,
-            )
+            predictions_path = season_root / "predictions" / f"{gameweek_name}.csv"
+            predictions_csv = predictions.to_csv(index=False).encode("utf-8")
+            # Staged and committed together once the deadline is re-checked.
+            inputs = {
+                snapshot_root / "bootstrap.json": self._json_bytes(bootstrap),
+                snapshot_root / "fixtures.json": self._json_bytes(
+                    official_client.fixtures()
+                ),
+                enriched_path: enriched_history.to_csv(index=False).encode("utf-8"),
+            }
             metadata = {
                 "archive_schema_version": self.SCHEMA_VERSION,
-                "captured_at_utc": captured_at,
+                # Proves which predictions file this metadata describes.
+                "predictions_sha256": hashlib.sha256(predictions_csv).hexdigest(),
                 "season": season,
                 "prediction_gameweek": prediction_gameweek,
                 "official_history_before_gameweek": history_cutoff_gameweek,
@@ -301,19 +327,19 @@ class DataArchive:
                 "inference": predictions.attrs.get("inference", {}),
                 "models": model_versions,
             }
-            self._record_write(
+            if not self._commit_forecast(
                 written,
                 season_root,
+                inputs,
+                predictions_path,
+                predictions_csv,
                 season_root / "metadata" / f"{gameweek_name}.json",
-                self._json_bytes(metadata),
-            )
-        else:
-            skipped_reason = (
-                "no-open-gameweek"
-                if open_gameweek is None
-                else f"gameweek-not-open (open: {open_gameweek})"
-            )
+                metadata,
+                deadline,
+            ):
+                skipped_reason = "gameweek-closed"
 
+        prediction_archived = skipped_reason is None
         result = {
             "status": "saved",
             "season": season,
@@ -322,7 +348,6 @@ class DataArchive:
             "files_updated": written,
         }
         if prediction_archived:
-            deadline = self._gameweek_deadline(bootstrap, prediction_gameweek)
             # Cached predictions outlive this decision; squad capture re-checks.
             result["open_until_utc"] = deadline.isoformat() if deadline else None
         if skipped_reason:
@@ -359,11 +384,7 @@ class DataArchive:
                     "reason": archive.get("prediction_skipped_reason")
                     or "prediction-not-archived",
                 }
-            # Predictions can be served from cache after the deadline passes;
-            # the squad file must still hold only a pre-deadline selection.
             open_until = _parse_deadline(archive.get("open_until_utc"))
-            if open_until is not None and self.clock() >= open_until:
-                return {"status": "skipped", "reason": "gameweek-closed"}
             prediction_gameweek = int(predictions.attrs["gameweek"])
             season = str(archive["season"])
             target = (
@@ -385,6 +406,10 @@ class DataArchive:
             }
             content_digest = hashlib.sha256(self._json_bytes(payload)).hexdigest()
             with self._lock:
+                # Predictions can be served from cache after the deadline
+                # passes; the squad file must hold only a pre-deadline pick.
+                if not self._accepts_forecasts(open_until):
+                    return {"status": "skipped", "reason": "gameweek-closed"}
                 if self._squad_digests.get(target) == content_digest:
                     return {"status": "unchanged", "path": str(target)}
                 payload["captured_at_utc"] = self.clock().isoformat()
@@ -408,8 +433,9 @@ class DataArchive:
         change, so the archived predictions are returned exactly as captured,
         with the squad picked from them in ``attrs["frozen_squad"]``. Returns
         None while the gameweek is still open, when the archive is disabled,
-        or when no forecast was captured before the deadline; callers then
-        predict live and mark the result as not frozen.
+        or when the archive cannot prove it holds a pre-deadline forecast (for
+        example, files written by an older version); callers then predict live
+        and mark the result as not frozen.
         """
         if not self.enabled:
             return None
@@ -422,20 +448,35 @@ class DataArchive:
             name = f"gw_{gameweek:02d}"
             predictions_path = season_root / "predictions" / f"{name}.csv"
             metadata_path = season_root / "metadata" / f"{name}.json"
-            if not predictions_path.is_file() or not metadata_path.is_file():
+            squad_path = season_root / "squads" / f"{name}.json"
+            # Commits in this process hold the same lock, so the files are
+            # read as one consistent set.
+            with self._lock:
+                if not predictions_path.is_file() or not metadata_path.is_file():
+                    logger.warning(
+                        "GW%d is closed but no pre-deadline forecast was "
+                        "archived; predicting live",
+                        gameweek,
+                    )
+                    return None
+                raw = predictions_path.read_bytes()
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                squad_text = (
+                    squad_path.read_text(encoding="utf-8")
+                    if squad_path.is_file()
+                    else None
+                )
+            digest = hashlib.sha256(raw).hexdigest()
+            problem = self._forecast_problem(metadata, gameweek, deadline, digest)
+            if problem:
                 logger.warning(
-                    "GW%d is closed but no pre-deadline forecast was archived; "
-                    "predicting live",
+                    "GW%d is closed but its archived forecast %s; predicting live",
                     gameweek,
+                    problem,
                 )
                 return None
-            raw = predictions_path.read_bytes()
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             predictions = pd.read_csv(io.BytesIO(raw))
-            squad = self._frozen_squad(
-                season_root / "squads" / f"{name}.json",
-                hashlib.sha256(raw).hexdigest(),
-            )
+            squad = self._frozen_squad(squad_path, squad_text, digest)
         except Exception:  # Fail open: a live prediction beats an error.
             logger.exception("Could not read the archived GW%d forecast", gameweek)
             return None
@@ -456,11 +497,33 @@ class DataArchive:
         return predictions
 
     @staticmethod
-    def _frozen_squad(path: Path, predictions_sha256: str) -> Optional[list]:
+    def _forecast_problem(
+        metadata: Mapping[str, Any],
+        gameweek: int,
+        deadline: datetime,
+        predictions_sha256: str,
+    ) -> Optional[str]:
+        """Explain why archived files are not a provable pre-deadline forecast."""
+        if metadata.get("prediction_gameweek") != gameweek:
+            return "belongs to another gameweek"
+        if metadata.get("predictions_sha256") != predictions_sha256:
+            return (
+                "cannot be verified (written by an older version, or its "
+                "predictions file does not match its metadata)"
+            )
+        captured_at = _parse_deadline(metadata.get("captured_at_utc"))
+        if captured_at is None or captured_at >= deadline:
+            return "was not captured before the deadline"
+        return None
+
+    @staticmethod
+    def _frozen_squad(
+        path: Path, squad_text: Optional[str], predictions_sha256: str
+    ) -> Optional[list]:
         """Return the archived squad only if it was picked from these predictions."""
-        if not path.is_file():
+        if squad_text is None:
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(squad_text)
         if payload.get("predictions_sha256") != predictions_sha256:
             logger.warning(
                 "Archived squad %s does not match the archived predictions; "
@@ -474,6 +537,112 @@ class DataArchive:
     def _frame_digest(frame: pd.DataFrame) -> str:
         """Digest of a frame exactly as ``_record_frame`` writes it."""
         return hashlib.sha256(frame.to_csv(index=False).encode("utf-8")).hexdigest()
+
+    def _capture_official_history(
+        self,
+        official_client: Any,
+        bootstrap: Mapping[str, Any],
+        season_root: Path,
+        written: list[str],
+        fallback_history: Optional[pd.DataFrame] = None,
+    ) -> tuple[int, pd.DataFrame]:
+        """Archive cumulative official history and per-gameweek player stats."""
+        finished_gameweeks = [
+            int(event["id"])
+            for event in bootstrap.get("events", [])
+            if event.get("finished")
+        ]
+        # Only finished gameweeks enter the cumulative history, so a live or
+        # far-future request never archives partial match data. The cutoff
+        # reaches 39 after GW38 so the final event is not omitted.
+        history_cutoff_gameweek = max(finished_gameweeks, default=0) + 1
+
+        # Archive removed/unavailable players too. Existing official HTTP cache
+        # makes this inexpensive for the selectable players already fetched.
+        try:
+            history = official_client.player_history(
+                history_cutoff_gameweek, selectable_only=False
+            )
+        except TypeError:
+            history = (
+                fallback_history
+                if fallback_history is not None
+                else official_client.player_history(history_cutoff_gameweek)
+            )
+        history = training_safe_history(history)
+        self._record_frame(
+            written,
+            season_root,
+            season_root
+            / "official"
+            / "history"
+            / f"before_gw_{history_cutoff_gameweek:02d}.csv",
+            history,
+        )
+        self._record_gameweek_frames(
+            written,
+            season_root,
+            season_root / "official" / "player-stats",
+            history,
+        )
+        return history_cutoff_gameweek, history
+
+    def _accepts_forecasts(self, deadline: Optional[datetime]) -> bool:
+        """Whether a forecast for a gameweek with this deadline may be written.
+
+        Writes stop ``commit_margin`` before the deadline, while frozen reads
+        start at it, so no write can land after a frozen read, even from
+        another instance sharing the volume.
+        """
+        return deadline is None or self.clock() < deadline - self.commit_margin
+
+    def _commit_forecast(
+        self,
+        written: list[str],
+        season_root: Path,
+        inputs: Mapping[Path, bytes],
+        predictions_path: Path,
+        predictions_csv: bytes,
+        metadata_path: Path,
+        metadata: Mapping[str, Any],
+        deadline: Optional[datetime],
+    ) -> bool:
+        """Commit a forecast's files together while forecasts are accepted.
+
+        Every file is staged first, and the deadline is re-checked right
+        before the renames, under the lock frozen reads take. The predictions
+        and their metadata are always rewritten as a pair, because another
+        instance sharing the volume may have replaced them; the metadata,
+        which proves the capture time and the predictions' digest, is renamed
+        last. Returns False, writing nothing, once the deadline is too close.
+        """
+        forecast = (predictions_path, metadata_path)
+        with self._lock:
+            if not self._accepts_forecasts(deadline):
+                return False
+            metadata = {**metadata, "captured_at_utc": self.clock().isoformat()}
+            contents = {
+                **inputs,
+                predictions_path: predictions_csv,
+                metadata_path: self._json_bytes(metadata),
+            }
+            staged: list[tuple[Path, Path, str]] = []
+            try:
+                for path, content in contents.items():
+                    digest = hashlib.sha256(content).hexdigest()
+                    if path in forecast or self._digests.get(path) != digest:
+                        staged.append((self._stage(path, content), path, digest))
+                if not self._accepts_forecasts(deadline):
+                    return False
+                for temporary_path, path, digest in staged:
+                    os.replace(temporary_path, path)
+                    if self._digests.get(path) != digest:
+                        written.append(str(path.relative_to(season_root)))
+                    self._digests[path] = digest
+            finally:
+                for temporary_path, _, _ in staged:
+                    temporary_path.unlink(missing_ok=True)
+        return True
 
     def _archive_live_gameweeks(
         self,
@@ -552,21 +721,31 @@ class DataArchive:
         with self._lock:
             if self._digests.get(path) == digest:
                 return False
-            path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-            )
-            temporary_path = Path(temporary_name)
+            temporary_path = self._stage(path, content)
             try:
-                with os.fdopen(descriptor, "wb") as temporary_file:
-                    temporary_file.write(content)
-                    temporary_file.flush()
-                    os.fsync(temporary_file.fileno())
                 os.replace(temporary_path, path)
             finally:
                 temporary_path.unlink(missing_ok=True)
             self._digests[path] = digest
         return True
+
+    @staticmethod
+    def _stage(path: Path, content: bytes) -> Path:
+        """Durably write content to a temporary file beside ``path``."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as temporary_file:
+                temporary_file.write(content)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return temporary_path
 
     @staticmethod
     def _gameweek_deadline(

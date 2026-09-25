@@ -420,6 +420,164 @@ class DataArchiveTests(unittest.TestCase):
                 ).is_file()
             )
 
+    def test_a_capture_that_crosses_the_deadline_never_replaces_the_forecast(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            self.capture(archive, client, prediction_frame())
+            later = prediction_frame()
+            later["expected_points"] = 9.5
+            fetch_fixtures = client.fixtures
+
+            def fixtures_while_the_deadline_passes():
+                moment[0] = datetime(2026, 8, 29, 10, 1, tzinfo=timezone.utc)
+                return fetch_fixtures()
+
+            client.fixtures = fixtures_while_the_deadline_passes
+            moment[0] = datetime(2026, 8, 29, 9, 30, tzinfo=timezone.utc)
+            result = self.capture(archive, client, later)
+            frozen = archive.frozen_forecast(client, 3)
+
+            self.assertFalse(result["prediction_archived"])
+            self.assertEqual(result["prediction_skipped_reason"], "gameweek-closed")
+            self.assertEqual(frozen["expected_points"].tolist(), [5.5])
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+
+    def test_instances_sharing_the_volume_leave_a_consistent_forecast(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc)]
+            first, second = (
+                DataArchive(Path(directory), enabled=True, clock=lambda: moment[0])
+                for _ in range(2)
+            )
+            client = FakeOfficialClient()
+            other = prediction_frame()
+            other["expected_points"] = 9.5
+            self.capture(first, client, prediction_frame())
+            moment[0] = datetime(2026, 8, 29, 9, 10, tzinfo=timezone.utc)
+            self.capture(second, client, other)
+            # The first instance predicts the same values again.
+            moment[0] = datetime(2026, 8, 29, 9, 20, tzinfo=timezone.utc)
+            self.capture(first, client, prediction_frame())
+            moment[0] = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
+
+            frozen = second.frozen_forecast(client, 3)
+
+            self.assertIsNotNone(frozen)
+            self.assertEqual(frozen["expected_points"].tolist(), [5.5])
+
+    def test_forecasts_stop_being_committed_shortly_before_the_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 29, 9, 58, 59, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            accepted = self.capture(archive, client, prediction_frame())
+            moment[0] = datetime(2026, 8, 29, 9, 59, 30, tzinfo=timezone.utc)
+            later = prediction_frame()
+            later["expected_points"] = 9.5
+            refused = self.capture(archive, client, later)
+            moment[0] = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
+
+            self.assertTrue(accepted["prediction_archived"])
+            self.assertFalse(refused["prediction_archived"])
+            self.assertEqual(
+                archive.frozen_forecast(client, 3)["expected_points"].tolist(), [5.5]
+            )
+
+    def test_frozen_forecast_requires_proof_it_was_captured_before_the_deadline(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 28, 12, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            self.capture(archive, client, prediction_frame())
+            moment[0] = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+            root = Path(directory) / "2026-2027"
+            metadata_path = root / "metadata/gw_03.json"
+            predictions_path = root / "predictions/gw_03.csv"
+            captured = json.loads(metadata_path.read_text(encoding="utf-8"))
+            csv = predictions_path.read_bytes()
+            self.assertIsNotNone(archive.frozen_forecast(client, 3))
+
+            cases = {
+                # The previous version archived requests after the deadline.
+                "legacy, after the deadline": {
+                    "archive_schema_version": 1,
+                    "captured_at_utc": "2026-09-25T11:00:00+00:00",
+                    "prediction_gameweek": 3,
+                },
+                "legacy, no digest": {
+                    **captured,
+                    "archive_schema_version": 1,
+                    "predictions_sha256": None,
+                },
+                "captured after the deadline": {
+                    **captured,
+                    "captured_at_utc": "2026-08-29T10:00:00+00:00",
+                },
+                "another gameweek": {**captured, "prediction_gameweek": 4},
+            }
+            for name, metadata in cases.items():
+                with self.subTest(name):
+                    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                    self.assertIsNone(archive.frozen_forecast(client, 3))
+
+            with self.subTest("predictions replaced"):
+                metadata_path.write_text(json.dumps(captured), encoding="utf-8")
+                predictions_path.write_bytes(csv.replace(b"5.5", b"9.5"))
+                self.assertIsNone(archive.frozen_forecast(client, 3))
+
+    def test_results_are_collected_without_a_prediction_at_most_once_per_interval(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 30, 12, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory),
+                enabled=True,
+                clock=lambda: moment[0],
+                results_interval_seconds=300,
+            )
+            client = FakeOfficialClient()
+            stats = Path(directory) / "2026-2027/official/player-stats/gw_01.csv"
+
+            first = archive.collect_results(client)
+            stats.unlink()
+            throttled = archive.collect_results(client)
+            moment[0] = datetime(2026, 8, 30, 12, 5, tzinfo=timezone.utc)
+            archive._digests.clear()
+            again = archive.collect_results(client)
+
+            self.assertEqual(first["status"], "saved")
+            self.assertIn("official/history/before_gw_02.csv", first["files_updated"])
+            self.assertIn("official/live/gw_02.json", first["files_updated"])
+            self.assertEqual(throttled["status"], "throttled")
+            self.assertEqual(again["status"], "saved")
+            self.assertTrue(stats.is_file())
+            self.assertFalse((Path(directory) / "2026-2027/predictions").exists())
+
+    @staticmethod
+    def capture(archive, client, predictions):
+        history = client.player_history(3)
+        return archive.capture_inference(
+            official_client=client,
+            prediction_gameweek=3,
+            official_history=history,
+            enriched_history=history,
+            predictions=predictions,
+            source="official-fpl",
+            enrichment={"status": "disabled"},
+            model_versions={},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

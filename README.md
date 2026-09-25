@@ -208,10 +208,19 @@ prediction endpoint (`/api/scout`, `/api/gw/scout`, `/api/gw/playerpoints`,
 and team ratings) serves the archived pre-deadline forecast and the squad
 picked from it, with `"frozen": true` and `forecast_captured_at`, instead of
 predicting again with newer injuries, ownership, or fixtures. Open Gameweeks
-are predicted live (`"frozen": false`). A closed Gameweek with no archived
-forecast, for example with the archive disabled, is also predicted live and
-reports `"frozen": false`. Live files become immutable once
-Official FPL marks the Gameweek `data_checked`. Invoke `/api/scout` at least
+are predicted live (`"frozen": false`). The frozen forecast is the last one
+written at least `data_archive.commit_margin_seconds` (60) before the
+deadline: writes stop there and frozen reads start at the deadline, so a
+forecast served as frozen never changes, even across instances sharing the
+volume. A forecast is served as frozen only when its metadata proves it:
+the metadata names the Gameweek, records the predictions file's digest, and
+was captured before the deadline. A closed Gameweek without such a
+forecast, for example with the archive disabled or with files written by an
+older version (which archived requests after deadlines too), is predicted
+live and reports `"frozen": false`. Serving frozen forecasts still archives
+official results every `data_archive.results_interval_seconds` (300), so the
+final Gameweek's results are collected after its deadline. Live files become
+immutable once Official FPL marks the Gameweek `data_checked`. Invoke `/api/scout` at least
 once before each deadline and after each Gameweek is finalized (for example
 with Cloud Scheduler) to guarantee a complete season even when the service
 otherwise receives no traffic.
