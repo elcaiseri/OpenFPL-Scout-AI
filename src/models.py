@@ -10,6 +10,9 @@ class ResponseModel(BaseModel):
     strategy: str = "model-ensemble"
     version: str = "6.0.0"
     source: str = "official-fpl"
+    # True once the deadline has passed: the archived pre-deadline forecast.
+    frozen: bool = False
+    forecast_captured_at: Optional[str] = None
     credits: str = (
         "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
     )
@@ -35,6 +38,7 @@ class TeamRatingModel(BaseModel):
     strategy: str = "model-ensemble"
     version: str = "6.0.0"
     source: str = "official-fpl"
+    frozen: bool = False
 
 
 class OfficialFPLCollectionModel(BaseModel):

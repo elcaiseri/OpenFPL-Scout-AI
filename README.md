@@ -44,6 +44,12 @@ uv sync
 uv run uvicorn main:app --reload
 ```
 
+Run the test suite with:
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
 Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
 available at [localhost:8000/docs](http://localhost:8000/docs).
 
@@ -86,7 +92,8 @@ volume and its bucket permissions must allow the service to create and replace
 objects.
 
 For a low-traffic Cloud Run service, start with request-based billing, 1 vCPU,
-512 MiB, concurrency 4, scale-to-zero, and a three-instance cost cap:
+512 MiB, concurrency 4, scale-to-zero, and one instance at most. The training
+archive and frozen forecasts assume a single instance writes the data volume:
 
 ```bash
 gcloud run services update SERVICE \
@@ -95,7 +102,7 @@ gcloud run services update SERVICE \
   --memory 512Mi \
   --concurrency 4 \
   --min 0 \
-  --max 3 \
+  --max 1 \
   --cpu-throttling \
   --cpu-boost
 ```
@@ -163,10 +170,37 @@ data/
 ```
 
 Official history CSVs retain the normalized model fields and every raw
-gameweek-history field with an `official_` prefix. Completed live files are
-immutable; the current gameweek, upcoming predictions, and snapshots are
-refreshed as new requests arrive. Invoke `/api/scout` at least once after each
-gameweek is finalized (for example with Cloud Scheduler) to guarantee a
+gameweek-history field with an `official_` prefix. They cover finished
+gameweeks only. Official FPL exposes only *current* ownership, so played rows
+leave `selected_by_percent` empty and record the capture-time value as
+`selected_by_percent_at_capture`; `official_selected` is the point-in-time
+manager count.
+
+Snapshots, predictions, squads, and metadata for a Gameweek are written only
+while that Gameweek is still open (before its deadline). Each file therefore
+holds the last pre-deadline forecast, and requests for past, live, or
+far-future Gameweeks never replace it.
+
+Once a Gameweek's deadline has passed, its prediction never changes. Every
+prediction endpoint (`/api/scout`, `/api/gw/scout`, `/api/gw/playerpoints`,
+and team ratings) serves the archived pre-deadline forecast, with
+`"frozen": true` and `forecast_captured_at`, and re-selects the squad from it
+instead of predicting again with newer injuries, ownership, or fixtures. Open
+Gameweeks are predicted live (`"frozen": false`). A forecast is served as
+frozen only when its metadata proves it: the metadata names the Gameweek,
+records the predictions file's digest, and was captured before the deadline.
+A closed Gameweek without such a forecast, for example with the archive
+disabled or with files written by an older version (which archived requests
+after deadlines too), is predicted live and reports `"frozen": false`. The
+archive assumes one service instance, so a single lock orders forecast writes
+and frozen reads.
+
+Serving frozen forecasts still archives official results in the background,
+at most every `data_archive.results_interval_seconds` (300), so the final
+Gameweek's results are collected after its deadline. Live files are refreshed
+until 30 minutes after Official FPL marks the Gameweek `data_checked`, then
+kept. Invoke `/api/scout` at least once before each deadline and after each
+Gameweek is finalized (for example with Cloud Scheduler) to guarantee a
 complete season even when the service otherwise receives no traffic.
 
 FPL Data imports remain permission-pending and are guarded by explicit

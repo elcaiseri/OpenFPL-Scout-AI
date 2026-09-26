@@ -832,39 +832,27 @@ async def _generate_scout_response(
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
-        if public:
-            logger.info(
-                "Generated public scout team for gameweek %d",
-                prediction_gameweek,
-            )
-            return ResponseModel(
-                scout_team=json.loads(team.to_json(orient="records")),
-                player_points=[],
-                gameweek=prediction_gameweek,
-                strategy=str(
-                    predictions.attrs.get("inference", {}).get(
-                        "strategy", "model-ensemble"
-                    )
-                ),
-                version=config.get("version", "1.0.0"),
-                source=str(predictions.attrs.get("source", "official-fpl")),
-            )
-        else:
-            logger.info(
-                "Generated public scout team for gameweek %d", prediction_gameweek
-            )
-            return ResponseModel(
-                scout_team=json.loads(team.to_json(orient="records")),
-                player_points=json.loads(predictions.to_json(orient="records")),
-                gameweek=prediction_gameweek,
-                strategy=str(
-                    predictions.attrs.get("inference", {}).get(
-                        "strategy", "model-ensemble"
-                    )
-                ),
-                version=config.get("version", "1.0.0"),
-                source=str(predictions.attrs.get("source", "official-fpl")),
-            )
+        logger.info(
+            "Generated %s scout team for gameweek %d",
+            "public" if public else "authenticated",
+            prediction_gameweek,
+        )
+        return ResponseModel(
+            scout_team=json.loads(team.to_json(orient="records")),
+            player_points=[]
+            if public
+            else json.loads(predictions.to_json(orient="records")),
+            gameweek=prediction_gameweek,
+            strategy=str(
+                predictions.attrs.get("inference", {}).get(
+                    "strategy", "model-ensemble"
+                )
+            ),
+            version=config.get("version", "1.0.0"),
+            source=str(predictions.attrs.get("source", "official-fpl")),
+            frozen=bool(predictions.attrs.get("frozen", False)),
+            forecast_captured_at=predictions.attrs.get("forecast_captured_at"),
+        )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -980,6 +968,7 @@ async def rate_public_manager_team(
             ),
             version=config.get("version", "1.0.0"),
             source=str(predictions.attrs.get("source", "official-fpl")),
+            frozen=bool(predictions.attrs.get("frozen", False)),
             **rating,
         )
     except HTTPException as error:

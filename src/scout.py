@@ -566,8 +566,28 @@ class FPLScout:
         return self.predict_players(data, gameweek=gameweek)
 
     def get_official_predictions(self, gameweek: Optional[int] = None) -> pd.DataFrame:
-        """Generate predictions from official history plus guarded enrichment."""
+        """Generate predictions from official history plus guarded enrichment.
+
+        Once a gameweek's deadline has passed, the archived pre-deadline
+        forecast is returned unchanged (``attrs["frozen"]``), so recalling an
+        old gameweek never re-predicts it with newer data. Open gameweeks are
+        predicted live.
+        """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        frozen = self.data_archive.frozen_forecast(
+            self.official_client, resolved_gameweek
+        )
+        if frozen is not None:
+            logger.info(
+                "Serving the frozen GW%d forecast captured at %s",
+                resolved_gameweek,
+                frozen.attrs.get("forecast_captured_at"),
+            )
+            # Inference is what normally archives results; keep collecting
+            # them (throttled, in the background), even after the final
+            # deadline.
+            self.data_archive.collect_results_in_background(self.official_client)
+            return frozen
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
         history = official_history
@@ -597,6 +617,7 @@ class FPLScout:
 
         result = self.predict_players(history, gameweek=resolved_gameweek)
         self.last_data_enrichment = dict(enrichment)
+        result.attrs["frozen"] = False
         result.attrs["inference"]["data_enrichment"] = enrichment
         result.attrs["source"] = (
             "official-fpl+fpl-data"
