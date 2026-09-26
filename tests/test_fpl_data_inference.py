@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import threading
@@ -8,7 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from scripts.download_fpl_data import Season
-from test_download_fpl_data import fail_replacing
+from test_download_fpl_data import fail_replacing, write_pair_killed_before_commit
 from src.fpl_data_inference import FPLDataHistoryProvider
 
 
@@ -267,6 +268,23 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
 
         self.assertTrue(provider.remote_download_allowed)
 
+    def test_operator_local_only_override_wins_over_granted_permission(self):
+        client = FakeClient()
+        provider = FPLDataHistoryProvider(
+            "2026_27",
+            client=client,
+            permission_status="granted",
+            local_only=True,
+            refresh_ttl_seconds=3600,
+        )
+
+        _, diagnostics = provider.enrich(official_history(), target_gameweek=3)
+
+        self.assertFalse(provider.remote_download_allowed)
+        self.assertIn("disabled by the operator", diagnostics["error"])
+        self.assertEqual(client.available_calls, 0)
+        self.assertEqual(client.download_calls, 0)
+
     def test_refresh_does_not_block_requests_that_have_a_dataset(self):
         now = [0.0]
         client = FakeClient()
@@ -388,6 +406,34 @@ class FPLDataHistoryProviderTests(unittest.TestCase):
 
             self.assertEqual(cache.read_bytes(), original)
             provider._read_local(cache)  # Checksum still matches its metadata.
+
+    def test_a_refresh_killed_before_its_metadata_commit_leaves_a_usable_cache(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "fpl-data.csv"
+            FPLDataHistoryProvider(
+                "2026_27",
+                client=FakeClient(),
+                runtime_cache_path=cache,
+                acknowledge_permission_pending=True,
+            ).enrich(official_history(), target_gameweek=3)
+            metadata_file = cache.with_suffix(".metadata.json")
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            refreshed = grown_csv(5)
+            metadata["sha256"] = hashlib.sha256(refreshed).hexdigest()
+
+            write_pair_killed_before_commit(
+                cache, refreshed, metadata_file, json.dumps(metadata).encode()
+            )
+            # After the restart, only the local cache is available.
+            restarted = FPLDataHistoryProvider(
+                "2026_27", client=FakeClient(), runtime_cache_path=cache
+            )
+            _, diagnostics = restarted.enrich(official_history(), target_gameweek=3)
+
+            self.assertEqual(diagnostics["status"], "applied")
+            self.assertEqual(diagnostics["dataset_sha256"], metadata["sha256"])
 
     def test_smaller_download_never_replaces_the_dataset_in_use(self):
         now = [0.0]

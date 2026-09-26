@@ -213,6 +213,9 @@ class FPLScout:
             if acknowledgement_override is None
             else acknowledgement_override
         )
+        # An explicit FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false keeps the
+        # service on imported files, even once permission is granted.
+        self.fpl_data_local_only = acknowledgement_override is False
         self.fpl_data_start_gameweek = int(fpl_data_config.get("start_gameweek", 2))
         if self.fpl_data_start_gameweek < 2:
             raise ValueError("fpl_data_inference.start_gameweek must be at least 2")
@@ -239,6 +242,7 @@ class FPLScout:
                 timeout_seconds=float(fpl_data_config.get("timeout_seconds", 60)),
                 permission_status=self.fpl_data_permission_status,
                 acknowledge_permission_pending=self.fpl_data_permission_acknowledged,
+                local_only=self.fpl_data_local_only,
             )
 
         if self.history_window < 1:
@@ -272,8 +276,8 @@ class FPLScout:
                 "status %s; remote downloads %s",
                 self.fpl_data_start_gameweek,
                 self.fpl_data_permission_status,
-                "acknowledged"
-                if self.fpl_data_permission_acknowledged
+                "allowed"
+                if getattr(self.fpl_data_provider, "remote_download_allowed", False)
                 else "disabled (local imports only)",
             )
 
@@ -762,19 +766,15 @@ class FPLScout:
             "provider": "fpl-data",
             "status": "disabled",
         }
-        season_mismatch = (
-            self._fpl_data_season_mismatch() if self.fpl_data_enabled else None
+        season_problem = (
+            self._fpl_data_season_problem() if self.fpl_data_enabled else None
         )
         if self.fpl_data_enabled and resolved_gameweek < self.fpl_data_start_gameweek:
             enrichment["status"] = "before-start-gameweek"
-        elif season_mismatch:
+        elif season_problem:
             # Player IDs are reassigned every season, so another season's
             # dataset must never be merged (or even downloaded).
-            enrichment = {
-                "provider": "fpl-data",
-                "status": "season-mismatch",
-                "error": season_mismatch,
-            }
+            enrichment = {"provider": "fpl-data", **season_problem}
         elif self.fpl_data_enabled and self.fpl_data_provider is not None:
             try:
                 history, enrichment = self.fpl_data_provider.enrich(
@@ -833,30 +833,49 @@ class FPLScout:
         )
         return result if frozen is None else frozen
 
-    def _fpl_data_season_mismatch(self) -> Optional[str]:
-        """Explain why the configured FPL Data season is not the live season."""
-        bootstrap = getattr(self.official_client, "bootstrap", None)
+    def _fpl_data_season_problem(self) -> Optional[Dict[str, str]]:
+        """Explain why FPL Data must not be used for the live season, if so.
+
+        The check fails closed: enrichment runs only once the official season
+        is known to match the configured one.
+        """
+
+        def unverified(reason: str) -> Dict[str, str]:
+            return {
+                "status": "season-unverified",
+                "error": f"The official FPL season could not be confirmed: {reason}",
+            }
+
         configured = re.match(r"(\d{4})", self.fpl_data_season)
-        if not callable(bootstrap) or configured is None:
-            return None
+        if configured is None:
+            return unverified(
+                f"fpl_data_inference.season {self.fpl_data_season!r} "
+                "names no start year"
+            )
+        bootstrap = getattr(self.official_client, "bootstrap", None)
+        if not callable(bootstrap):
+            return unverified("the official client does not report the season")
         try:
             events = bootstrap().get("events", [])
-        except Exception:  # The history request already reported upstream errors.
-            return None
+        except Exception as error:
+            return unverified(str(error))
         deadlines = sorted(
             str(event["deadline_time"])
             for event in events
             if event.get("deadline_time")
         )
         if not deadlines or not deadlines[0][:4].isdigit():
-            return None
+            return unverified("official FPL lists no gameweek deadlines")
         official_start = int(deadlines[0][:4])
         if int(configured.group(1)) == official_start:
             return None
-        return (
-            f"fpl_data_inference.season {self.fpl_data_season!r} does not match "
-            f"the official {official_start}-{official_start + 1} season"
-        )
+        return {
+            "status": "season-mismatch",
+            "error": (
+                f"fpl_data_inference.season {self.fpl_data_season!r} does not "
+                f"match the official {official_start}-{official_start + 1} season"
+            ),
+        }
 
     def _official_availability(self) -> Optional[pd.DataFrame]:
         """Return current official availability for every player, if supported."""

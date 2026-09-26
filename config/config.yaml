@@ -88,7 +88,7 @@ fpl_data_inference:
   permission_status: "pending"
   # The owner accepts the pending permission, so the service downloads FPL
   # Data itself. Set FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false to use only
-  # files imported with the guarded CLI.
+  # files imported with the guarded CLI, whatever the permission status.
   acknowledge_permission_pending: true
 
 # Durable artifacts for future training. In Cloud Run, the data root must be a

@@ -75,7 +75,7 @@ FPL Data enrichment is on by default: `config/config.yaml` records the
 owner's acceptance of the pending reuse permission
 (`acknowledge_permission_pending: true`), so the service downloads the
 configured season itself. To use only files imported with the guarded CLI
-below, set:
+below, whatever the permission status, set:
 
 ```dotenv
 FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false

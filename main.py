@@ -286,6 +286,9 @@ async def check_health():
             "permission_pending_acknowledged": (
                 scout.fpl_data_permission_acknowledged
             ),
+            "remote_downloads_allowed": bool(
+                getattr(scout.fpl_data_provider, "remote_download_allowed", False)
+            ),
             "last_result": scout.last_data_enrichment,
         },
         "data_archive": scout.data_archive.status(),

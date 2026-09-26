@@ -235,8 +235,10 @@ redistribute the CSV, and disable the integration if the owner declines. Set
 The running service downloads from FPL Data itself because
 `fpl_data_inference.acknowledge_permission_pending` is true in
 `config/config.yaml`, the same explicit acknowledgement the importer requires.
-Set `FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false` to use only imported local
-files; `permission_status: granted` also allows downloads. One request
+`permission_status: granted` also allows downloads. Set
+`FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false` to use only imported local
+files, whatever the permission status; `/api/health` reports the result as
+`remote_downloads_allowed`. One request
 refreshes the dataset while others keep using the previous one.
 
 Runtime refreshes follow the importer's safety rules:
@@ -261,4 +263,5 @@ Runtime refreshes follow the importer's safety rules:
   lists the opponents of unmatched rows, so a club-name mismatch is visible.
 - A configured season that differs from the official season reports
   `season-mismatch` and is never downloaded or merged. Update
-  `fpl_data_inference.season` when a new season starts.
+  `fpl_data_inference.season` when a new season starts. If the official season
+  cannot be read, the check fails closed and reports `season-unverified`.

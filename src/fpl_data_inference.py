@@ -24,6 +24,7 @@ from scripts.download_fpl_data import (
     Season,
     atomic_write_pair,
     check_for_regression,
+    pending_metadata_path,
     validate_csv,
 )
 from src.features import normalize_fpl_columns
@@ -109,6 +110,7 @@ class FPLDataHistoryProvider:
         timeout_seconds: float = 60.0,
         permission_status: str = "pending",
         acknowledge_permission_pending: bool = False,
+        local_only: bool = False,
         client: Optional[FPLDataClient] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -140,8 +142,10 @@ class FPLDataHistoryProvider:
         # Like the import CLI's --acknowledge-permission-pending flag, the
         # service contacts FPL Data only when reuse permission is granted or
         # an operator explicitly accepts the pending status. Otherwise it
-        # reads locally imported files only.
-        self.remote_download_allowed = (
+        # reads locally imported files only. ``local_only`` is the operator's
+        # override and wins whatever the permission status.
+        self.local_only = bool(local_only)
+        self.remote_download_allowed = not self.local_only and (
             permission_status.strip().casefold() == "granted"
             or bool(acknowledge_permission_pending)
         )
@@ -162,6 +166,26 @@ class FPLDataHistoryProvider:
             raise FPLDataInferenceError(
                 f"Local FPL Data cache or metadata is missing: {path}"
             )
+        metadata = self._read_metadata(metadata_file)
+        raw = path.read_bytes()
+        summary = validate_csv(raw)
+        recorded_digest = metadata.get("sha256")
+        if recorded_digest and recorded_digest != summary.sha256:
+            # A pair write that stopped after replacing the data left the new
+            # metadata as a pending record; it describes this file.
+            pending = pending_metadata_path(metadata_file)
+            try:
+                metadata = self._read_metadata(pending)
+            except (FPLDataInferenceError, OSError):
+                metadata = {}
+            if metadata.get("sha256") != summary.sha256:
+                raise FPLDataInferenceError(
+                    f"Local FPL Data checksum does not match metadata: {path}"
+                )
+        return raw, summary
+
+    def _read_metadata(self, metadata_file: Path) -> dict[str, Any]:
+        """Return metadata for this provider's season, or raise."""
         try:
             metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
             metadata_season = metadata["season"]["value"]
@@ -174,15 +198,7 @@ class FPLDataHistoryProvider:
                 f"Local FPL Data season {metadata_season!r} does not match "
                 f"{self.season_value!r}"
             )
-
-        raw = path.read_bytes()
-        summary = validate_csv(raw)
-        recorded_digest = metadata.get("sha256")
-        if recorded_digest and recorded_digest != summary.sha256:
-            raise FPLDataInferenceError(
-                f"Local FPL Data checksum does not match metadata: {path}"
-            )
-        return raw, summary
+        return metadata
 
     def _read_local(self, path: Path) -> _LoadedDataset:
         raw, summary = self._read_local_source(path)
@@ -321,7 +337,9 @@ class FPLDataHistoryProvider:
             origin = "local-fallback"
         else:
             remote_error = (
-                f"remote downloads are disabled while permission is "
+                "remote downloads are disabled by the operator"
+                if self.local_only
+                else f"remote downloads are disabled while permission is "
                 f"{self.permission_status!r} and not acknowledged"
             )
             origin = "local"

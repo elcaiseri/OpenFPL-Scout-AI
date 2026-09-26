@@ -389,26 +389,30 @@ def _atomic_write(path: Path, content: bytes) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def pending_metadata_path(metadata_path: Path) -> Path:
+    """Where a pair write records the new metadata before replacing the data."""
+    return metadata_path.with_name(f".{metadata_path.name}.pending")
+
+
 def atomic_write_pair(
     data_path: Path, data: bytes, metadata_path: Path, metadata: bytes
 ) -> None:
     """Replace a data file and its checksum metadata together.
 
-    Both files are staged before either is replaced, and the previous data
-    file is restored if the metadata cannot be committed, so a failure never
-    leaves data whose checksum disagrees with its metadata.
+    The new metadata is saved as a pending record before the data is
+    replaced, and committing it is the last step. If the process stops
+    between the two replacements, readers find the new data beside the old
+    metadata and use the pending record, whose checksum matches. Any error
+    restores the previous data file, so the old pair stays consistent.
     """
     previous = data_path.read_bytes() if data_path.is_file() else None
+    pending = pending_metadata_path(metadata_path)
     staged_data = _stage_file(data_path, data)
     try:
-        staged_metadata = _stage_file(metadata_path, metadata)
-    except BaseException:
-        staged_data.unlink(missing_ok=True)
-        raise
-    try:
+        _atomic_write(pending, metadata)
         os.replace(staged_data, data_path)
         try:
-            os.replace(staged_metadata, metadata_path)
+            os.replace(pending, metadata_path)
         except BaseException:
             if previous is None:
                 data_path.unlink(missing_ok=True)
@@ -417,7 +421,7 @@ def atomic_write_pair(
             raise
     finally:
         staged_data.unlink(missing_ok=True)
-        staged_metadata.unlink(missing_ok=True)
+        pending.unlink(missing_ok=True)
 
 
 def _resolve_season(requested: str, seasons: Sequence[Season]) -> Season:
