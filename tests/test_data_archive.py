@@ -505,9 +505,7 @@ class DataArchiveTests(unittest.TestCase):
             moment[0] = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
             root = Path(directory) / "2026-2027"
             metadata_path = root / "metadata/gw_03.json"
-            predictions_path = root / "predictions/gw_03.csv"
             captured = json.loads(metadata_path.read_text(encoding="utf-8"))
-            csv = predictions_path.read_bytes()
             self.assertIsNotNone(archive.frozen_forecast(client, 3))
 
             cases = {
@@ -517,10 +515,9 @@ class DataArchiveTests(unittest.TestCase):
                     "captured_at_utc": "2026-09-25T11:00:00+00:00",
                     "prediction_gameweek": 3,
                 },
-                "legacy, no digest": {
-                    **captured,
+                "legacy, no stored forecast": {
+                    **{key: value for key, value in captured.items() if key != "forecast"},
                     "archive_schema_version": 1,
-                    "predictions_sha256": None,
                 },
                 "captured after the deadline": {
                     **captured,
@@ -533,10 +530,33 @@ class DataArchiveTests(unittest.TestCase):
                     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
                     self.assertIsNone(archive.frozen_forecast(client, 3))
 
-            with self.subTest("predictions replaced"):
-                metadata_path.write_text(json.dumps(captured), encoding="utf-8")
-                predictions_path.write_bytes(csv.replace(b"5.5", b"9.5"))
-                self.assertIsNone(archive.frozen_forecast(client, 3))
+    def test_a_capture_that_fails_midway_never_tears_the_frozen_forecast(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            self.capture(archive, client, prediction_frame())
+            later = prediction_frame()
+            later["expected_points"] = 9.5
+            write = archive._write_bytes
+
+            def metadata_write_fails(path, content):
+                if path.parent.name == "metadata":
+                    raise OSError("volume unavailable")
+                return write(path, content)
+
+            # The new predictions file lands, then the metadata write fails.
+            moment[0] = datetime(2026, 8, 29, 9, 30, tzinfo=timezone.utc)
+            with patch.object(archive, "_write_bytes", metadata_write_fails):
+                failed = self.capture(archive, client, later)
+            moment[0] = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
+            frozen = archive.frozen_forecast(client, 3)
+
+            self.assertEqual(failed["status"], "failed")
+            self.assertIsNotNone(frozen)
+            self.assertEqual(frozen["expected_points"].tolist(), [5.5])
 
     def test_results_are_collected_without_a_prediction_at_most_once_per_interval(
         self,
