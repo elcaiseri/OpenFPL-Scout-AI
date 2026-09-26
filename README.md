@@ -16,7 +16,11 @@ responsive web dashboard and FastAPI service.
 - Official FPL is the source of truth for players, clubs, availability,
   Gameweeks, fixtures, history, live scores, managers, leagues, and rankings.
 - A four-model ensemble produces player projections from leakage-safe recent
-  form, minutes, availability, ownership, and fixture context.
+  form, minutes, ownership, and fixture context. Each fixture is projected
+  separately, so double-gameweek players receive both matches and
+  blank-gameweek players receive zero.
+- Projections are scaled by each player's current official availability.
+  Injured, suspended, and departed players are never selected.
 - Inference validates each model's feature contract, caches upstream data, and
   can continue when one model fails.
 - The squad selector enforces the official positional quotas and a maximum of

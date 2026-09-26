@@ -58,6 +58,7 @@ inference:
   history_window: 5
   minimum_successful_models: 3
   cache_fixtures: true
+  fixture_cache_ttl_seconds: 300
   clip_min: 0.0
   max_players_per_team: 3
   cold_start:

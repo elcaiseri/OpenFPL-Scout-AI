@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -15,6 +16,7 @@ import pandas as pd
 from src.features import (
     HISTORY_FEATURES,
     MODEL_FEATURES,
+    TEAM_NAME_ALIASES,
     ensure_feature_columns,
     normalize_fpl_columns,
     prepare_recent_player_features,
@@ -55,6 +57,36 @@ def _mounted_data_path(configured_path: Any) -> Any:
 
 class InferenceError(RuntimeError):
     """Raised when the configured model ensemble cannot produce predictions."""
+
+
+# Official availability codes: available, doubtful, injured, suspended,
+# unavailable (left the league), and not in the squad.
+STATUS_AVAILABILITY = {"a": 1.0, "d": 0.5, "i": 0.0, "s": 0.0, "u": 0.0, "n": 0.0}
+AVAILABILITY_COLUMNS = ("status", "chance_of_playing_next_round", "can_select")
+
+
+def availability_factor(players: pd.DataFrame) -> pd.Series:
+    """Return each player's official probability of being available (0–1)."""
+    status = players.get("status", pd.Series("a", index=players.index, dtype=object))
+    status = status.fillna("a").astype(str).str.casefold()
+    availability = status.map(STATUS_AVAILABILITY).fillna(1.0)
+    if "chance_of_playing_next_round" in players.columns:
+        chance = pd.to_numeric(players["chance_of_playing_next_round"], errors="coerce")
+        availability = availability.where(
+            chance.isna(), chance.clip(lower=0, upper=100) / 100.0
+        )
+    if "can_select" in players.columns:
+        selectable = players["can_select"].map(
+            lambda value: True if pd.isna(value) else bool(value)
+        )
+        availability = availability.where(selectable, 0.0)
+    return availability.astype(float)
+
+
+def _canonical_team(name: Any) -> Any:
+    if pd.isna(name):
+        return np.nan
+    return TEAM_NAME_ALIASES.get(str(name), str(name))
 
 
 @dataclass(frozen=True)
@@ -105,12 +137,20 @@ class FPLScout:
         if fixture_provider is None:
             fixture_provider = self.official_client.fixtures_for_gameweek
         self.fixture_provider = fixture_provider
-        self._fixture_cache: Dict[int, Mapping[Any, Mapping[str, Any]]] = {}
+        self._fixture_cache: Dict[
+            int, Tuple[float, Mapping[Any, Mapping[str, Any]]]
+        ] = {}
         self._fixture_cache_lock = RLock()
 
         inference_config = self.config.get("inference", {})
         self.history_window = int(inference_config.get("history_window", 5))
         self.cache_fixtures = bool(inference_config.get("cache_fixtures", True))
+        # Postponements move fixtures between gameweeks, so cached fixture
+        # context must expire rather than live for the whole process.
+        self.fixture_cache_ttl = float(
+            inference_config.get("fixture_cache_ttl_seconds", 300)
+        )
+        self.clock: Callable[[], float] = time.monotonic
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
         cold_start_config = inference_config.get("cold_start", {})
@@ -246,8 +286,8 @@ class FPLScout:
         if self.cache_fixtures:
             with self._fixture_cache_lock:
                 cached = self._fixture_cache.get(gameweek)
-            if cached is not None:
-                return cached
+            if cached is not None and cached[0] > self.clock():
+                return cached[1]
 
         fixtures = self.fixture_provider(
             gameweek, self.config.get("team_name_mapping", {})
@@ -256,12 +296,30 @@ class FPLScout:
             raise InferenceError("Fixture provider returned an invalid response")
         if self.cache_fixtures:
             with self._fixture_cache_lock:
-                self._fixture_cache[gameweek] = fixtures
+                self._fixture_cache[gameweek] = (
+                    self.clock() + self.fixture_cache_ttl,
+                    fixtures,
+                )
         return fixtures
+
+    @staticmethod
+    def _team_fixtures(context: Any) -> List[Mapping[str, Any]]:
+        """Return every fixture for one team, including both halves of a DGW."""
+        if not isinstance(context, Mapping) or not context:
+            return []
+        fixtures = context.get("fixtures")
+        if isinstance(fixtures, (list, tuple)):
+            return [fixture for fixture in fixtures if isinstance(fixture, Mapping)]
+        return [context]
 
     def _attach_fixture_context(
         self, players: pd.DataFrame, gameweek: int
     ) -> pd.DataFrame:
+        """Attach display context plus the ``_fixtures`` list for each player.
+
+        Blank-gameweek players receive ``fixture_count`` 0 and no opponent;
+        double-gameweek players keep every fixture so each can be predicted.
+        """
         result = players.copy()
         normalizer = self.config.get("gw_team_name_mapping", {})
         result["team_name"] = result["team_name"].map(
@@ -271,33 +329,86 @@ class FPLScout:
         )
 
         fixtures = self._get_fixtures(gameweek)
-        fixture_rows = result["team_name"].map(
-            lambda team: fixtures.get(str(team), {}) if pd.notna(team) else {}
+        if not any(self._team_fixtures(context) for context in fixtures.values()):
+            raise ValueError(f"No fixtures are published for gameweek {gameweek}")
+        team_fixtures = result["team_name"].map(
+            lambda team: self._team_fixtures(fixtures.get(str(team)))
+            if pd.notna(team)
+            else []
         )
         result["gameweek"] = gameweek
-        result["opponent_team_name"] = fixture_rows.map(
-            lambda fixture: fixture.get("opponent_team_name", np.nan)
+        result["_fixtures"] = team_fixtures
+        result["fixture_count"] = team_fixtures.map(len).astype(int)
+        result["opponent_team_name"] = team_fixtures.map(
+            lambda items: " / ".join(
+                str(_canonical_team(item.get("opponent_team_name"))) for item in items
+            )
+            if items
+            else np.nan
         )
-        result["was_home"] = fixture_rows.map(
-            lambda fixture: fixture.get("was_home", np.nan)
+        result["was_home"] = team_fixtures.map(
+            lambda items: items[0].get("was_home", np.nan) if items else np.nan
         )
         result = normalize_fpl_columns(result)
 
-        missing_count = int(
-            result[["opponent_team_name", "was_home"]].isna().any(axis=1).sum()
-        )
-        if missing_count:
-            missing_teams = sorted(
-                str(team)
-                for team in result.loc[result["opponent_team_name"].isna(), "team_name"]
-                .dropna()
-                .unique()
+        blank = result["fixture_count"].eq(0)
+        if blank.any():
+            blank_teams = sorted(
+                str(team) for team in result.loc[blank, "team_name"].dropna().unique()
             )
             logger.warning(
-                "Missing fixture context for %d players across teams: %s",
-                missing_count,
-                ", ".join(missing_teams) or "unknown",
+                "No gameweek %d fixture for %d players (teams: %s); projecting 0",
+                gameweek,
+                int(blank.sum()),
+                ", ".join(blank_teams) or "unknown",
             )
+        return result
+
+    @staticmethod
+    def _fixture_model_rows(players: pd.DataFrame) -> pd.DataFrame:
+        """Expand players into one model row per fixture they play."""
+        positions: List[int] = []
+        opponents: List[Any] = []
+        venues: List[Any] = []
+        for position, fixtures in enumerate(players["_fixtures"]):
+            for fixture in fixtures:
+                positions.append(position)
+                opponents.append(fixture.get("opponent_team_name", np.nan))
+                venues.append(fixture.get("was_home", np.nan))
+
+        rows = (
+            players.drop(columns=["_fixtures"])
+            .iloc[positions]
+            .reset_index(drop=True)
+        )
+        rows["opponent_team_name"] = opponents
+        rows["was_home"] = venues
+        rows["_player_row"] = positions
+        return normalize_fpl_columns(rows)
+
+    @staticmethod
+    def _attach_availability(
+        players: pd.DataFrame, availability: Optional[pd.DataFrame]
+    ) -> pd.DataFrame:
+        """Join current official availability (never historical) by player id."""
+        result = players.copy()
+        if availability is not None and not availability.empty and "id" in result:
+            current = (
+                availability.loc[
+                    :,
+                    [
+                        column
+                        for column in ("id", *AVAILABILITY_COLUMNS)
+                        if column in availability.columns
+                    ],
+                ]
+                .drop_duplicates("id")
+                .set_index("id")
+            )
+            ids = pd.to_numeric(result["id"], errors="coerce")
+            for column in current.columns:
+                result[column] = ids.map(current[column]).to_numpy()
+        result["availability_factor"] = availability_factor(result)
         return result
 
     def _predict_ensemble(
@@ -350,26 +461,51 @@ class FPLScout:
         }
         return ensemble, diagnostics
 
-    def predict_players(
-        self, data: pd.DataFrame, gameweek: Optional[int] = None
-    ) -> pd.DataFrame:
-        """Generate predictions from an already loaded FPL history frame."""
-        normalized = normalize_fpl_columns(data)
-        resolved_gameweek = self._resolve_gameweek(normalized, gameweek)
-        if (
-            self.cold_start_enabled
-            and resolved_gameweek == 1
-            and not self._has_usable_pre_gameweek_data(normalized)
-        ):
-            return self._predict_ownership_cold_start(normalized)
+    def _output_columns(self, *extra: str) -> List[str]:
+        return list(
+            dict.fromkeys(
+                [
+                    *self.config.get(
+                        "categorical_columns",
+                        [
+                            "id",
+                            "element_type",
+                            "web_name",
+                            "team_name",
+                            "opponent_team_name",
+                            "was_home",
+                            "gameweek",
+                        ],
+                    ),
+                    "expected_points",
+                    *extra,
+                ]
+            )
+        )
 
+    def _uses_cold_start(self, normalized: pd.DataFrame, gameweek: int) -> bool:
+        return (
+            self.cold_start_enabled
+            and gameweek == 1
+            and not self._has_usable_pre_gameweek_data(normalized)
+        )
+
+    def _build_model_input(
+        self,
+        normalized: pd.DataFrame,
+        gameweek: int,
+        availability: Optional[pd.DataFrame],
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Return players, their fixture rows, and the exact model input."""
         players = prepare_recent_player_features(
             normalized,
-            gameweek=resolved_gameweek,
+            gameweek=gameweek,
             history_window=self.history_window,
         )
-        players = self._attach_fixture_context(players, resolved_gameweek)
-        model_input = ensure_feature_columns(players, MODEL_FEATURES)
+        players = self._attach_fixture_context(players, gameweek)
+        players = self._attach_availability(players, availability)
+        fixture_rows = self._fixture_model_rows(players)
+        model_input = ensure_feature_columns(fixture_rows, MODEL_FEATURES)
         populated_features = [
             feature for feature in MODEL_FEATURES if model_input[feature].notna().any()
         ]
@@ -378,9 +514,10 @@ class FPLScout:
         ]
 
         logger.info(
-            "Generating gameweek %d predictions for %d players",
-            resolved_gameweek,
+            "Generating gameweek %d predictions for %d players across %d fixtures",
+            gameweek,
             len(players),
+            len(fixture_rows),
         )
         logger.info(
             "Scout inference model features (%d): %s",
@@ -390,35 +527,52 @@ class FPLScout:
         logger.info(
             "Scout inference feature coverage for gameweek %d: "
             "populated (%d): %s; entirely missing (%d): %s",
-            resolved_gameweek,
+            gameweek,
             len(populated_features),
             ", ".join(populated_features) or "none",
             len(entirely_missing_features),
             ", ".join(entirely_missing_features) or "none",
         )
+        return players, fixture_rows, model_input
+
+    def predict_players(
+        self,
+        data: pd.DataFrame,
+        gameweek: Optional[int] = None,
+        availability: Optional[pd.DataFrame] = None,
+    ) -> pd.DataFrame:
+        """Generate predictions from an already loaded FPL history frame.
+
+        ``availability`` holds each player's *current* official status. Model
+        points are predicted per fixture, summed across a double gameweek,
+        and scaled by the probability that the player is available.
+        """
+        normalized = normalize_fpl_columns(data)
+        resolved_gameweek = self._resolve_gameweek(normalized, gameweek)
+        if self._uses_cold_start(normalized, resolved_gameweek):
+            return self._predict_ownership_cold_start(normalized, availability)
+
+        players, fixture_rows, model_input = self._build_model_input(
+            normalized, resolved_gameweek, availability
+        )
         ensemble, diagnostics = self._predict_ensemble(model_input)
         diagnostics["strategy"] = "model-ensemble"
-        players["expected_points"] = ensemble
+        match_points = (
+            pd.Series(ensemble, index=fixture_rows["_player_row"].to_numpy())
+            .groupby(level=0)
+            .sum()
+            .reindex(range(len(players)), fill_value=0.0)
+            .to_numpy()
+        )
+        players["expected_points"] = (
+            match_points * players["availability_factor"].to_numpy()
+        )
 
-        output_columns: Sequence[str] = [
-            *self.config.get(
-                "categorical_columns",
-                [
-                    "id",
-                    "element_type",
-                    "web_name",
-                    "team_name",
-                    "opponent_team_name",
-                    "was_home",
-                    "gameweek",
-                ],
-            ),
-            "expected_points",
-        ]
+        output_columns = self._output_columns("fixture_count", "availability_factor")
         for column in output_columns:
             if column not in players.columns:
                 players[column] = np.nan
-        result = players[list(output_columns)].copy()
+        result = players[output_columns].copy()
         result.attrs["gameweek"] = resolved_gameweek
         result.attrs["inference"] = diagnostics
 
@@ -447,7 +601,9 @@ class FPLScout:
         evidence = prior[evidence_features].apply(pd.to_numeric, errors="coerce")
         return bool(evidence.fillna(0).ne(0).any(axis=None))
 
-    def _predict_ownership_cold_start(self, data: pd.DataFrame) -> pd.DataFrame:
+    def _predict_ownership_cold_start(
+        self, data: pd.DataFrame, availability: Optional[pd.DataFrame] = None
+    ) -> pd.DataFrame:
         """Rank GW1 players from current ownership when no match history exists."""
         required = {"id", "element_type", "web_name", "team_name", "gameweek"}
         missing = sorted(required.difference(data.columns))
@@ -477,70 +633,39 @@ class FPLScout:
                 "GW1 ownership cold start has no positive ownership values"
             )
 
-        status = players.get(
-            "status", pd.Series("a", index=players.index, dtype=object)
-        )
-        status = status.fillna("a").astype(str).str.casefold()
-        availability = status.map(
-            {"a": 1.0, "d": 0.5, "i": 0.0, "s": 0.0, "u": 0.0, "n": 0.0}
-        ).fillna(1.0)
-        if "chance_of_playing_next_round" in players.columns:
-            chance = pd.to_numeric(
-                players["chance_of_playing_next_round"], errors="coerce"
-            )
-            availability = availability.where(
-                chance.isna(), chance.clip(lower=0, upper=100) / 100.0
-            )
-        if "can_select" in players.columns:
-            selectable = players["can_select"].map(
-                lambda value: True if pd.isna(value) else bool(value)
-            )
-            availability = availability.where(selectable, 0.0)
-
+        players = self._attach_availability(players, availability)
         players["selected_by_percent"] = ownership.fillna(0.0)
-        players["availability_factor"] = availability.astype(float)
         players["cold_start_score"] = (
-            np.log1p(players["selected_by_percent"]) * players["availability_factor"]
+            np.log1p(players["selected_by_percent"])
+            * players["availability_factor"]
+            * players["fixture_count"].gt(0)
         )
         # Preserve the API's ranking field while identifying it as a GW1 score
         # in metadata. It is not presented as a model point forecast internally.
         players["expected_points"] = players["cold_start_score"]
 
-        output_columns: Sequence[str] = list(
-            dict.fromkeys(
-                [
-                    *self.config.get(
-                        "categorical_columns",
-                        [
-                            "id",
-                            "element_type",
-                            "web_name",
-                            "team_name",
-                            "opponent_team_name",
-                            "was_home",
-                            "gameweek",
-                        ],
-                    ),
-                    "expected_points",
-                    "cold_start_score",
-                    "now_cost",
-                    "selected_by_percent",
-                    "status",
-                    "can_select",
-                    "chance_of_playing_next_round",
-                    "availability_factor",
-                ]
-            )
+        output_columns = self._output_columns(
+            "cold_start_score",
+            "now_cost",
+            "selected_by_percent",
+            "status",
+            "can_select",
+            "chance_of_playing_next_round",
+            "fixture_count",
+            "availability_factor",
         )
         for column in output_columns:
             if column not in players.columns:
                 players[column] = np.nan
-        result = players[list(output_columns)].copy()
+        result = players[output_columns].copy()
         result.attrs["gameweek"] = 1
         result.attrs["inference"] = {
             "strategy": "ownership-cold-start",
             "reason": "no-usable-pre-gameweek-history",
-            "score": "log1p(selected_by_percent) * availability_factor",
+            "score": (
+                "log1p(selected_by_percent) * availability_factor "
+                "* (fixture_count > 0)"
+            ),
             "successful_models": [],
             "failed_models": {},
         }
@@ -615,7 +740,11 @@ class FPLScout:
                     "error": str(error),
                 }
 
-        result = self.predict_players(history, gameweek=resolved_gameweek)
+        result = self.predict_players(
+            history,
+            gameweek=resolved_gameweek,
+            availability=self._official_availability(),
+        )
         self.last_data_enrichment = dict(enrichment)
         result.attrs["frozen"] = False
         result.attrs["inference"]["data_enrichment"] = enrichment
@@ -645,6 +774,19 @@ class FPLScout:
         result.attrs["archive"] = archive_result
         return result
 
+    def _official_availability(self) -> Optional[pd.DataFrame]:
+        """Return current official availability for every player, if supported."""
+        mapped_players = getattr(self.official_client, "mapped_players", None)
+        if not callable(mapped_players):
+            return None
+        players = pd.DataFrame(mapped_players())
+        if players.empty or "id" not in players.columns:
+            return None
+        columns = [
+            column for column in ("id", *AVAILABILITY_COLUMNS) if column in players
+        ]
+        return players[columns]
+
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
         """Select the highest-ranked 15-player positional squad."""
         required_columns = {"element_type", "web_name", "expected_points"}
@@ -657,6 +799,8 @@ class FPLScout:
         player_key = "id" if "id" in predictions.columns else "web_name"
         unique_predictions = predictions.drop_duplicates(player_key, keep="first")
         strategy = predictions.attrs.get("inference", {}).get("strategy")
+        # Players with zero availability (injured, suspended, left the league)
+        # are never selected; the cold start also requires availability data.
         team = self._select_budget_free_squad(
             unique_predictions,
             strategy=strategy or "model-ensemble",
@@ -704,10 +848,10 @@ class FPLScout:
             "_score"
         ].notna()
         internal_columns = ["_position", "_score"]
-        if require_available:
+        if "availability_factor" in candidates.columns:
             candidates["_availability"] = pd.to_numeric(
                 candidates["availability_factor"], errors="coerce"
-            )
+            ).fillna(0.0 if require_available else 1.0)
             eligible &= candidates["_availability"].gt(0)
             internal_columns.append("_availability")
         candidates = candidates.loc[eligible & candidates["team_name"].notna()].copy()
