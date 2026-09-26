@@ -494,14 +494,38 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(len(predictions), 20)
         self.assertTrue((predictions["fixture_count"] == 2).all())
         self.assertTrue((predictions["expected_points"] == 3 + 1).all())
+        # One home and one away match: no single venue, so each opponent
+        # carries its own.
         self.assertTrue(
-            (predictions["opponent_team_name"] == "Chelsea / Tottenham").all()
+            (predictions["opponent_team_name"] == "Chelsea (H) / Tottenham (A)").all()
         )
+        self.assertTrue(predictions["was_home"].isna().all())
         self.assertEqual(
             sorted(model.features["opponent_team_name"].unique()),
             ["Chelsea", "Tottenham"],
         )
         self.assertEqual(len(model.features), 40)
+
+    def test_double_gameweek_at_one_venue_keeps_that_venue(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=lambda gameweek, mapping: {
+                "Arsenal": {
+                    "fixtures": [
+                        {"opponent_team_name": "Chelsea", "was_home": False},
+                        {"opponent_team_name": "Spurs", "was_home": False},
+                    ],
+                }
+            },
+            model_loader=lambda path: VenueModel(),
+        )
+
+        predictions = scout.predict_players(player_history(), gameweek=3)
+
+        self.assertTrue(
+            (predictions["opponent_team_name"] == "Chelsea / Tottenham").all()
+        )
+        self.assertTrue(predictions["was_home"].eq(False).all())
 
     def test_fails_clearly_when_no_fixtures_are_published(self):
         scout = FPLScout(
