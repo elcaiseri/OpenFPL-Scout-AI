@@ -73,6 +73,22 @@ class FakeOfficialClient:
         return history.loc[history["gameweek"] < gameweek].copy()
 
 
+class CountingOfficialClient(FakeOfficialClient):
+    def __init__(self):
+        self.history_calls = 0
+
+    def player_history(self, gameweek):
+        self.history_calls += 1
+        return super().player_history(gameweek)
+
+
+class NextSeasonOfficialClient(FakeOfficialClient):
+    """Official FPL has rolled over to 2027-28."""
+
+    def bootstrap(self):
+        return {"events": [{"id": 1, "deadline_time": "2027-08-14T10:00:00Z"}]}
+
+
 class FakeFPLDataProvider:
     def __init__(self):
         self.calls = []
@@ -113,14 +129,6 @@ def player_history():
                 }
             )
     return pd.DataFrame(rows)
-
-
-class NextSeasonOfficialClient(FakeOfficialClient):
-    """Official FPL has rolled over to 2027-28."""
-
-    def bootstrap(self):
-        return {"events": [{"id": 1, "deadline_time": "2027-08-14T10:00:00Z"}]}
-
 
 
 def league_history():
@@ -544,6 +552,27 @@ class ScoutInferenceTests(unittest.TestCase):
 
         self.assertEqual(self.fixture_calls, 2)
 
+    def test_official_predictions_are_shared_within_cache_window(self):
+        client = CountingOfficialClient()
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(2),
+            official_client=client,
+        )
+        now = [0.0]
+        scout.clock = lambda: now[0]
+
+        first = scout.get_official_predictions(gameweek=3)
+        first.loc[:, "expected_points"] = 99.0
+        second = scout.get_official_predictions(gameweek=3)
+        now[0] = scout.prediction_cache_ttl + 1
+        scout.get_official_predictions(gameweek=3)
+
+        self.assertEqual(client.history_calls, 2)
+        self.assertTrue((second["expected_points"] == 2).all())
+        self.assertEqual(second.attrs["gameweek"], 3)
+
     def test_official_predictions_use_fpl_data_after_gameweek_one(self):
         provider = FakeFPLDataProvider()
         model = RecordingModel(2)
@@ -600,6 +629,89 @@ class ScoutInferenceTests(unittest.TestCase):
         enrichment = result.attrs["inference"]["data_enrichment"]
         self.assertEqual(enrichment["status"], "season-mismatch")
         self.assertIn("2027-2028", enrichment["error"])
+
+    def test_exported_model_input_is_exactly_what_the_models_receive(self):
+        model = RecordingModel(2)
+        predicting = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: model,
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=FakeFPLDataProvider(),
+        )
+
+        def no_models(path):
+            raise AssertionError("feature export must not load models")
+
+        exporting = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=no_models,
+            official_client=FakeOfficialClient(),
+            fpl_data_provider=FakeFPLDataProvider(),
+            load_models=False,
+        )
+
+        predicting.get_official_predictions(gameweek=2)
+        frame, metadata = exporting.export_model_inputs(gameweek=2)
+
+        self.assertEqual(list(frame.columns), ["id", *MODEL_FEATURES])
+        pd.testing.assert_frame_equal(
+            frame.drop(columns="id"), model.features.reset_index(drop=True)
+        )
+        self.assertEqual(metadata["strategy"], "model-ensemble")
+        self.assertEqual(metadata["rows"], 20)
+        self.assertEqual(metadata["data_enrichment"]["status"], "applied")
+        sources = metadata["feature_sources"]
+        self.assertEqual(sources["element_type"], "official-fpl")
+        self.assertEqual(sources["goals"], "official-fpl")
+        self.assertEqual(sources["total_shots"], "fpl-data")
+        self.assertEqual(sources["minutes"], "missing")
+        self.assertEqual(sources["gameweek"], "request")
+
+    def test_feature_sources_label_every_documented_case(self):
+        official = pd.DataFrame(
+            {"gameweek": [0, 1, 2], "goals": [None, 1.0, None], "minutes": [0, 90, 90]}
+        )
+        enriched = official.assign(goals=[None, 1.0, 2.0], total_shots=[None, 3, 4])
+
+        sources = FPLScout._feature_sources(official, enriched)
+
+        self.assertEqual(sources["goals"], "official-fpl+fpl-data")
+        self.assertEqual(sources["minutes"], "official-fpl")
+        self.assertEqual(sources["total_shots"], "fpl-data")
+        self.assertEqual(sources["touches"], "missing")
+        self.assertEqual(sources["gameweek"], "request")
+        self.assertEqual(sources["team_name"], "official-fpl")
+        self.assertEqual(
+            set(sources.values()),
+            {"official-fpl", "fpl-data", "official-fpl+fpl-data", "request", "missing"},
+        )
+
+    def test_gameweek_one_cold_start_exports_no_model_input(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+            official_client=FakeOfficialClient(),
+            load_models=False,
+        )
+
+        frame, metadata = scout.export_model_inputs(gameweek=1)
+
+        self.assertTrue(frame.empty)
+        self.assertEqual(metadata["strategy"], "ownership-cold-start")
+
+    def test_model_free_scout_refuses_to_predict(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+            load_models=False,
+        )
+
+        with self.assertRaisesRegex(InferenceError, "No models are loaded"):
+            scout.predict_players(player_history(), gameweek=3)
 
     def test_environment_kill_switch_disables_enrichment(self):
         provider = FakeFPLDataProvider()

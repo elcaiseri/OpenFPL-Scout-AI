@@ -53,12 +53,16 @@ class OfficialFPLClient:
         history_cache_ttl: int = 900,
         max_workers: int = 8,
         session: Optional[requests.Session] = None,
+        max_cache_entries: int = 5000,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.cache_ttl = cache_ttl
         self.history_cache_ttl = history_cache_ttl
         self.max_workers = max(1, max_workers)
+        # Public routes key the cache by caller-supplied IDs, so it must stay
+        # bounded. The default holds every player summary with ample headroom.
+        self.max_cache_entries = max(1, max_cache_entries)
         self.session = session or self._build_session()
         self._cache: Dict[str, _CacheEntry] = {}
         self._cache_lock = RLock()
@@ -78,7 +82,7 @@ class OfficialFPLClient:
         session.headers.update(
             {
                 "Accept": "application/json",
-                "User-Agent": "OpenFPL-Scout-AI/5.0 (+official FPL data)",
+                "User-Agent": "OpenFPL-Scout-AI (+official FPL data)",
             }
         )
         return session
@@ -114,7 +118,24 @@ class OfficialFPLClient:
                 value=value,
                 expires_at=now + (self.cache_ttl if ttl is None else ttl),
             )
+            if len(self._cache) > self.max_cache_entries:
+                self._evict(now)
         return value
+
+    def _evict(self, now: float) -> None:
+        """Drop expired entries, then the soonest-expiring ones, below the cap.
+
+        Evicting to 90% of the cap amortizes the sort across many inserts.
+        """
+        expired = [key for key, entry in self._cache.items() if entry.expires_at <= now]
+        for key in expired:
+            del self._cache[key]
+        target = max(1, int(self.max_cache_entries * 0.9))
+        overflow = len(self._cache) - target
+        if len(self._cache) > self.max_cache_entries and overflow > 0:
+            oldest = sorted(self._cache, key=lambda key: self._cache[key].expires_at)
+            for key in oldest[:overflow]:
+                del self._cache[key]
 
     def clear_cache(self) -> None:
         with self._cache_lock:
