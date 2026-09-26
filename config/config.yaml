@@ -81,8 +81,15 @@ fpl_data_inference:
   runtime_cache_path: "data/external/fpl-data-stats-2027.csv"
   refresh_ttl_seconds: 21600
   minimum_match_ratio: 0.8
+  # FPL Data publishes a gameweek after it appears in official history. Within
+  # this lag the newest gameweek stays official-only; beyond it, no enrichment.
+  max_gameweek_lag: 1
   timeout_seconds: 60
   permission_status: "pending"
+  # The owner accepts the pending permission, so the service downloads FPL
+  # Data itself. Set FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false to use only
+  # files imported with the guarded CLI.
+  acknowledge_permission_pending: true
 
 # Durable artifacts for future training. In Cloud Run, the data root must be a
 # writable bucket volume. Set OPENFPL_DATA_ROOT=/data for a /data mount.
