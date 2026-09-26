@@ -115,6 +115,14 @@ def player_history():
     return pd.DataFrame(rows)
 
 
+class NextSeasonOfficialClient(FakeOfficialClient):
+    """Official FPL has rolled over to 2027-28."""
+
+    def bootstrap(self):
+        return {"events": [{"id": 1, "deadline_time": "2027-08-14T10:00:00Z"}]}
+
+
+
 def league_history():
     """Two played gameweeks for seven full clubs (15 players each)."""
     rows = []
@@ -550,6 +558,24 @@ class ScoutInferenceTests(unittest.TestCase):
             result.attrs["inference"]["data_enrichment"]["status"],
             "before-start-gameweek",
         )
+
+    def test_fpl_data_from_another_season_is_never_used(self):
+        provider = FakeFPLDataProvider()
+        scout = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(2),
+            official_client=NextSeasonOfficialClient(),
+            fpl_data_provider=provider,
+        )
+
+        result = scout.get_official_predictions(gameweek=2)
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(result.attrs["source"], "official-fpl")
+        enrichment = result.attrs["inference"]["data_enrichment"]
+        self.assertEqual(enrichment["status"], "season-mismatch")
+        self.assertIn("2027-2028", enrichment["error"])
 
     def test_environment_kill_switch_disables_enrichment(self):
         provider = FakeFPLDataProvider()

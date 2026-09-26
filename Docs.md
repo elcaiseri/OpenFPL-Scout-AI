@@ -25,7 +25,8 @@ identity or upcoming fixture context.
 
 No football-data.org key, RapidAPI data feed, or user-uploaded statistics file
 is required. Official responses are cached briefly in memory. FPL Data is
-cached for six hours and failures fall back to official-only inference.
+refreshed every six hours and failures fall back to the last good dataset or
+to official-only inference.
 
 Before the first gameweek, official current-season match history is empty.
 OpenFPL therefore leaves form statistics unknown and lets each trained model's
@@ -220,3 +221,34 @@ an 80% match rate, and falls back safely when enrichment cannot be applied.
 Permission remains pending; keep attribution and provenance, do not
 redistribute the CSV, and disable the integration if the owner declines. Set
 `FPL_DATA_INFERENCE_ENABLED=false` for an immediate production kill switch.
+
+The running service downloads from FPL Data itself because
+`fpl_data_inference.acknowledge_permission_pending` is true in
+`config/config.yaml`, the same explicit acknowledgement the importer requires.
+Set `FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING=false` to use only imported local
+files; `permission_status: granted` also allows downloads. One request
+refreshes the dataset while others keep using the previous one.
+
+Runtime refreshes follow the importer's safety rules:
+
+- A download with any fewer rows or players than the dataset in use, an
+  earlier latest gameweek, or lost feature columns is rejected (the importer
+  allows 20% churn; an unattended refresh allows none, except up to 5% for a
+  download that adds a newer gameweek, such as one without a departed player).
+  The current dataset and the file on disk stay in place, and `/api/health`
+  reports `refresh_error`.
+- A failed refresh keeps the dataset already in memory. The local copy is a
+  fallback only when nothing is loaded yet, so an older file never replaces
+  newer data.
+- The CSV and its checksum metadata are committed together; if the metadata
+  cannot be written, the previous CSV is restored. Identical downloads are not
+  rewritten, although outdated provenance metadata is refreshed.
+- Official history shows a gameweek as its fixtures are played, before FPL Data
+  publishes it. Up to `max_gameweek_lag` (default 1) gameweeks of lag are
+  tolerated: covered gameweeks are enriched, newer ones stay official-only and
+  are listed as `unenriched_gameweeks`. A source further behind is `stale`.
+- The match rate is measured over covered rows only. `unmatched_opponents`
+  lists the opponents of unmatched rows, so a club-name mismatch is visible.
+- A configured season that differs from the official season reports
+  `season-mismatch` and is never downloaded or merged. Update
+  `fpl_data_inference.season` when a new season starts.

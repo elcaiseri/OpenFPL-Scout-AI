@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -173,6 +174,14 @@ class FPLScout:
         self.fpl_data_permission_status = str(
             fpl_data_config.get("permission_status", "pending")
         )
+        acknowledgement_override = _environment_bool(
+            "FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING"
+        )
+        self.fpl_data_permission_acknowledged = (
+            bool(fpl_data_config.get("acknowledge_permission_pending", False))
+            if acknowledgement_override is None
+            else acknowledgement_override
+        )
         self.fpl_data_start_gameweek = int(fpl_data_config.get("start_gameweek", 2))
         if self.fpl_data_start_gameweek < 2:
             raise ValueError("fpl_data_inference.start_gameweek must be at least 2")
@@ -195,8 +204,10 @@ class FPLScout:
                 minimum_match_ratio=float(
                     fpl_data_config.get("minimum_match_ratio", 0.8)
                 ),
+                max_gameweek_lag=int(fpl_data_config.get("max_gameweek_lag", 1)),
                 timeout_seconds=float(fpl_data_config.get("timeout_seconds", 60)),
                 permission_status=self.fpl_data_permission_status,
+                acknowledge_permission_pending=self.fpl_data_permission_acknowledged,
             )
 
         if self.history_window < 1:
@@ -227,9 +238,12 @@ class FPLScout:
         if self.fpl_data_enabled:
             logger.warning(
                 "FPL Data inference enrichment is enabled from GW%d with permission "
-                "status %s",
+                "status %s; remote downloads %s",
                 self.fpl_data_start_gameweek,
                 self.fpl_data_permission_status,
+                "acknowledged"
+                if self.fpl_data_permission_acknowledged
+                else "disabled (local imports only)",
             )
 
     def _load_models(self, model_loader: Callable[[str], Any]) -> List[ModelArtifact]:
@@ -722,8 +736,19 @@ class FPLScout:
             "provider": "fpl-data",
             "status": "disabled",
         }
+        season_mismatch = (
+            self._fpl_data_season_mismatch() if self.fpl_data_enabled else None
+        )
         if self.fpl_data_enabled and resolved_gameweek < self.fpl_data_start_gameweek:
             enrichment["status"] = "before-start-gameweek"
+        elif season_mismatch:
+            # Player IDs are reassigned every season, so another season's
+            # dataset must never be merged (or even downloaded).
+            enrichment = {
+                "provider": "fpl-data",
+                "status": "season-mismatch",
+                "error": season_mismatch,
+            }
         elif self.fpl_data_enabled and self.fpl_data_provider is not None:
             try:
                 history, enrichment = self.fpl_data_provider.enrich(
@@ -773,6 +798,31 @@ class FPLScout:
         )
         result.attrs["archive"] = archive_result
         return result
+
+    def _fpl_data_season_mismatch(self) -> Optional[str]:
+        """Explain why the configured FPL Data season is not the live season."""
+        bootstrap = getattr(self.official_client, "bootstrap", None)
+        configured = re.match(r"(\d{4})", self.fpl_data_season)
+        if not callable(bootstrap) or configured is None:
+            return None
+        try:
+            events = bootstrap().get("events", [])
+        except Exception:  # The history request already reported upstream errors.
+            return None
+        deadlines = sorted(
+            str(event["deadline_time"])
+            for event in events
+            if event.get("deadline_time")
+        )
+        if not deadlines or not deadlines[0][:4].isdigit():
+            return None
+        official_start = int(deadlines[0][:4])
+        if int(configured.group(1)) == official_start:
+            return None
+        return (
+            f"fpl_data_inference.season {self.fpl_data_season!r} does not match "
+            f"the official {official_start}-{official_start + 1} season"
+        )
 
     def _official_availability(self) -> Optional[pd.DataFrame]:
         """Return current official availability for every player, if supported."""
