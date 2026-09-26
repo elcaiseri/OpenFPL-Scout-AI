@@ -25,6 +25,8 @@ responsive web dashboard and FastAPI service.
   can continue when one model fails.
 - The squad selector enforces the official positional quotas and a maximum of
   three players per club, then assigns captain and vice-captain.
+- Requests for the same Gameweek share one inference for five minutes, and
+  the official FPL response cache is bounded.
 - GW1 uses an explicit ownership and availability cold start when no genuine
   current-season match history exists.
 - The dashboard includes Gameweek planning, deadline status, fixture context,
@@ -41,7 +43,9 @@ but do not affect player projections or selection.
 
 Requirements: Python 3.9 or newer and
 [uv](https://docs.astral.sh/uv/). Model artifacts must exist at the paths in
-`config/config.yaml`; generated models are not stored in Git.
+`config/config.yaml`; generated models are not stored in Git. `uv sync`
+installs scikit-learn, XGBoost, and CatBoost, which the pickled models need at
+runtime.
 
 ```bash
 uv sync
@@ -58,11 +62,11 @@ Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
 available at [localhost:8000/docs](http://localhost:8000/docs).
 
 Protected routes read comma-separated bearer tokens from `.env` or the process
-environment:
+environment. Start from the documented sample, which lists every setting the
+app reads, and set a token:
 
-```dotenv
-VALID_API_KEYS=local-development-token
-OPENFPL_ENV=development
+```bash
+cp .env.example .env
 ```
 
 Optional FPL Data enrichment can be disabled immediately with:
@@ -161,8 +165,9 @@ enriched and the newest stays official-only. Sources further behind, poorly
 matched, or from another season are rejected, and a download never replaces a
 more complete dataset.
 
-Every successful scout inference also maintains a durable, season-scoped
-archive under `data/archive/<season>/`. The archive is fail-open, so a temporary
+Every successful scout inference (at most once per Gameweek every five
+minutes) also maintains a durable, season-scoped archive under
+`data/archive/<season>/`. The archive is fail-open, so a temporary
 storage failure is reported in `/api/health` without taking predictions down.
 Set `OPENFPL_DATA_ARCHIVE_ENABLED=false` to disable it or
 `OPENFPL_DATA_ROOT=/data` when the Cloud Run volume is mounted at `/data`
@@ -221,6 +226,22 @@ kept. Invoke `/api/scout` at least once before each deadline and after each
 Gameweek is finalized (for example with Cloud Scheduler) to guarantee a
 complete season even when the service otherwise receives no traffic.
 
+To inspect exactly what the models receive, export each gameweek's feature
+rows without loading any model or writing to the archive:
+
+```bash
+uv run python -m scripts.export_model_inputs --gameweeks 1-7
+```
+
+`data/model-inputs/gw_NN.csv` holds one row per player fixture (`id` plus every
+model feature in model order). `feature_sources.csv` labels each feature as
+`official-fpl`, `fpl-data`, `official-fpl+fpl-data` (FPL Data filled cells
+official history left empty), `request`, or `missing`, with its coverage.
+`summary.json` records the strategy and FPL Data status per gameweek, or the
+error for a gameweek that could not be exported (the command then exits with
+status 1). GW1 without match history uses the ownership cold start, so its
+file is empty.
+
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:
 
@@ -240,7 +261,7 @@ uv run python -m scripts.download_fpl_data \
 | `src/features.py` | Shared model-inference feature contract |
 | `src/fpl_data_inference.py` | Guarded optional stat enrichment |
 | `static/` | Responsive dashboard |
-| `scripts/` | Official archive collection and guarded data import |
+| `scripts/` | Official archive collection, guarded data import, and model-input export |
 | `tests/` | API, data, feature, inference, and selection tests |
 
 ## License

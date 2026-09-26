@@ -798,8 +798,11 @@ const app = {
             const reference = await dataLoader.loadReferenceData();
             appState.events = reference.events;
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
-            const active = appState.events.find(event => event.is_current)
-                || appState.events.find(event => event.is_next)
+            // Open on the next deadline (the Gameweek managers can still
+            // change), matching the API's default; the live Gameweek stays
+            // one click away in the planning window.
+            const active = appState.events.find(event => event.is_next)
+                || appState.events.find(event => event.is_current)
                 || appState.events[0];
             appState.currentGameweek = Number(active.id);
             gameweekManager.populate(appState.events);

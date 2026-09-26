@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import joblib
@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src.features import (
+    CATEGORICAL_FEATURES,
     HISTORY_FEATURES,
     MODEL_FEATURES,
     TEAM_NAME_ALIASES,
@@ -121,7 +122,9 @@ class FPLScout:
         official_client: Optional[OfficialFPLClient] = None,
         fpl_data_provider: Optional[FPLDataHistoryProvider] = None,
         data_archive: Optional[DataArchive] = None,
+        load_models: bool = True,
     ) -> None:
+        """Create the scout. ``load_models=False`` supports feature export only."""
         self.config = dict(config)
         official_config = self.config.get("official_fpl", {})
         self.official_client = official_client or OfficialFPLClient(
@@ -134,6 +137,7 @@ class FPLScout:
                 official_config.get("history_cache_ttl_seconds", 900)
             ),
             max_workers=int(official_config.get("max_workers", 8)),
+            max_cache_entries=int(official_config.get("max_cache_entries", 5000)),
         )
         if fixture_provider is None:
             fixture_provider = self.official_client.fixtures_for_gameweek
@@ -151,6 +155,14 @@ class FPLScout:
         self.fixture_cache_ttl = float(
             inference_config.get("fixture_cache_ttl_seconds", 300)
         )
+        # Identical requests within this window share one inference (and one
+        # archive capture) instead of re-running the ensemble every time.
+        self.prediction_cache_ttl = float(
+            inference_config.get("prediction_cache_ttl_seconds", 300)
+        )
+        self._prediction_cache: Dict[int, Tuple[float, pd.DataFrame]] = {}
+        self._prediction_locks: Dict[int, Lock] = {}
+        self._prediction_locks_guard = Lock()
         self.clock: Callable[[], float] = time.monotonic
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
@@ -214,14 +226,16 @@ class FPLScout:
             raise ValueError("inference.history_window must be at least 1")
 
         logger.info("Initializing FPLScout...")
-        self.model_artifacts = self._load_models(model_loader)
+        self.model_artifacts = self._load_models(model_loader) if load_models else []
         # Retain the old list attribute for callers that inspect loaded models.
         self.models: List[Any] = [item.estimator for item in self.model_artifacts]
         requested_minimum = inference_config.get(
             "minimum_successful_models", len(self.model_artifacts)
         )
-        self.minimum_successful_models = int(requested_minimum)
-        if not 1 <= self.minimum_successful_models <= len(self.model_artifacts):
+        self.minimum_successful_models = int(requested_minimum) if load_models else 0
+        if load_models and not (
+            1 <= self.minimum_successful_models <= len(self.model_artifacts)
+        ):
             raise ValueError(
                 "inference.minimum_successful_models must be between 1 and the "
                 "number of configured models"
@@ -428,6 +442,10 @@ class FPLScout:
     def _predict_ensemble(
         self, features: pd.DataFrame
     ) -> tuple[np.ndarray, Dict[str, Any]]:
+        if not self.model_artifacts:
+            raise InferenceError(
+                "No models are loaded; this scout only exports features"
+            )
         predictions: List[np.ndarray] = []
         weights: List[float] = []
         successful_models: List[str] = []
@@ -710,7 +728,9 @@ class FPLScout:
         Once a gameweek's deadline has passed, the archived pre-deadline
         forecast is returned unchanged (``attrs["frozen"]``), so recalling an
         old gameweek never re-predicts it with newer data. Open gameweeks are
-        predicted live.
+        predicted live and shared for ``prediction_cache_ttl_seconds``, so
+        concurrent and repeated requests run one inference and one archive
+        capture. Callers receive a copy and may modify it freely.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         frozen = self.data_archive.frozen_forecast(
@@ -727,77 +747,21 @@ class FPLScout:
             # deadline.
             self.data_archive.collect_results_in_background(self.official_client)
             return frozen
-        logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
-        official_history = self.official_client.player_history(resolved_gameweek)
-        history = official_history
-        logger.info("Loaded %d official FPL history rows", len(official_history))
+        if self.prediction_cache_ttl <= 0:
+            return self._compute_official_predictions(resolved_gameweek)
 
-        enrichment = {
-            "provider": "fpl-data",
-            "status": "disabled",
-        }
-        season_mismatch = (
-            self._fpl_data_season_mismatch() if self.fpl_data_enabled else None
-        )
-        if self.fpl_data_enabled and resolved_gameweek < self.fpl_data_start_gameweek:
-            enrichment["status"] = "before-start-gameweek"
-        elif season_mismatch:
-            # Player IDs are reassigned every season, so another season's
-            # dataset must never be merged (or even downloaded).
-            enrichment = {
-                "provider": "fpl-data",
-                "status": "season-mismatch",
-                "error": season_mismatch,
-            }
-        elif self.fpl_data_enabled and self.fpl_data_provider is not None:
-            try:
-                history, enrichment = self.fpl_data_provider.enrich(
-                    history, resolved_gameweek
-                )
-            except Exception as error:
-                # Optional enrichment must never make official inference unavailable.
-                logger.warning(
-                    "FPL Data provider failed; using official history: %s", error
-                )
-                enrichment = {
-                    "provider": "fpl-data",
-                    "status": "unavailable",
-                    "error": str(error),
-                }
-
-        result = self.predict_players(
-            history,
-            gameweek=resolved_gameweek,
-            availability=self._official_availability(),
-        )
-        self.last_data_enrichment = dict(enrichment)
-        result.attrs["frozen"] = False
-        result.attrs["inference"]["data_enrichment"] = enrichment
-        result.attrs["source"] = (
-            "official-fpl+fpl-data"
-            if enrichment.get("status") == "applied"
-            else "official-fpl"
-        )
-        archive_result = self.data_archive.capture_inference(
-            official_client=self.official_client,
-            prediction_gameweek=resolved_gameweek,
-            official_history=official_history,
-            enriched_history=history,
-            predictions=result,
-            source=str(result.attrs["source"]),
-            enrichment=enrichment,
-            model_versions={
-                name: {
-                    key: value
-                    for key, value in metadata.items()
-                    if key in {"version", "last_trained", "year", "weight", "path"}
-                }
-                for name, metadata in self.config.get("models", {}).items()
-                if isinstance(metadata, Mapping)
-            },
-        )
-        result.attrs["archive"] = archive_result
-        return result
+        with self._prediction_locks_guard:
+            lock = self._prediction_locks.setdefault(resolved_gameweek, Lock())
+        with lock:
+            cached = self._prediction_cache.get(resolved_gameweek)
+            if cached is not None and cached[0] > self.clock():
+                return cached[1].copy()
+            result = self._compute_official_predictions(resolved_gameweek)
+            self._prediction_cache[resolved_gameweek] = (
+                self.clock() + self.prediction_cache_ttl,
+                result,
+            )
+            return result.copy()
 
     def _fpl_data_season_mismatch(self) -> Optional[str]:
         """Explain why the configured FPL Data season is not the live season."""
@@ -836,6 +800,171 @@ class FPLScout:
             column for column in ("id", *AVAILABILITY_COLUMNS) if column in players
         ]
         return players[columns]
+
+    def _compute_official_predictions(self, resolved_gameweek: int) -> pd.DataFrame:
+        official_history, history, enrichment = self._load_history(resolved_gameweek)
+        result = self.predict_players(
+            history,
+            gameweek=resolved_gameweek,
+            availability=self._official_availability(),
+        )
+        return self._finish_official_predictions(
+            result, resolved_gameweek, official_history, history, enrichment
+        )
+
+    def _load_history(
+        self, resolved_gameweek: int
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+        """Return official history, the (possibly) enriched history, and why."""
+        logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
+        official_history = self.official_client.player_history(resolved_gameweek)
+        history = official_history
+        logger.info("Loaded %d official FPL history rows", len(official_history))
+
+        enrichment = {
+            "provider": "fpl-data",
+            "status": "disabled",
+        }
+        season_mismatch = (
+            self._fpl_data_season_mismatch() if self.fpl_data_enabled else None
+        )
+        if self.fpl_data_enabled and resolved_gameweek < self.fpl_data_start_gameweek:
+            enrichment["status"] = "before-start-gameweek"
+        elif season_mismatch:
+            # Player IDs are reassigned every season, so another season's
+            # dataset must never be merged (or even downloaded).
+            enrichment = {
+                "provider": "fpl-data",
+                "status": "season-mismatch",
+                "error": season_mismatch,
+            }
+        elif self.fpl_data_enabled and self.fpl_data_provider is not None:
+            try:
+                history, enrichment = self.fpl_data_provider.enrich(
+                    history, resolved_gameweek
+                )
+            except Exception as error:
+                # Optional enrichment must never make official inference unavailable.
+                logger.warning(
+                    "FPL Data provider failed; using official history: %s", error
+                )
+                enrichment = {
+                    "provider": "fpl-data",
+                    "status": "unavailable",
+                    "error": str(error),
+                }
+        return official_history, history, enrichment
+
+    def _finish_official_predictions(
+        self,
+        result: pd.DataFrame,
+        resolved_gameweek: int,
+        official_history: pd.DataFrame,
+        history: pd.DataFrame,
+        enrichment: Dict[str, Any],
+    ) -> pd.DataFrame:
+        self.last_data_enrichment = dict(enrichment)
+        result.attrs["frozen"] = False
+        result.attrs["inference"]["data_enrichment"] = enrichment
+        result.attrs["source"] = (
+            "official-fpl+fpl-data"
+            if enrichment.get("status") == "applied"
+            else "official-fpl"
+        )
+        archive_result = self.data_archive.capture_inference(
+            official_client=self.official_client,
+            prediction_gameweek=resolved_gameweek,
+            official_history=official_history,
+            enriched_history=history,
+            predictions=result,
+            source=str(result.attrs["source"]),
+            enrichment=enrichment,
+            model_versions={
+                name: {
+                    key: value
+                    for key, value in metadata.items()
+                    if key in {"version", "last_trained", "year", "weight", "path"}
+                }
+                for name, metadata in self.config.get("models", {}).items()
+                if isinstance(metadata, Mapping)
+            },
+        )
+        result.attrs["archive"] = archive_result
+        return result
+
+    def export_model_inputs(
+        self, gameweek: Optional[int] = None
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Return exactly what the models would receive for a gameweek.
+
+        The frame has one row per player fixture: ``id`` identifies the player
+        and every other column is a model feature, in model order. No model is
+        run and nothing is archived. GW1 without match history uses the
+        ownership cold start, so its frame is empty.
+        """
+        resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        official_history, history, enrichment = self._load_history(resolved_gameweek)
+        normalized = normalize_fpl_columns(history)
+        metadata: Dict[str, Any] = {
+            "gameweek": resolved_gameweek,
+            "data_enrichment": enrichment,
+        }
+        if self._uses_cold_start(normalized, resolved_gameweek):
+            metadata.update(
+                strategy="ownership-cold-start",
+                rows=0,
+                players=0,
+                feature_sources={},
+            )
+            return pd.DataFrame(columns=["id", *MODEL_FEATURES]), metadata
+
+        _, fixture_rows, model_input = self._build_model_input(
+            normalized, resolved_gameweek, self._official_availability()
+        )
+        frame = model_input.reset_index(drop=True)
+        frame.insert(0, "id", fixture_rows["id"].to_numpy())
+        metadata.update(
+            strategy="model-ensemble",
+            rows=len(frame),
+            players=int(frame["id"].nunique()),
+            feature_sources=self._feature_sources(
+                normalize_fpl_columns(official_history), normalized
+            ),
+        )
+        return frame, metadata
+
+    @staticmethod
+    def _feature_sources(
+        official: pd.DataFrame, enriched: pd.DataFrame
+    ) -> Dict[str, str]:
+        """Label each model feature by the source that supplied its values.
+
+        Labels: ``official-fpl``, ``fpl-data``, ``official-fpl+fpl-data`` (FPL
+        Data filled cells official history left empty), ``request`` (the
+        gameweek being predicted), or ``missing`` (no values at all).
+        """
+        sources = {feature: "official-fpl" for feature in CATEGORICAL_FEATURES}
+        sources["gameweek"] = "request"
+
+        def played_values(frame: pd.DataFrame, feature: str) -> int:
+            if feature not in frame.columns or "gameweek" not in frame.columns:
+                return 0
+            played = pd.to_numeric(frame["gameweek"], errors="coerce").ge(1)
+            values = pd.to_numeric(frame.loc[played, feature], errors="coerce")
+            return int(values.notna().sum())
+
+        for feature in HISTORY_FEATURES:
+            from_official = played_values(official, feature)
+            after_enrichment = played_values(enriched, feature)
+            if after_enrichment == 0:
+                sources[feature] = "missing"
+            elif from_official == 0:
+                sources[feature] = "fpl-data"
+            elif after_enrichment > from_official:
+                sources[feature] = "official-fpl+fpl-data"
+            else:
+                sources[feature] = "official-fpl"
+        return {feature: sources[feature] for feature in MODEL_FEATURES}
 
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
         """Select the highest-ranked 15-player positional squad."""

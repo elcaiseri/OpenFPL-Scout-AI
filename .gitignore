@@ -31,10 +31,6 @@ venv/
 
 # Generated data and experiment outputs
 *.csv
-!models/training_results.csv
-!models/cv_fold_results.csv
-!models/tuning_results.csv
-!models/holdout_results.csv
 *.zip
 data*/
 all_csv_history/

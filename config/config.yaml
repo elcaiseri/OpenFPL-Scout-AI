@@ -59,6 +59,8 @@ inference:
   minimum_successful_models: 3
   cache_fixtures: true
   fixture_cache_ttl_seconds: 300
+  # Requests for the same gameweek share one inference and archive capture.
+  prediction_cache_ttl_seconds: 300
   clip_min: 0.0
   max_players_per_team: 3
   cold_start:
@@ -70,6 +72,7 @@ official_fpl:
   cache_ttl_seconds: 300
   history_cache_ttl_seconds: 900
   max_workers: 8
+  max_cache_entries: 5000
 
 # Temporary, permission-pending enrichment of missing historical match inputs.
 # Official FPL remains authoritative for player identity, history, and fixtures.
