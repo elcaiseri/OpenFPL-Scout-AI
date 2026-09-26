@@ -99,4 +99,10 @@ class PlayerPointsModel(BaseModel):
     )
     web_name: Optional[str] = Field(None, description="Player name")
     team_name: Optional[str] = Field(None, description="Team name")
-    was_home: Optional[bool] = Field(None, description="Whether the match at home")
+    was_home: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether every fixture is at home (true) or away (false); players "
+            "with no fixture or with both venues match neither"
+        ),
+    )

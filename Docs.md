@@ -163,6 +163,11 @@ both matches, and players whose club has no fixture receive zero. Model points
 are multiplied by `availability_factor`, the player's current official chance
 of playing, and players with zero availability are never selected.
 
+A double-gameweek player's `opponent_team_name` joins both opponents
+(`"Chelsea / Tottenham"`). `was_home` is set only when every fixture shares the
+venue; with one home and one away match it is `null` and each opponent carries
+its venue (`"Chelsea (H) / Tottenham (A)"`).
+
 ## Response
 
 ```json

@@ -65,6 +65,14 @@ const utils = {
         return positions[value] || '—';
     },
 
+    // A double gameweek with a home and an away match has no single venue;
+    // its opponent label then names each fixture's venue.
+    venueCode(player) {
+        if (player.was_home === true) return 'H';
+        if (player.was_home === false) return 'A';
+        return '';
+    },
+
     statusInfo(status, canSelect = true) {
         const states = {
             a: ['Available', 'available'],
@@ -288,7 +296,7 @@ const playerRenderer = {
             web_name: player.web_name || 'Unknown',
             team_name: player.team_name || 'Unknown',
             opponent_team_name: player.opponent_team_name || 'TBC',
-            was_home: Boolean(player.was_home),
+            was_home: typeof player.was_home === 'boolean' ? player.was_home : null,
             role: player.role || '',
             position_code: utils.positionCode(player),
             status_info: utils.statusInfo(player.status, player.can_select !== false)
@@ -310,6 +318,7 @@ const playerRenderer = {
         const name = utils.escapeHtml(player.web_name);
         const team = utils.escapeHtml(player.team_name);
         const opponent = utils.escapeHtml(player.opponent_team_name);
+        const venue = utils.venueCode(player);
         const roleClass = player.role ? ` ${utils.escapeHtml(player.role)}` : '';
         const availability = player.status_info.className !== 'available'
             ? `<span class="card-alert ${player.status_info.className}" title="${player.status_info.label}">!</span>`
@@ -324,7 +333,7 @@ const playerRenderer = {
                 <div class="player-name">${name}</div>
                 <div class="team-name">${team}</div>
                 <div class="fixture">
-                    <b>${player.was_home ? 'H' : 'A'}</b>
+                    ${venue ? `<b>${venue}</b>` : ''}
                     <span>${opponent}</span>
                 </div>
                 <div class="card-bottom">
@@ -337,6 +346,7 @@ const playerRenderer = {
     tableRow(rawPlayer, index) {
         const player = this.format(rawPlayer);
         const status = player.status_info;
+        const venue = utils.venueCode(player);
         const role = player.role
             ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
             : '';
@@ -349,7 +359,7 @@ const playerRenderer = {
                     </div>
                 </td>
                 <td><span class="position-pill">${player.position_code}</span></td>
-                <td><strong>${player.was_home ? 'H' : 'A'}</strong> · ${utils.escapeHtml(player.opponent_team_name)}</td>
+                <td>${venue ? `<strong>${venue}</strong> · ` : ''}${utils.escapeHtml(player.opponent_team_name)}</td>
                 <td>${utils.money(player.price)}</td>
                 <td>${utils.percentage(player.selected_by_percent)}</td>
                 <td><span class="status-pill ${status.className}"><i></i>${status.label}</span></td>
@@ -704,8 +714,13 @@ const interactions = {
         dom.dialogPlayerName.textContent = player.web_name;
         dom.dialogTeam.textContent = `${player.team_name} · ${status.label}`;
         dom.dialogPoints.textContent = utils.number(player.expected_points, 0).toFixed(2);
-        dom.dialogFixture.textContent = `${player.was_home ? 'H' : 'A'} · ${player.opponent_team_name}`;
-        dom.dialogVenue.textContent = player.was_home ? 'Home' : 'Away';
+        const venue = utils.venueCode(player);
+        dom.dialogFixture.textContent = venue
+            ? `${venue} · ${player.opponent_team_name}`
+            : player.opponent_team_name;
+        dom.dialogVenue.textContent = venue === 'H' ? 'Home'
+            : venue === 'A' ? 'Away'
+            : player.fixture_count > 1 ? 'Home and away' : '—';
         dom.dialogPrice.textContent = utils.money(player.price);
         dom.dialogOwnership.textContent = utils.percentage(player.selected_by_percent);
         dom.dialogTotalPoints.textContent = player.total_points ?? '—';
