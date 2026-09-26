@@ -720,8 +720,9 @@ class FPLScout:
 
         Once a gameweek's deadline has passed, the archived pre-deadline
         forecast is returned unchanged (``attrs["frozen"]``), so recalling an
-        old gameweek never re-predicts it with newer data. Open gameweeks are
-        predicted live.
+        old gameweek never re-predicts it with newer data. A closed gameweek
+        with no frozen forecast is frozen on its first recall. Open gameweeks
+        are predicted live.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         frozen = self.data_archive.frozen_forecast(
@@ -797,7 +798,15 @@ class FPLScout:
             },
         )
         result.attrs["archive"] = archive_result
-        return result
+        # A closed gameweek that was never frozen is frozen now, so every
+        # later recall returns this same forecast.
+        frozen = self.data_archive.freeze_after_deadline(
+            self.official_client,
+            resolved_gameweek,
+            result,
+            validate=self.select_optimal_team,
+        )
+        return result if frozen is None else frozen
 
     def _official_availability(self) -> Optional[pd.DataFrame]:
         """Return current official availability for every player, if supported."""

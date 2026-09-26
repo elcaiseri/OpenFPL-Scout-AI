@@ -466,18 +466,23 @@ class DataArchive:
                     problem,
                 )
                 return None
-            forecast = metadata["forecast"]
-            predictions = pd.DataFrame(forecast["data"], columns=forecast["columns"])
+            return self._served_forecast(metadata, gameweek)
         except Exception:  # Fail open: a live prediction beats an error.
             logger.exception("Could not read the archived GW%d forecast", gameweek)
             return None
 
+    @staticmethod
+    def _served_forecast(metadata: Mapping[str, Any], gameweek: int) -> pd.DataFrame:
+        """A frozen forecast exactly as requests receive it."""
+        forecast = metadata["forecast"]
+        predictions = pd.DataFrame(forecast["data"], columns=forecast["columns"])
         predictions.attrs.update(
             gameweek=gameweek,
             inference=metadata.get("inference", {}),
             source=metadata.get("source", "official-fpl"),
             frozen=True,
             forecast_captured_at=metadata.get("captured_at_utc"),
+            freeze_method=(metadata.get("freeze") or {}).get("method", "deadline"),
             archive={
                 "status": "frozen",
                 "prediction_archived": False,
@@ -498,10 +503,111 @@ class DataArchive:
             forecast
         ):
             return "has no stored forecast (written by an older version)"
+        if (metadata.get("freeze") or {}).get("method") == "after-deadline":
+            # Frozen on its first recall after the deadline.
+            return None
         captured_at = _parse_deadline(metadata.get("captured_at_utc"))
         if captured_at is None or captured_at >= deadline:
             return "was not captured before the deadline"
         return None
+
+    def freeze_after_deadline(
+        self,
+        official_client: Any,
+        gameweek: int,
+        predictions: pd.DataFrame,
+        *,
+        validate: Optional[Callable[[pd.DataFrame], Any]] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Freeze a closed gameweek that was never frozen, on its first recall.
+
+        A gameweek that closed without a forecast captured before its deadline
+        (for example, before frozen forecasts shipped) is frozen the first time
+        it is requested, so every later request returns the same forecast.
+        When an older version's archive proves it holds the forecast made
+        before the deadline (its capture time is earlier), that forecast is
+        frozen, as it is what users saw; otherwise ``predictions``, the live
+        prediction just made, is. The metadata records the freeze and keeps
+        the forecast's real capture time; the predictions CSV, the training
+        record, is not touched.
+
+        ``validate`` receives the forecast as it will be served before it is
+        written. Returns the frozen forecast, or None while the gameweek is
+        open, when the archive is disabled, or when it cannot be frozen;
+        callers then serve the live prediction.
+        """
+        if not self.enabled:
+            return None
+        try:
+            bootstrap = official_client.bootstrap()
+            deadline = self._gameweek_deadline(bootstrap, gameweek)
+            if deadline is None or self.clock() < deadline:
+                return None
+            season_root = self.root_path / self._season_name(bootstrap)
+            metadata_path = season_root / "metadata" / f"gw_{gameweek:02d}.json"
+            predictions_path = season_root / "predictions" / f"gw_{gameweek:02d}.csv"
+            with self._lock:
+                archived = self._read_metadata(metadata_path)
+                if archived and not self._forecast_problem(
+                    archived, gameweek, deadline
+                ):
+                    # Another request froze it first.
+                    return self._served_forecast(archived, gameweek)
+                archived_at = _parse_deadline(archived.get("captured_at_utc"))
+                if (
+                    archived.get("prediction_gameweek") == gameweek
+                    and archived_at is not None
+                    and archived_at < deadline
+                    and predictions_path.is_file()
+                ):
+                    # Older versions rewrote these files on every request,
+                    # even after the deadline, so a capture time before it
+                    # proves nothing later replaced them.
+                    forecast = pd.read_csv(predictions_path)
+                    origin = "pre-deadline-archive"
+                    metadata = dict(archived)
+                else:
+                    forecast = predictions
+                    origin = "post-deadline-prediction"
+                    metadata = {
+                        "captured_at_utc": self.clock().isoformat(),
+                        "inference": predictions.attrs.get("inference", {}),
+                        "source": predictions.attrs.get("source", "official-fpl"),
+                    }
+                metadata.update(
+                    archive_schema_version=self.SCHEMA_VERSION,
+                    season=season_root.name,
+                    prediction_gameweek=gameweek,
+                    forecast=self._forecast_payload(forecast),
+                    freeze={
+                        "method": "after-deadline",
+                        "origin": origin,
+                        "frozen_at_utc": self.clock().isoformat(),
+                        "replaced_capture_at_utc": archived.get("captured_at_utc"),
+                    },
+                )
+                content = self._json_bytes(metadata)
+                # Exactly what later requests will read back.
+                frozen = self._served_forecast(json.loads(content), gameweek)
+                if validate is not None:
+                    validate(frozen)
+                self._write_bytes(metadata_path, content)
+        except Exception:  # Fail open: serve the live prediction unfrozen.
+            logger.exception("Could not freeze the closed GW%d forecast", gameweek)
+            return None
+        logger.info(
+            "Froze closed GW%d on its first recall (%s, captured at %s)",
+            gameweek,
+            origin,
+            metadata["captured_at_utc"],
+        )
+        return frozen
+
+    @staticmethod
+    def _read_metadata(metadata_path: Path) -> dict[str, Any]:
+        if not metadata_path.is_file():
+            return {}
+        return json.loads(metadata_path.read_text(encoding="utf-8"))
 
     @staticmethod
     def _forecast_payload(predictions: pd.DataFrame) -> dict[str, Any]:

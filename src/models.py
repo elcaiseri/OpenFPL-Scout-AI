@@ -13,6 +13,9 @@ class ResponseModel(BaseModel):
     # True once the deadline has passed: the archived pre-deadline forecast.
     frozen: bool = False
     forecast_captured_at: Optional[str] = None
+    # How a frozen forecast was frozen: "deadline" (captured before it) or
+    # "after-deadline" (frozen on the gameweek's first recall after it).
+    freeze_method: Optional[str] = None
     credits: str = (
         "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
     )
