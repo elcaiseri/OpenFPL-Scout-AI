@@ -3,7 +3,6 @@
 import asyncio
 import json
 import tempfile
-import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -198,9 +197,6 @@ class FrozenForecastTests(unittest.TestCase):
             data_archive=self.archive,
         )
         self.scout.clock = lambda: self.monotonic[0]
-        # Frozen reads collect results in the background; let that finish
-        # before the archive directory is removed.
-        self.addCleanup(self.archive.wait_for_results, 30)
 
     def request(self, gameweek=3):
         """One scout request, as the API makes it."""
@@ -306,24 +302,11 @@ class FrozenForecastTests(unittest.TestCase):
         self.client.clear_cache()
         self.monotonic[0] += 3600
 
-        release = threading.Event()
-        fetch_history = self.client.player_history
-
-        def slow_history(*args, **kwargs):
-            release.wait(5)
-            return fetch_history(*args, **kwargs)
+        predictions = self.scout.get_official_predictions()
 
         root = Path(self.directory.name) / "2026-2027/official"
-        with patch.object(self.client, "player_history", slow_history):
-            predictions = self.scout.get_official_predictions()
-            # The frozen forecast is served without waiting for collection.
-            collected_before_returning = (root / "history/before_gw_05.csv").exists()
-            release.set()
-            self.archive.wait_for_results(10)
-
         self.assertEqual(predictions.attrs["gameweek"], 4)
         self.assertTrue(predictions.attrs["frozen"])
-        self.assertFalse(collected_before_returning)
         self.assertTrue((root / "player-stats/gw_04.csv").is_file())
         self.assertTrue((root / "live/gw_04.json").is_file())
         self.assertTrue((root / "history/before_gw_05.csv").is_file())

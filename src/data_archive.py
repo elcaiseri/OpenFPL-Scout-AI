@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import math
 import os
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from threading import RLock, Thread
+from threading import RLock
 from typing import Any, Callable, Mapping, Optional
 
 import numpy as np
@@ -122,7 +121,6 @@ class DataArchive:
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
-        self._results_thread: Optional[Thread] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -194,36 +192,6 @@ class DataArchive:
                 self._results_due_at = self.clock() + self.results_interval
         self.last_result = result
         return result
-
-    def collect_results_in_background(self, official_client: Any) -> bool:
-        """Start ``collect_results`` on a background thread when it is due.
-
-        Serving a frozen forecast must not wait for hundreds of upstream
-        history requests, so this returns at once. At most one collection
-        runs at a time; returns whether one was started.
-        """
-        if not self.enabled:
-            return False
-        with self._lock:
-            thread = self._results_thread
-            running = thread is not None and thread.is_alive()
-            due_at = self._results_due_at
-            if running or (due_at is not None and self.clock() < due_at):
-                return False
-            self._results_thread = Thread(
-                target=self.collect_results,
-                args=(official_client,),
-                name="archive-results",
-                daemon=True,
-            )
-            self._results_thread.start()
-        return True
-
-    def wait_for_results(self, timeout: Optional[float] = None) -> None:
-        """Wait for a background results collection, if one is running."""
-        thread = self._results_thread
-        if thread is not None:
-            thread.join(timeout)
 
     def collect_results(self, official_client: Any) -> dict[str, Any]:
         """Archive official results without a prediction, once per interval.
@@ -338,8 +306,11 @@ class DataArchive:
             }
             metadata = {
                 "archive_schema_version": self.SCHEMA_VERSION,
-                # Proves which predictions file this metadata describes.
                 "predictions_sha256": hashlib.sha256(predictions_csv).hexdigest(),
+                # The forecast served once the deadline passes. Kept in this
+                # file so it is replaced in one atomic write with its capture
+                # time; the predictions CSV is the training record.
+                "forecast": self._forecast_payload(predictions),
                 "season": season,
                 "prediction_gameweek": prediction_gameweek,
                 "official_history_before_gameweek": history_cutoff_gameweek,
@@ -475,23 +446,19 @@ class DataArchive:
             if deadline is None or self.clock() < deadline:
                 return None
             season_root = self.root_path / self._season_name(bootstrap)
-            name = f"gw_{gameweek:02d}"
-            predictions_path = season_root / "predictions" / f"{name}.csv"
-            metadata_path = season_root / "metadata" / f"{name}.json"
-            # Forecast writes hold the same lock, so the pair is read as one
-            # consistent set.
+            metadata_path = season_root / "metadata" / f"gw_{gameweek:02d}.json"
+            # Forecast writes hold the same lock and replace this file in one
+            # step, so it is always a complete forecast.
             with self._lock:
-                if not predictions_path.is_file() or not metadata_path.is_file():
+                if not metadata_path.is_file():
                     logger.warning(
                         "GW%d is closed but no pre-deadline forecast was "
                         "archived; predicting live",
                         gameweek,
                     )
                     return None
-                raw = predictions_path.read_bytes()
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            digest = hashlib.sha256(raw).hexdigest()
-            problem = self._forecast_problem(metadata, gameweek, deadline, digest)
+            problem = self._forecast_problem(metadata, gameweek, deadline)
             if problem:
                 logger.warning(
                     "GW%d is closed but its archived forecast %s; predicting live",
@@ -499,7 +466,8 @@ class DataArchive:
                     problem,
                 )
                 return None
-            predictions = pd.read_csv(io.BytesIO(raw), float_precision="round_trip")
+            forecast = metadata["forecast"]
+            predictions = pd.DataFrame(forecast["data"], columns=forecast["columns"])
         except Exception:  # Fail open: a live prediction beats an error.
             logger.exception("Could not read the archived GW%d forecast", gameweek)
             return None
@@ -520,23 +488,28 @@ class DataArchive:
 
     @staticmethod
     def _forecast_problem(
-        metadata: Mapping[str, Any],
-        gameweek: int,
-        deadline: datetime,
-        predictions_sha256: str,
+        metadata: Mapping[str, Any], gameweek: int, deadline: datetime
     ) -> Optional[str]:
-        """Explain why archived files are not a provable pre-deadline forecast."""
+        """Explain why archived metadata is not a provable pre-deadline forecast."""
         if metadata.get("prediction_gameweek") != gameweek:
             return "belongs to another gameweek"
-        if metadata.get("predictions_sha256") != predictions_sha256:
-            return (
-                "cannot be verified (written by an older version, or its "
-                "predictions file does not match its metadata)"
-            )
+        forecast = metadata.get("forecast")
+        if not isinstance(forecast, Mapping) or not {"columns", "data"} <= set(
+            forecast
+        ):
+            return "has no stored forecast (written by an older version)"
         captured_at = _parse_deadline(metadata.get("captured_at_utc"))
         if captured_at is None or captured_at >= deadline:
             return "was not captured before the deadline"
         return None
+
+    @staticmethod
+    def _forecast_payload(predictions: pd.DataFrame) -> dict[str, Any]:
+        """Predictions as exact JSON: column order, then one list per row."""
+        return {
+            "columns": [str(column) for column in predictions.columns],
+            "data": _json_safe(predictions.to_numpy(dtype=object).tolist()),
+        }
 
     def _capture_official_history(
         self,
@@ -607,8 +580,10 @@ class DataArchive:
         The deadline is checked after the inputs were fetched, under the lock
         frozen reads take, so a capture that runs past the deadline writes
         nothing and a forecast already served as frozen never changes. The
-        metadata, which proves the capture time and the predictions' digest,
-        is written last. Returns False once the deadline has passed.
+        metadata, which holds the forecast served once the gameweek closes,
+        is written last in a single atomic replace, so a failure part-way
+        leaves the previous forecast intact. Returns False once the deadline
+        has passed.
         """
         with self._lock:
             if not self._accepts_forecasts(deadline):

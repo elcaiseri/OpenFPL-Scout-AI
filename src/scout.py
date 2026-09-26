@@ -709,9 +709,9 @@ class FPLScout:
                 frozen.attrs.get("forecast_captured_at"),
             )
             # Inference is what normally archives results; keep collecting
-            # them (throttled, in the background), even after the final
-            # deadline.
-            self.data_archive.collect_results_in_background(self.official_client)
+            # them (throttled), even after the final deadline. This runs in the
+            # request because Cloud Run throttles CPU between requests.
+            self.data_archive.collect_results(self.official_client)
             return frozen
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
