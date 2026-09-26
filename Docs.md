@@ -178,15 +178,20 @@ its venue (`"Chelsea (H) / Tottenham (A)"`).
   "source": "official-fpl+fpl-data",
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",
+  "freeze_method": "deadline",
   "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
 
 `frozen` is true once the Gameweek's deadline has passed: the response is the
-archived pre-deadline forecast, captured at `forecast_captured_at`, and it does
-not change on later requests. Open Gameweeks are predicted live and report
-`frozen: false`, as does a closed Gameweek without an archived forecast that
-provably predates its deadline (including files written by older versions).
+frozen forecast, made at `forecast_captured_at`, and it does not change on
+later requests. `freeze_method` says how it was frozen: `deadline` for the
+forecast captured before the deadline, or `after-deadline` for a closed
+Gameweek that had no such forecast (for example, one that closed before frozen
+forecasts shipped) and was frozen on its first recall. That freeze keeps an
+older version's forecast when its archive proves it predates the deadline, and
+otherwise the prediction made on that recall. Open Gameweeks are predicted live
+and report `frozen: false`, as do closed ones when the archive is disabled.
 Player status shown alongside a frozen squad (for example on the dashboard) is
 current, but the picks and expected points are the ones made before the
 deadline.

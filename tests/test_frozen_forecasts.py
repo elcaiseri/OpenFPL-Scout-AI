@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 
 from main import _generate_scout_response
 from src.data_archive import DataArchive
@@ -241,12 +242,28 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertEqual(after.set_index("id").loc[injured, "expected_points"], 0.0)
         self.assertNotEqual(records(after), records(before))
 
-    def test_closed_gameweek_without_an_archived_forecast_is_predicted_live(self):
+    def test_a_closed_gameweek_that_was_never_frozen_freezes_on_first_recall(self):
         self.now[0] = AFTER_GW3_DEADLINE
+        first, squad_first = self.request()
+        # Later data would change a live prediction: stats are corrected, the
+        # captain is injured, ownership swings and a match is postponed.
+        self.fpl.after_the_deadline(injured_player=self.captain_id(squad_first))
+        self.client.clear_cache()
+        self.monotonic[0] += 3600
 
-        predictions, _ = self.request()
+        again, squad_again = self.request()
+        response = asyncio.run(self.respond())
 
-        self.assertFalse(predictions.attrs["frozen"])
+        self.assertTrue(first.attrs["frozen"])
+        self.assertEqual(first.attrs["freeze_method"], "after-deadline")
+        self.assertEqual(
+            first.attrs["forecast_captured_at"], AFTER_GW3_DEADLINE.isoformat()
+        )
+        self.assertEqual(records(again), records(first))
+        self.assertEqual(records(squad_again), records(squad_first))
+        self.assertTrue(response.frozen)
+        self.assertEqual(response.freeze_method, "after-deadline")
+        self.assertEqual(response.scout_team, records(squad_first))
 
     def test_frozen_squad_does_not_depend_on_the_archived_squad_file(self):
         _, squad_before = self.request()
@@ -260,35 +277,106 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertTrue(after.attrs["frozen"])
         self.assertEqual(records(squad_after), records(squad_before))
 
-    def test_a_forecast_an_older_version_archived_after_the_deadline_is_not_frozen(
-        self,
-    ):
+    def test_an_older_versions_pre_deadline_forecast_is_what_freezes(self):
         self.now[0] = AFTER_GW3_DEADLINE
-        live, _ = self.request()
-        # The previous version archived every request, even after the deadline.
-        root = Path(self.directory.name) / "2026-2027"
-        (root / "predictions").mkdir(parents=True, exist_ok=True)
-        (root / "metadata").mkdir(parents=True, exist_ok=True)
-        legacy = live.copy()
-        legacy["expected_points"] = 99.0
-        legacy.to_csv(root / "predictions/gw_03.csv", index=False)
-        (root / "metadata/gw_03.json").write_text(
+        live = self.predict_without_archive()
+        # An older version archived this before the deadline; it is what
+        # users saw, so it is frozen rather than today's prediction.
+        pre_deadline = live.assign(expected_points=live["expected_points"] + 1.0)
+        self.write_legacy_archive(pre_deadline, captured_at="2026-08-29T09:00:00+00:00")
+
+        frozen, _ = self.request()
+        again, _ = self.request()
+
+        archived = pd.read_csv(self.season_root / "predictions/gw_03.csv")
+        self.assertTrue(frozen.attrs["frozen"])
+        self.assertEqual(frozen.attrs["freeze_method"], "after-deadline")
+        self.assertEqual(frozen.attrs["forecast_captured_at"], "2026-08-29T09:00:00+00:00")
+        self.assertEqual(records(frozen), records(archived))
+        self.assertNotEqual(records(frozen), records(live))
+        self.assertEqual(records(again), records(frozen))
+
+    def test_an_older_versions_archive_from_after_the_deadline_is_not_frozen(self):
+        self.now[0] = AFTER_GW3_DEADLINE
+        live = self.predict_without_archive()
+        # Older versions archived every request, even after the deadline.
+        self.write_legacy_archive(
+            live.assign(expected_points=99.0), captured_at="2026-08-30T11:00:00+00:00"
+        )
+
+        frozen, _ = self.request()
+
+        self.assertTrue(frozen.attrs["frozen"])
+        self.assertEqual(records(frozen), records(live))
+        self.assertEqual(frozen.attrs["forecast_captured_at"], AFTER_GW3_DEADLINE.isoformat())
+        # The training record an older version wrote is left as it was.
+        archived = pd.read_csv(self.season_root / "predictions/gw_03.csv")
+        self.assertTrue((archived["expected_points"] == 99.0).all())
+
+    def test_with_the_archive_disabled_a_closed_gameweek_is_predicted_live(self):
+        self.now[0] = AFTER_GW3_DEADLINE
+        self.archive.enabled = False
+
+        predictions, _ = self.request()
+
+        self.assertFalse(predictions.attrs["frozen"])
+
+    def test_a_failed_freeze_serves_the_live_prediction_and_retries(self):
+        self.now[0] = AFTER_GW3_DEADLINE
+        with patch.object(DataArchive, "_write_bytes", side_effect=OSError("disk full")):
+            live = self.scout.get_official_predictions(3)
+        frozen = self.scout.get_official_predictions(3)
+
+        self.assertFalse(live.attrs["frozen"])
+        self.assertTrue(frozen.attrs["frozen"])
+        self.assertEqual(records(frozen), records(live))
+
+    def test_a_later_freeze_never_replaces_the_first(self):
+        self.now[0] = AFTER_GW3_DEADLINE
+        first = self.scout.get_official_predictions(3)
+
+        again = self.archive.freeze_after_deadline(
+            self.client, 3, first.assign(expected_points=0.0)
+        )
+
+        self.assertEqual(records(again), records(first))
+        self.assertEqual(records(self.scout.get_official_predictions(3)), records(first))
+
+    def predict_without_archive(self, gameweek=3):
+        """What a live prediction of the gameweek returns right now."""
+        archive = self.scout.data_archive
+        self.scout.data_archive = DataArchive(
+            Path(self.directory.name) / "unused", enabled=False
+        )
+        try:
+            return self.scout.get_official_predictions(gameweek)
+        finally:
+            self.scout.data_archive = archive
+
+    def write_legacy_archive(self, predictions, captured_at, gameweek=3):
+        """Files an older version archived: a predictions CSV and metadata
+        with its capture time but no stored forecast."""
+        (self.season_root / "predictions").mkdir(parents=True, exist_ok=True)
+        (self.season_root / "metadata").mkdir(parents=True, exist_ok=True)
+        predictions.to_csv(
+            self.season_root / f"predictions/gw_{gameweek:02d}.csv", index=False
+        )
+        (self.season_root / f"metadata/gw_{gameweek:02d}.json").write_text(
             json.dumps(
                 {
                     "archive_schema_version": 1,
-                    "captured_at_utc": "2026-08-30T11:00:00+00:00",
-                    "prediction_gameweek": 3,
+                    "captured_at_utc": captured_at,
+                    "prediction_gameweek": gameweek,
                     "source": "official-fpl",
+                    "inference": {"strategy": "model-ensemble"},
                 }
             ),
             encoding="utf-8",
         )
-        self.monotonic[0] += 3600
 
-        again, _ = self.request()
-
-        self.assertFalse(again.attrs["frozen"])
-        self.assertEqual(records(again), records(live))
+    @property
+    def season_root(self):
+        return Path(self.directory.name) / "2026-2027"
 
     def test_serving_the_final_frozen_forecast_still_archives_its_results(self):
         self.now[0] = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
@@ -319,7 +407,9 @@ class FrozenForecastTests(unittest.TestCase):
         after = asyncio.run(self.respond())
 
         self.assertFalse(before.frozen)
+        self.assertIsNone(before.freeze_method)
         self.assertTrue(after.frozen)
+        self.assertEqual(after.freeze_method, "deadline")
         self.assertIsNotNone(after.forecast_captured_at)
         self.assertEqual(after.scout_team, before.scout_team)
         self.assertEqual(after.player_points, before.player_points)

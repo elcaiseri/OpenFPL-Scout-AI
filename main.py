@@ -852,6 +852,7 @@ async def _generate_scout_response(
             source=str(predictions.attrs.get("source", "official-fpl")),
             frozen=bool(predictions.attrs.get("frozen", False)),
             forecast_captured_at=predictions.attrs.get("forecast_captured_at"),
+            freeze_method=predictions.attrs.get("freeze_method"),
         )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")

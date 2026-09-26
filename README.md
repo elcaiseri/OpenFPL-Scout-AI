@@ -193,13 +193,18 @@ instead of predicting again with newer injuries, ownership, or fixtures. Open
 Gameweeks are predicted live (`"frozen": false`). The served forecast is
 stored in the Gameweek's metadata file, which is replaced in one atomic write,
 so a failure part-way through a capture leaves the previous forecast intact.
-It is served as frozen only when the metadata names the Gameweek and was
-captured before the deadline.
-A closed Gameweek without such a forecast, for example with the archive
-disabled or with files written by an older version (which archived requests
-after deadlines too), is predicted live and reports `"frozen": false`. The
-archive assumes one service instance, so a single lock orders forecast writes
-and frozen reads.
+It is served as frozen when the metadata names the Gameweek and was captured
+before the deadline (`"freeze_method": "deadline"`).
+A closed Gameweek without such a forecast, for example one that closed before
+frozen forecasts shipped, is frozen on its first recall
+(`"freeze_method": "after-deadline"`). If an older version's archive proves it
+holds the forecast made before the deadline (captured earlier), that forecast
+is frozen; older versions archived requests after deadlines too, so otherwise
+the prediction made on that first recall is frozen. Either way
+`forecast_captured_at` is when the frozen forecast was made, and every later
+recall returns it unchanged. With the archive disabled, closed Gameweeks are
+predicted live (`"frozen": false`). The archive assumes one service instance,
+so a single lock orders forecast writes and frozen reads.
 
 Serving frozen forecasts still archives official results, at most every
 `data_archive.results_interval_seconds` (300), so the final Gameweek's results
