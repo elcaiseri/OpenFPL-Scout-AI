@@ -1047,7 +1047,8 @@ async def get_player_predictions(
                 if str(candidate or "").casefold() != str(value).casefold():
                     return False
             elif key == "was_home":
-                if bool(candidate) != value:
+                # Blank and mixed-venue double gameweeks have no single venue.
+                if candidate is None or bool(candidate) != value:
                     return False
             elif candidate != value:
                 return False

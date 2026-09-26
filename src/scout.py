@@ -89,6 +89,37 @@ def _canonical_team(name: Any) -> Any:
     return TEAM_NAME_ALIASES.get(str(name), str(name))
 
 
+def _venues(fixtures: List[Mapping[str, Any]]) -> List[Optional[bool]]:
+    return [
+        None if pd.isna(fixture.get("was_home")) else bool(fixture["was_home"])
+        for fixture in fixtures
+    ]
+
+
+def _shared_venue(fixtures: List[Mapping[str, Any]]) -> Any:
+    """Return the venue every fixture shares, or NaN when they differ."""
+    venues = set(_venues(fixtures))
+    if len(venues) == 1 and None not in venues:
+        return venues.pop()
+    return np.nan
+
+
+def _opponent_label(fixtures: List[Mapping[str, Any]]) -> Any:
+    """Join a gameweek's opponents, marking each venue when they differ."""
+    if not fixtures:
+        return np.nan
+    names = [
+        str(_canonical_team(fixture.get("opponent_team_name"))) for fixture in fixtures
+    ]
+    venues = _venues(fixtures)
+    if len(set(venues)) > 1:
+        names = [
+            name if venue is None else f"{name} ({'H' if venue else 'A'})"
+            for name, venue in zip(names, venues)
+        ]
+    return " / ".join(names)
+
+
 @dataclass(frozen=True)
 class ModelArtifact:
     """A named, weighted deployment model."""
@@ -339,16 +370,10 @@ class FPLScout:
         result["gameweek"] = gameweek
         result["_fixtures"] = team_fixtures
         result["fixture_count"] = team_fixtures.map(len).astype(int)
-        result["opponent_team_name"] = team_fixtures.map(
-            lambda items: " / ".join(
-                str(_canonical_team(item.get("opponent_team_name"))) for item in items
-            )
-            if items
-            else np.nan
-        )
-        result["was_home"] = team_fixtures.map(
-            lambda items: items[0].get("was_home", np.nan) if items else np.nan
-        )
+        result["opponent_team_name"] = team_fixtures.map(_opponent_label)
+        # A double gameweek with a home and an away match has no single venue;
+        # its opponent label carries each fixture's venue instead.
+        result["was_home"] = team_fixtures.map(_shared_venue)
         result = normalize_fpl_columns(result)
 
         blank = result["fixture_count"].eq(0)
