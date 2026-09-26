@@ -153,7 +153,19 @@ Team ratings use the latest picks made public by official FPL. When planning a
 future Gameweek, OpenFPL scores that published lineup with the selected
 Gameweek's projections. The 100-point rating allocates 80 points to starting-XI
 quality against the budget-free AI benchmark, 10 to captaincy, and 10 to
-availability.
+availability. A picked player FPL no longer lets managers select (for example,
+after leaving the league) is scored with zero points and zero availability and
+is marked `projection_missing`.
+
+Projections are made per fixture: double-gameweek players receive the sum of
+both matches, and players whose club has no fixture receive zero. Model points
+are multiplied by `availability_factor`, the player's current official chance
+of playing, and players with zero availability are never selected.
+
+A double-gameweek player's `opponent_team_name` joins both opponents
+(`"Chelsea / Tottenham"`). `was_home` is set only when every fixture shares the
+venue; with one home and one away match it is `null` and each opponent carries
+its venue (`"Chelsea (H) / Tottenham (A)"`).
 
 ## Response
 

@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -10,8 +11,10 @@ from main import (
     _documentation_links,
     _is_production_environment,
     app,
+    get_player_predictions,
     rate_public_manager_team,
 )
+from src.models import PlayerPointsModel
 
 
 class FakeRatingOfficialClient:
@@ -76,7 +79,49 @@ class FakeRatingScout:
         return predictions.copy()
 
 
+class DepartedPlayerRatingScout(FakeRatingScout):
+    """Player 5 is no longer selectable, so the model has no projection."""
+
+    def get_official_predictions(self, gameweek):
+        predictions = super().get_official_predictions(gameweek)
+        trimmed = predictions.loc[predictions["id"] != 5].reset_index(drop=True)
+        trimmed.attrs = predictions.attrs
+        return trimmed
+
+
+class VenueScout(FakeRatingScout):
+    """Player 1 plays at home, 2 away, 3 once at each venue, and 4 blanks."""
+
+    def __init__(self):
+        super().__init__()
+        self.data_archive = SimpleNamespace(capture_squad=lambda *args: None)
+
+    def get_official_predictions(self, gameweek):
+        predictions = super().get_official_predictions(gameweek)
+        predictions["was_home"] = pd.Series(
+            [True, False, None, None, *[True] * 11], dtype=object
+        )
+        return predictions
+
+
 class APISchemaTests(unittest.TestCase):
+    def test_venue_filter_skips_players_without_a_single_venue(self):
+        with patch("main.scout", VenueScout(), create=True):
+            home, away = (
+                asyncio.run(
+                    get_player_predictions(
+                        PlayerPointsModel(gameweek=1, was_home=venue), api_key="key"
+                    )
+                )
+                for venue in (True, False)
+            )
+
+        home_ids = [player["id"] for player in home.player_points]
+        self.assertEqual([player["id"] for player in away.player_points], [2])
+        self.assertNotIn(3, home_ids)
+        self.assertNotIn(4, home_ids)
+        self.assertIn(1, home_ids)
+
     def test_public_team_rating_combines_manager_picks_and_predictions(self):
         with patch("main.scout", FakeRatingScout(), create=True):
             result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
@@ -86,6 +131,19 @@ class APISchemaTests(unittest.TestCase):
         self.assertEqual(result.rating, 100)
         self.assertEqual(result.grade, "A+")
         self.assertEqual(len(result.squad), 15)
+
+    def test_team_rating_scores_squads_holding_unprojectable_players(self):
+        with patch("main.scout", DepartedPlayerRatingScout(), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        departed = next(player for player in result.squad if player["id"] == 5)
+        self.assertEqual(len(result.squad), 15)
+        self.assertTrue(departed["projection_missing"])
+        self.assertEqual(departed["expected_points"], 0.0)
+        self.assertLess(result.rating, 100)
+        self.assertTrue(
+            any("Availability needs checking" in risk for risk in result.risks)
+        )
 
     def test_production_keeps_only_redoc_ui(self):
         documentation = _documentation_config(is_production=True)

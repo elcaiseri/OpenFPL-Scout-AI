@@ -916,14 +916,21 @@ async def rate_public_manager_team(
             if player.get("id") is not None
         }
         squad = []
-        missing_players = []
         for pick in picks_payload.get("picks", []):
             player_id = int(pick.get("element") or 0)
+            official = pick.get("player") or {}
             prediction = predictions_by_id.get(player_id)
             if prediction is None:
-                missing_players.append(player_id)
-                continue
-            official = pick.get("player") or {}
+                # Players FPL no longer lets managers select (for example, after
+                # leaving the league) lack a projection, as do players added
+                # after a closed gameweek's frozen forecast was captured. They
+                # still count toward the published squad, with no points and no
+                # availability, and are flagged ``projection_missing``.
+                prediction = {
+                    "expected_points": 0.0,
+                    "availability_factor": 0.0,
+                    "projection_missing": True,
+                }
             role = (
                 "captain"
                 if pick.get("is_captain")
@@ -941,12 +948,6 @@ async def rate_public_manager_team(
                     "role": role,
                 }
             )
-        if missing_players:
-            raise ValueError(
-                "Could not project every published squad player: "
-                + ", ".join(str(player_id) for player_id in missing_players)
-            )
-
         benchmark = await run_in_threadpool(scout.select_optimal_team, predictions)
         benchmark_records = json.loads(benchmark.to_json(orient="records"))
         rating = rate_manager_team(squad, benchmark_records)
@@ -1046,7 +1047,8 @@ async def get_player_predictions(
                 if str(candidate or "").casefold() != str(value).casefold():
                     return False
             elif key == "was_home":
-                if bool(candidate) != value:
+                # Blank and mixed-venue double gameweeks have no single venue.
+                if candidate is None or bool(candidate) != value:
                     return False
             elif candidate != value:
                 return False

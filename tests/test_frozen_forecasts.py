@@ -234,8 +234,11 @@ class FrozenForecastTests(unittest.TestCase):
 
         after, _ = self.request(gameweek=4)
 
-        # GW3's first result changes the history GW4 is predicted from.
+        # GW3's first result changes the history GW4 is predicted from, and
+        # the injured player is no longer projected.
+        injured = self.captain_id(squad_before)
         self.assertFalse(after.attrs["frozen"])
+        self.assertEqual(after.set_index("id").loc[injured, "expected_points"], 0.0)
         self.assertNotEqual(records(after), records(before))
 
     def test_closed_gameweek_without_an_archived_forecast_is_predicted_live(self):
