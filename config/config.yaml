@@ -89,6 +89,8 @@ data_archive:
   enabled: true
   root_path: "data/archive"
   season: "auto"
+  # Serving frozen forecasts still archives official results this often.
+  results_interval_seconds: 300
 
 # Model Information
 models:

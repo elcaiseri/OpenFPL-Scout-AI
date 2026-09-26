@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
+from src.data_archive import training_safe_history
 from src.official_fpl import OFFICIAL_FPL_API, OfficialFPLClient
 
 
@@ -44,7 +45,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     )
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    history = client.player_history(target_gameweek, selectable_only=False)
+    # Historical rows must not carry ownership from the collection date.
+    history = training_safe_history(
+        client.player_history(target_gameweek, selectable_only=False)
+    )
     history.to_csv(output, index=False)
     metadata = {
         "source": OFFICIAL_FPL_API,
@@ -52,6 +56,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         "target_gameweek": target_gameweek,
         "rows": len(history),
         "players": int(history["id"].nunique()),
+        "total_players": bootstrap.get("total_players"),
         "output": str(output),
     }
     output.with_suffix(".metadata.json").write_text(

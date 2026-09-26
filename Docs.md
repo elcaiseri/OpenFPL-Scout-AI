@@ -164,9 +164,20 @@ availability.
   "gameweek": 1,
   "version": "6.0.0",
   "source": "official-fpl+fpl-data",
+  "frozen": true,
+  "forecast_captured_at": "2026-08-29T09:58:12+00:00",
   "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
 }
 ```
+
+`frozen` is true once the Gameweek's deadline has passed: the response is the
+archived pre-deadline forecast, captured at `forecast_captured_at`, and it does
+not change on later requests. Open Gameweeks are predicted live and report
+`frozen: false`, as does a closed Gameweek without an archived forecast that
+provably predates its deadline (including files written by older versions).
+Player status shown alongside a frozen squad (for example on the dashboard) is
+current, but the picks and expected points are the ones made before the
+deadline.
 
 ## Historical model training
 
@@ -179,6 +190,9 @@ uv run python -m scripts.collect_official_fpl --gameweek 39
 ```
 
 Official archives are written to `data/official`, the trainer's default input.
+Played rows leave `selected_by_percent` empty because Official FPL exposes only
+current ownership; use `official_selected` with `total_players` from the
+metadata for point-in-time ownership.
 The exact current-season file under `data/external` can be a validated local
 fallback for inference enrichment but is not the default retraining input.
 
