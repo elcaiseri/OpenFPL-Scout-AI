@@ -283,6 +283,9 @@ async def check_health():
             "start_gameweek": scout.fpl_data_start_gameweek,
             "season": scout.fpl_data_season,
             "permission_status": scout.fpl_data_permission_status,
+            "permission_pending_acknowledged": (
+                scout.fpl_data_permission_acknowledged
+            ),
             "last_result": scout.last_data_enrichment,
         },
         "data_archive": scout.data_archive.status(),

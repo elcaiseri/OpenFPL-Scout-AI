@@ -28,7 +28,7 @@ BASE_URL = "https://www.fpl-data.co.uk"
 SOURCE_PAGE = f"{BASE_URL}/statistics"
 DASH_UPDATE_URL = f"{BASE_URL}/_dash-update-component"
 USER_AGENT = (
-    "OpenFPL-Scout-AI/5.3 "
+    "OpenFPL-Scout-AI "
     "(+https://github.com/elcaiseri/OpenFPL-Scout-AI; permission pending)"
 )
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
@@ -325,23 +325,34 @@ def validate_csv(raw: bytes, *, minimum_rows: int = MIN_ROWS) -> DatasetSummary:
     )
 
 
-def check_for_regression(current: DatasetSummary, incoming: DatasetSummary) -> None:
-    """Reject a plausible stale, truncated, or lower-coverage replacement."""
+def check_for_regression(
+    current: DatasetSummary,
+    incoming: DatasetSummary,
+    *,
+    minimum_ratio: float = 0.8,
+) -> None:
+    """Reject a plausible stale, truncated, or lower-coverage replacement.
+
+    ``minimum_ratio`` is the share of the current rows and players the
+    incoming file must keep. The interactive importer tolerates some churn;
+    unattended runtime refreshes pass 1.0, or 0.95 for a download that adds
+    a newer gameweek.
+    """
     if incoming.latest_observed_gameweek < current.latest_observed_gameweek:
         raise ValueError(
             "Incoming CSV regresses observed gameweek coverage "
             f"({incoming.latest_observed_gameweek} < "
             f"{current.latest_observed_gameweek})"
         )
-    if incoming.rows < current.rows * 0.8:
+    if incoming.rows < current.rows * minimum_ratio:
         raise ValueError(
             f"Incoming CSV row count dropped too far ({incoming.rows} < "
-            f"80% of {current.rows})"
+            f"{minimum_ratio:.0%} of {current.rows})"
         )
-    if incoming.players < current.players * 0.8:
+    if incoming.players < current.players * minimum_ratio:
         raise ValueError(
             f"Incoming CSV player count dropped too far ({incoming.players} < "
-            f"80% of {current.players})"
+            f"{minimum_ratio:.0%} of {current.players})"
         )
     lost_features = sorted(
         set(current.supplied_target_features).difference(
@@ -352,7 +363,8 @@ def check_for_regression(current: DatasetSummary, incoming: DatasetSummary) -> N
         raise ValueError(f"Incoming CSV loses model feature columns: {lost_features}")
 
 
-def _atomic_write(path: Path, content: bytes) -> None:
+def _stage_file(path: Path, content: bytes) -> Path:
+    """Write content to a synced temporary file beside ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -363,9 +375,49 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary_file.write(content)
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    return temporary_path
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    temporary_path = _stage_file(path, content)
+    try:
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def atomic_write_pair(
+    data_path: Path, data: bytes, metadata_path: Path, metadata: bytes
+) -> None:
+    """Replace a data file and its checksum metadata together.
+
+    Both files are staged before either is replaced, and the previous data
+    file is restored if the metadata cannot be committed, so a failure never
+    leaves data whose checksum disagrees with its metadata.
+    """
+    previous = data_path.read_bytes() if data_path.is_file() else None
+    staged_data = _stage_file(data_path, data)
+    try:
+        staged_metadata = _stage_file(metadata_path, metadata)
+    except BaseException:
+        staged_data.unlink(missing_ok=True)
+        raise
+    try:
+        os.replace(staged_data, data_path)
+        try:
+            os.replace(staged_metadata, metadata_path)
+        except BaseException:
+            if previous is None:
+                data_path.unlink(missing_ok=True)
+            else:
+                _atomic_write(data_path, previous)
+            raise
+    finally:
+        staged_data.unlink(missing_ok=True)
+        staged_metadata.unlink(missing_ok=True)
 
 
 def _resolve_season(requested: str, seasons: Sequence[Season]) -> Season:
@@ -452,10 +504,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             current = validate_csv(current_raw)
             if not args.allow_regression:
                 check_for_regression(current, incoming)
-            _atomic_write(output, raw)
             status = "replaced"
-    else:
-        _atomic_write(output, raw)
 
     metadata = {
         "access_method": "public Download CSV button (Dash callback)",
@@ -469,10 +518,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         **asdict(incoming),
     }
     metadata_path = output.with_suffix(".metadata.json")
-    _atomic_write(
-        metadata_path,
-        (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    metadata_bytes = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
     )
+    if status == "unchanged":
+        _atomic_write(metadata_path, metadata_bytes)
+    else:
+        atomic_write_pair(output, raw, metadata_path, metadata_bytes)
     print(json.dumps(metadata, indent=2, sort_keys=True))
     return 0
 
