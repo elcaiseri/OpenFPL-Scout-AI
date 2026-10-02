@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -58,6 +59,9 @@ class FakeOfficialClient:
     def next_gameweek(self):
         return 2
 
+    def bootstrap(self):
+        return {"events": [{"id": 1, "deadline_time": "2026-08-15T10:00:00Z"}]}
+
     def player_history(self, gameweek):
         history = player_history()
         if gameweek == 1:
@@ -113,6 +117,27 @@ def player_history():
                 }
             )
     return pd.DataFrame(rows)
+
+
+class NextSeasonOfficialClient(FakeOfficialClient):
+    """Official FPL has rolled over to 2027-28."""
+
+    def bootstrap(self):
+        return {"events": [{"id": 1, "deadline_time": "2027-08-14T10:00:00Z"}]}
+
+
+class UnreachableSeasonOfficialClient(FakeOfficialClient):
+    """History loads (from cache), but the season lookup fails."""
+
+    def bootstrap(self):
+        raise ConnectionError("bootstrap-static timed out")
+
+
+class SeasonlessOfficialClient(FakeOfficialClient):
+    """A client that cannot report the official season at all."""
+
+    bootstrap = None
+
 
 
 def league_history():
@@ -574,6 +599,61 @@ class ScoutInferenceTests(unittest.TestCase):
             result.attrs["inference"]["data_enrichment"]["status"],
             "before-start-gameweek",
         )
+
+    def test_fpl_data_from_another_season_is_never_used(self):
+        provider = FakeFPLDataProvider()
+        scout = FPLScout(
+            enable_fpl_data(scout_config()),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(2),
+            official_client=NextSeasonOfficialClient(),
+            fpl_data_provider=provider,
+        )
+
+        result = scout.get_official_predictions(gameweek=2)
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(result.attrs["source"], "official-fpl")
+        enrichment = result.attrs["inference"]["data_enrichment"]
+        self.assertEqual(enrichment["status"], "season-mismatch")
+        self.assertIn("2027-2028", enrichment["error"])
+
+    def test_fpl_data_is_not_used_when_the_official_season_is_unknown(self):
+        for client in (UnreachableSeasonOfficialClient(), SeasonlessOfficialClient()):
+            with self.subTest(client=type(client).__name__):
+                provider = FakeFPLDataProvider()
+                scout = FPLScout(
+                    enable_fpl_data(scout_config()),
+                    fixture_provider=self.fixtures,
+                    model_loader=lambda path: ConstantModel(2),
+                    official_client=client,
+                    fpl_data_provider=provider,
+                )
+
+                result = scout.get_official_predictions(gameweek=2)
+
+                self.assertEqual(provider.calls, [])
+                enrichment = result.attrs["inference"]["data_enrichment"]
+                self.assertEqual(enrichment["status"], "season-unverified")
+
+    def test_explicit_environment_false_keeps_downloads_off_when_granted(self):
+        config = enable_fpl_data(scout_config())
+        config["fpl_data_inference"]["permission_status"] = "granted"
+        allowed = {}
+        for value in (None, "false"):
+            with patch.dict("os.environ", {}, clear=False):
+                os.environ.pop("FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING", None)
+                if value is not None:
+                    os.environ["FPL_DATA_ACKNOWLEDGE_PERMISSION_PENDING"] = value
+                scout = FPLScout(
+                    config,
+                    fixture_provider=self.fixtures,
+                    model_loader=lambda path: ConstantModel(2),
+                    official_client=FakeOfficialClient(),
+                )
+            allowed[value] = scout.fpl_data_provider.remote_download_allowed
+
+        self.assertEqual(allowed, {None: True, "false": False})
 
     def test_environment_kill_switch_disables_enrichment(self):
         provider = FakeFPLDataProvider()

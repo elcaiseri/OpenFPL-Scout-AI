@@ -1,16 +1,75 @@
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from scripts.download_fpl_data import (
     FPLDataClient,
     Season,
     _atomic_write,
     _resolve_season,
+    atomic_write_pair,
     check_for_regression,
+    pending_metadata_path,
     validate_csv,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def fail_replacing(name):
+    """Make os.replace fail only when committing the file called ``name``."""
+    real_replace = os.replace
+
+    def replace(source, destination):
+        if Path(destination).name == name:
+            raise OSError("disk full")
+        return real_replace(source, destination)
+
+    return patch("scripts.download_fpl_data.os.replace", side_effect=replace)
+
+
+def write_pair_killed_before_commit(data_path, data, metadata_path, metadata):
+    """Run atomic_write_pair in a process killed just before the metadata
+    commit, as when an instance is stopped mid-write."""
+    payloads = Path(data_path).parent / "payloads"
+    payloads.mkdir(exist_ok=True)
+    (payloads / "data").write_bytes(data)
+    (payloads / "metadata").write_bytes(metadata)
+    script = f"""
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from scripts.download_fpl_data import atomic_write_pair
+
+real_replace = os.replace
+
+
+def replace(source, destination):
+    if Path(destination) == Path({str(metadata_path)!r}):
+        os._exit(9)  # Killed: neither cleanup nor rollback runs.
+    return real_replace(source, destination)
+
+
+os.replace = replace
+payloads = Path({str(payloads)!r})
+atomic_write_pair(
+    Path({str(data_path)!r}),
+    (payloads / "data").read_bytes(),
+    Path({str(metadata_path)!r}),
+    (payloads / "metadata").read_bytes(),
+)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    if result.returncode != 9:
+        raise AssertionError(f"Writer was not killed: {result.stderr}")
 
 
 HEADER = (
@@ -120,6 +179,14 @@ class FPLDataDownloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regresses observed gameweek"):
             check_for_regression(current, incoming)
 
+    def test_strict_regression_ratio_rejects_any_shrink(self):
+        current = validate_csv(csv_bytes(rows=110))
+        incoming = validate_csv(csv_bytes(rows=105))
+
+        check_for_regression(current, incoming)
+        with self.assertRaisesRegex(ValueError, "100% of 110"):
+            check_for_regression(current, incoming, minimum_ratio=1.0)
+
     def test_resolves_latest_value_and_end_year(self):
         seasons = [
             Season("2024/25", "2024_25", 2024, 2025),
@@ -139,6 +206,58 @@ class FPLDataDownloadTests(unittest.TestCase):
 
             self.assertEqual(destination.read_bytes(), b"new")
             self.assertEqual(list(Path(directory).glob("*.tmp")), [])
+
+    def test_pair_write_restores_data_when_metadata_cannot_commit(self):
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "dataset.csv"
+            metadata = Path(directory) / "dataset.metadata.json"
+            data.write_bytes(b"old data")
+            metadata.write_bytes(b"old metadata")
+
+            with fail_replacing(metadata.name), self.assertRaises(OSError):
+                atomic_write_pair(data, b"new data", metadata, b"new metadata")
+
+            self.assertEqual(data.read_bytes(), b"old data")
+            self.assertEqual(metadata.read_bytes(), b"old metadata")
+            self.assertEqual(list(Path(directory).glob("*.tmp")), [])
+
+    def test_pair_write_leaves_no_data_file_when_first_write_fails(self):
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "dataset.csv"
+            metadata = Path(directory) / "dataset.metadata.json"
+
+            with fail_replacing(metadata.name), self.assertRaises(OSError):
+                atomic_write_pair(data, b"new data", metadata, b"new metadata")
+
+            self.assertFalse(data.exists())
+            self.assertFalse(metadata.exists())
+
+    def test_pair_write_killed_before_the_metadata_commit_leaves_a_record(self):
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "dataset.csv"
+            metadata = Path(directory) / "dataset.metadata.json"
+            atomic_write_pair(data, b"old data", metadata, b"old metadata")
+
+            write_pair_killed_before_commit(
+                data, b"new data", metadata, b"new metadata"
+            )
+
+            self.assertEqual(data.read_bytes(), b"new data")
+            self.assertEqual(metadata.read_bytes(), b"old metadata")
+            self.assertEqual(
+                pending_metadata_path(metadata).read_bytes(), b"new metadata"
+            )
+
+    def test_pair_write_commits_both_files(self):
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "dataset.csv"
+            metadata = Path(directory) / "dataset.metadata.json"
+
+            atomic_write_pair(data, b"new data", metadata, b"new metadata")
+
+            self.assertEqual(data.read_bytes(), b"new data")
+            self.assertEqual(metadata.read_bytes(), b"new metadata")
+            self.assertFalse(pending_metadata_path(metadata).exists())
 
 
 if __name__ == "__main__":
