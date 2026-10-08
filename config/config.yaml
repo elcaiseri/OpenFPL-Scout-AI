@@ -100,31 +100,35 @@ data_archive:
   # Serving frozen forecasts still archives official results this often.
   results_interval_seconds: 300
 
-# Model Information
+# Full-data refits from training/runs/2026-10-08-tuned (89,971 rows through GW5).
+# Weights were selected using development out-of-fold predictions.
 models:
   linear_regression:
-    version: "v5.0"
-    last_trained: "August 14, 2026"
+    version: "2026-10-08-tuned"
+    last_trained: "October 8, 2026"
     path: "models/linear_regression_reg.pkl"
     year: 2026-2027
+    #weight: 0.15414759722009633
 
   xgboost:
-    version: "v5.0"
-    last_trained: "August 14, 2026"
+    version: "2026-10-08-tuned"
+    last_trained: "October 8, 2026"
     path: "models/xgboost_reg.pkl"
     year: 2026-2027
+    #weight: 0.2621678786738037
 
   catboost:
-    version: "v5.0"
-    last_trained: "August 14, 2026"
+    version: "2026-10-08-tuned"
+    last_trained: "October 8, 2026"
     path: "models/catboost_reg.pkl"
     year: 2026-2027
+    #weight: 0.31261567631493004
 
   mlp:
-    version: "v1.0"
-    last_trained: "August 14, 2026"
+    version: "2026-10-08-tuned"
+    last_trained: "October 8, 2026"
     path: "models/mlp_reg.pkl"
     year: 2026-2027
+    #weight: 0.27106884779116996
 
-
-version: "6.0.0"
+version: "6.1.0"
