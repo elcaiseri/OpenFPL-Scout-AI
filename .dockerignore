@@ -55,3 +55,8 @@ mlruns/
 mlartifacts/
 catboost_info/
 trainer*.py
+
+# Social media pack tooling and output
+assets/social/
+scripts/social_reel/
+out/
