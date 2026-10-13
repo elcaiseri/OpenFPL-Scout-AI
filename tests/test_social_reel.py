@@ -135,6 +135,44 @@ class SocialReelRecapTest(unittest.TestCase):
         with self.assertRaises(RecapError):
             build_recap(parse_squad(self.payload), points_from_live(partial), self.info)
 
+    def test_after_deadline_freeze_is_labelled_retro(self):
+        self.assertTrue(self.recap().locked_pre_deadline)
+        retro = copy.deepcopy(self.payload)
+        retro["freeze_method"] = "after-deadline"
+        retro["forecast_captured_at"] = "2026-10-12T09:00:00+00:00"
+        recap = build_recap(parse_squad(retro), points_from_live(self.live), self.info)
+        self.assertFalse(recap.locked_pre_deadline)
+        text = recap_caption(recap)
+        self.assertIn("retro forecast", text)
+        self.assertNotIn("no hindsight", text)
+
+    def test_cta_points_at_next_open_gameweek(self):
+        self.assertEqual(self.recap().cta_gameweek, 7)
+        info = gameweek_info({"events": [{"id": 6}, {"id": 9, "is_next": True}]}, 6)
+        recap = build_recap(parse_squad(self.payload), points_from_live(self.live), info)
+        self.assertEqual(recap.cta_gameweek, 9)
+
+    def _live_with(self, element_id, minutes, points):
+        live = copy.deepcopy(self.live)
+        for element in live["elements"]:
+            if element["id"] == element_id:
+                element["stats"].update(minutes=minutes, total_points=points)
+        return points_from_live(live)
+
+    def test_auto_sub_replaces_starter_who_did_not_play(self):
+        # Saka (MID, starter) did not play: first bench outfielder Tarkowski (3 pts) comes on, 4-4-2.
+        recap = build_recap(parse_squad(self.payload), self._live_with(12, 0, 0), self.info)
+        self.assertEqual([(off.name, on.name) for off, on in recap.subs], [("Saka", "Tarkowski")])
+        self.assertIn("Tarkowski", recap.xi_names)
+        self.assertEqual(recap.total, 85 - 2 + 3)
+        self.assertIn("Auto-sub: Tarkowski (3 pts) on for Saka", recap_caption(recap))
+
+    def test_vice_takes_armband_when_captain_did_not_play(self):
+        recap = build_recap(parse_squad(self.payload), self._live_with(124, 0, 0), self.info)
+        self.assertEqual(recap.armband_player.name, "Haaland")
+        # Groß's 6 (doubled) out, Tarkowski's 3 on, Haaland's 6 doubled.
+        self.assertEqual(recap.total, 85 - 12 + 3 + 6)
+
     def test_recap_caption(self):
         text = recap_caption(self.recap())
         self.assertIn("Gameweek 6 recap", text)

@@ -68,8 +68,13 @@ class RecapReel(Reel):
         edge = LIME if role == "C" else AQUA if role == "V" else (255, 255, 255)
         d.rounded_rectangle([0, 0, cw - 1, ch - 1], 22, outline=A(edge, 1), width=3 if role else 1)
         d.rounded_rectangle([cw * 0.15, 0, cw * 0.85, 5], 3, fill=A(PLUM600, 1))
-        d.text((cw / 2, 28), "BENCH" if bench else p.position, font=font("black", 15),
-               fill=A(GREY_TXT if bench else PLUM600, 1), anchor="mm")
+        if p.name in self.rc.subbed_off:
+            tag = "DIDN'T PLAY"
+        elif p.name in self.rc.subbed_on:
+            tag = f"AUTO-SUB · {p.position}"
+        else:
+            tag = "BENCH" if bench else p.position
+        d.text((cw / 2, 28), tag, font=font("black", 15), fill=A(GREY_TXT if bench else PLUM600, 1), anchor="mm")
         d.text((cw / 2, 58), p.name, font=fit(p.name, "black", 30, cw - 20), fill=A(INK950, 1), anchor="mm")
         d.text((cw / 2, 87), p.club_short, font=fit(p.club_short, "b", 19, cw - 20), fill=A(GREY_TXT, 1), anchor="mm")
         opp = p.opponent_codes
@@ -135,7 +140,8 @@ class RecapReel(Reel):
         d.rectangle([W / 2 - lw / 2, 1282, W / 2 + lw / 2, 1290], fill=A(PINK, 1))
         d.text((W / 2, 1360), "AI forecast  vs  what actually happened", font=font("sb", 36), fill=A(PAPER, p3),
                anchor="mm")
-        pill = "Forecast locked at the deadline — no hindsight"
+        pill = ("Forecast locked at the deadline — no hindsight" if self.rc.locked_pre_deadline else
+                "Retro forecast — made after the deadline, not a live pick")
         pf = fit(pill, "b", 28, 900)
         pw = pf.getlength(pill) + 64
         d.rounded_rectangle([W / 2 - pw / 2, 1420, W / 2 + pw / 2, 1482], 31, fill=A(PLUM800, p3),
@@ -147,8 +153,10 @@ class RecapReel(Reel):
         d = ImageDraw.Draw(base)
         p = eo(prog(t, 0.0, 0.45))
         disp(d, (W / 2, 330), "THE SCORE", 96, A(PAPER, p))
-        d.text((W / 2, 410), f"Best-xP starting XI ({rc.formation})  ·  captain doubled", font=font("sb", 30),
-               fill=A(MUTED, p), anchor="mm")
+        sub = f"Best-xP starting XI ({rc.formation})  ·  captain doubled"
+        if rc.subs:
+            sub += f"  ·  {len(rc.subs)} auto-sub" + ("s" if len(rc.subs) > 1 else "")
+        d.text((W / 2, 410), sub, font=fit(sub, "sb", 30, 980), fill=A(MUTED, p), anchor="mm")
         q = eo(prog(t, 0.3, 1.3))
         pc = eback(prog(t, 0.2, 0.6))
         glow = Image.new("RGBA", (800, 600), (0, 0, 0, 0))
@@ -159,7 +167,7 @@ class RecapReel(Reel):
         rows = [("OpenFPL Scout XI", rc.total, LIME, f"{rc.total}")]
         if rc.info.average is not None:
             rows.append((f"GW{self.gw} average manager", rc.info.average, MUTED, f"{rc.info.average}"))
-        rows.append(("Locked forecast", rc.xp_total, AQUA, f"{rc.xp_total:.1f} xP"))
+        rows.append(("Locked forecast" if rc.locked_pre_deadline else "Retro forecast", rc.xp_total, AQUA, f"{rc.xp_total:.1f} xP"))
         vmax = max(r[1] for r in rows) * 1.05
         for i, (label, v, col, txt) in enumerate(rows):
             qa = eo(prog(t, 1.4 + i * 0.2, 0.6))
@@ -184,10 +192,12 @@ class RecapReel(Reel):
         cx, cy = W / 2, 760
         card = self.big_captain.copy()
         cd = ImageDraw.Draw(card)
-        cd.text((400, 520), f"{round(rc.pts(c) * 2 * eo(prog(t, 0.6, 1.0)))}", font=font("disp", 120),
+        mult = 2 if rc.armband_player is c else 1
+        cd.text((400, 520), f"{round(rc.pts(c) * mult * eo(prog(t, 0.6, 1.0)))}", font=font("disp", 120),
                 fill=A(PAPER, 1), anchor="mm")
         cd.text((548, 545), "PTS", font=font("black", 40), fill=A(LIME, 1), anchor="mm")
-        cd.text((670, 470), "×2", font=font("black", 28), fill=A(MUTED, 1), anchor="rm")
+        if mult == 2:
+            cd.text((670, 470), "×2", font=font("black", 28), fill=A(MUTED, 1), anchor="rm")
         paste(base, shadowed(card, 24, 14, 120), cx, cy, cl(pc * 1.5), scale=0.85 + 0.15 * pc)
         paste(base, self.role_badge("C", 110), cx + 400, cy - 300, cl(prog(t, 0.6, 0.3)),
               scale=0.5 + 0.5 * eback(prog(t, 0.6, 0.5)))
@@ -195,8 +205,12 @@ class RecapReel(Reel):
         paste(base, self.vice_row, W / 2, 1285 + 40 * (1 - pv), pv)
         pn = eo(prog(t, 2.1, 0.5))
         best = rc.hindsight_captain()
-        line = (f"Hindsight armband: {best.name} ({rc.pts(best)} pts)" if best.name != c.name
-                else "The armband was the best pick in the 15")
+        if rc.armband_player is not c:
+            line = f"{c.name} didn't play — {rc.armband_player.name} took the armband"
+        elif best.name != c.name:
+            line = f"Hindsight armband: {best.name} ({rc.pts(best)} pts)"
+        else:
+            line = "The armband was the best pick in the 15"
         d.text((W / 2, 1450), line, font=fit(line, "xb", 38, 960), fill=A(PINK, pn), anchor="mm")
 
     def s_pitch(self, base: Image.Image, t: float) -> None:
@@ -248,7 +262,7 @@ class RecapReel(Reel):
             disp(d, (W - 70, y + 4), f"{round(pts * q)}", 78, A(col, al), anchor="rm")
         pl2 = eo(prog(t, 2.0, 0.4))
         d.rectangle([W / 2 - 150, 1178, W / 2 - 144, 1202], fill=A(AQUA, pl2))
-        d.text((W / 2 - 132, 1190), "= locked forecast (xP)", font=font("sb", 24), fill=A(MUTED, pl2), anchor="lm")
+        d.text((W / 2 - 132, 1190), "= locked forecast (xP)" if rc.locked_pre_deadline else "= retro forecast (xP)", font=font("sb", 24), fill=A(MUTED, pl2), anchor="lm")
         ps = eo(prog(t, 1.6, 0.5))
         sy = 1240
         d.text((W / 2, sy), "WHERE IT MISSED", font=font("black", 28), fill=A(PINK, ps), anchor="mm")
@@ -267,9 +281,11 @@ class RecapReel(Reel):
         p0 = eback(prog(t, 0.0, 0.6))
         paste(base, self.lion(300), W / 2, 380, cl(p0 * 1.4), scale=0.6 + 0.4 * p0)
         p1, p2, p3 = eo(prog(t, 0.2, 0.5)), eo(prog(t, 0.5, 0.5)), eo(prog(t, 1.0, 0.5))
-        disp(d, (W / 2, 610), f"GW{self.gw + 1} SQUAD", 110, A(PAPER, p1))
+        disp(d, (W / 2, 610), f"GW{self.rc.cta_gameweek} SQUAD", 110, A(PAPER, p1))
         disp(d, (W / 2, 725), "IS LIVE.", 110, A(LIME, p1))
-        d.text((W / 2, 830), "Same model. Locked at the deadline. Scored in public.", font=font("sb", 30),
+        tag = ("Same model. Locked at the deadline. Scored in public." if self.rc.locked_pre_deadline else
+               "Live forecasts lock at the deadline and get scored in public.")
+        d.text((W / 2, 830), tag, font=fit(tag, "sb", 30, 960),
                fill=A(MUTED, p1), anchor="mm")
         for i, (value, label) in enumerate(REPORT_STATS):
             cx = W / 2 + (i - 1) * 312

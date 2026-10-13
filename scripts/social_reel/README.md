@@ -43,7 +43,9 @@ python -m scripts.social_reel --recap --data scout_gw06.json --live live_gw06.js
 
 Scenes: hook → the score vs the GW average and the locked forecast → captain and vice with actual points and the hindsight armband → the full 15 with points (bench greyed) → top 5 hauls against their forecast, plus the two biggest misses → CTA for the next gameweek.
 
-- The score is the best-xP legal XI (the same rule as `src/team_rating._best_benchmark_lineup`) plus the captain's points again. No auto-subs are applied.
+- The score is the best-xP legal XI (the same rule as `src/team_rating._best_benchmark_lineup`) plus the captain's points again, with FPL auto-subs (a starter with 0 minutes is replaced by the first bench player, in xP order, who played and keeps the formation legal) and the vice taking the armband if the captain did not play.
+- Only a forecast frozen with `freeze_method: "deadline"` and captured before the deadline is called "locked". Anything else (e.g. `after-deadline` backfills) is labelled a retro forecast on the hook, score, hauls, outro and caption.
+- The CTA points at FPL's `is_next` gameweek, so an old recap still advertises the live squad.
 - It refuses (exit 2) to recap a forecast that is not `frozen`, or when any of the 15 has no live points.
 - While FPL's `data_checked` is false it prints a warning: points (bonus especially) are provisional.
 

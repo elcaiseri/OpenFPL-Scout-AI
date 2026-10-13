@@ -8,6 +8,7 @@ Standard library only, like ``data.py``. Points come from the official FPL
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .data import SITE_URL, Player, Squad
@@ -57,27 +58,84 @@ class GameweekInfo:
     highest: Optional[int] = None
     finished: bool = False
     data_checked: bool = False
+    deadline: Optional[str] = None
+    next_gameweek: Optional[int] = None  # the event FPL marks is_next
 
 
 def gameweek_info(bootstrap: Mapping[str, Any], gameweek: int) -> GameweekInfo:
-    for event in bootstrap.get("events") or []:
+    events = bootstrap.get("events") or []
+    upcoming = next((int(e["id"]) for e in events if e.get("is_next")), None)
+    for event in events:
         if int(event.get("id", 0)) == gameweek:
             return GameweekInfo(
                 average=event.get("average_entry_score"),
                 highest=event.get("highest_score"),
                 finished=bool(event.get("finished")),
                 data_checked=bool(event.get("data_checked")),
+                deadline=event.get("deadline_time"),
+                next_gameweek=upcoming,
             )
     return GameweekInfo()
+
+
+def _legal(lineup: Sequence[Player]) -> bool:
+    count = {pos: sum(p.position == pos for p in lineup) for pos in POSITION_ORDER}
+    return count["GK"] == 1 and count["DEF"] >= 3 and count["MID"] >= 2 and count["FWD"] >= 1
+
+
+def auto_subs(xi: Sequence[Player], bench: Sequence[Player], minutes: Mapping[str, int]
+              ) -> Tuple[List[Player], List[Tuple[Player, Player]]]:
+    """FPL automatic substitutions: a starter with 0 minutes is replaced by the first bench
+    player (keeper for keeper; outfield in bench order) who played and keeps the formation legal."""
+    lineup, subs, used = list(xi), [], set()
+    for starter in xi:
+        if minutes.get(starter.name, 0) > 0:
+            continue
+        for sub in bench:
+            if sub.name in used or minutes.get(sub.name, 0) <= 0:
+                continue
+            if (starter.position == "GK") != (sub.position == "GK"):
+                continue
+            trial = [sub if p is starter else p for p in lineup]
+            if _legal(trial):
+                lineup, used = trial, used | {sub.name}
+                subs.append((starter, sub))
+                break
+    return lineup, subs
 
 
 @dataclass(frozen=True)
 class Recap:
     squad: Squad
     points: Mapping[str, int]  # player name -> actual FPL points
-    xi: Tuple[Player, ...]
-    shape: Tuple[int, int, int]
+    picked: Tuple[Player, ...]  # best-xP XI as selected before the games
+    shape: Tuple[int, int, int]  # formation of the picked XI
     info: GameweekInfo
+    minutes: Mapping[str, int] = None  # player name -> minutes played
+    xi: Tuple[Player, ...] = ()  # XI that scored, after automatic substitutions
+    subs: Tuple[Tuple[Player, Player], ...] = ()  # (off, on)
+    armband: Optional[Player] = None  # captain, or the vice if the captain did not play
+
+    @property
+    def locked_pre_deadline(self) -> bool:
+        """True only when the forecast was captured before the deadline (no hindsight)."""
+        if self.squad.freeze_method != "deadline":
+            return False
+        captured, deadline = _when(self.squad.captured_at), _when(self.info.deadline or self.squad.deadline)
+        return captured is None or deadline is None or captured < deadline
+
+    @property
+    def forecast_word(self) -> str:
+        return "locked forecast" if self.locked_pre_deadline else "retro forecast"
+
+    @property
+    def captured_label(self) -> Optional[str]:
+        captured = _when(self.squad.captured_at)
+        return f"{captured.day} {captured:%b %Y}" if captured else None
+
+    @property
+    def cta_gameweek(self) -> int:
+        return self.info.next_gameweek or self.squad.gameweek + 1
 
     @property
     def formation(self) -> str:
@@ -87,24 +145,37 @@ class Recap:
     def xi_names(self) -> frozenset:
         return frozenset(p.name for p in self.xi)
 
+    @property
+    def subbed_off(self) -> frozenset:
+        return frozenset(off.name for off, _ in self.subs)
+
+    @property
+    def subbed_on(self) -> frozenset:
+        return frozenset(on.name for _, on in self.subs)
+
     def pts(self, player: Player) -> int:
         return self.points[player.name]
 
     @property
+    def armband_player(self) -> Player:
+        return self.armband or self.squad.captain
+
+    @property
     def total(self) -> int:
-        """XI points plus the captain's points again (armband doubles)."""
-        return sum(self.pts(p) for p in self.xi) + self.pts(self.squad.captain)
+        """Scoring XI points plus the armband's points again (doubled)."""
+        return sum(self.pts(p) for p in self.xi) + self.pts(self.armband_player)
 
     @property
     def xp_total(self) -> float:
-        return sum(p.xp for p in self.xi) + self.squad.captain.xp
+        """Forecast for the picked XI with the captain doubled."""
+        return sum(p.xp for p in self.picked) + self.squad.captain.xp
 
     def hauls(self, n: int = 5) -> List[Player]:
         return sorted(self.squad.players, key=lambda p: (-self.pts(p), -p.xp))[:n]
 
     def misses(self, n: int = 2) -> List[Player]:
-        """Starters furthest below their forecast."""
-        return sorted(self.xi, key=lambda p: (self.pts(p) - p.xp, p.name))[:n]
+        """Picked starters furthest below their forecast."""
+        return sorted(self.picked, key=lambda p: (self.pts(p) - p.xp, p.name))[:n]
 
     def beat_count(self) -> int:
         return sum(self.pts(p) >= p.xp for p in self.squad.players)
@@ -120,10 +191,29 @@ def build_recap(squad: Squad, points: Mapping[int, Mapping[str, int]], info: Gam
     if missing:
         raise RecapError("No live points for: " + ", ".join(missing) + ".")
     by_name = {p.name: int(points[p.id].get("total_points", 0)) for p in squad.players}
-    xi, shape = best_xi(squad.players)
-    if squad.captain not in xi:
+    minutes = {p.name: int(points[p.id].get("minutes", 0)) for p in squad.players}
+    picked, shape = best_xi(squad.players)
+    if squad.captain not in picked:
         raise RecapError(f"Captain {squad.captain.name} is not in the best-xP XI.")
-    return Recap(squad=squad, points=by_name, xi=tuple(xi), shape=shape, info=info)
+    names = {p.name for p in picked}
+    rest = [p for p in squad.players if p.name not in names]
+    bench = sorted((p for p in rest if p.position == "GK"), key=lambda p: -p.xp) + \
+        sorted((p for p in rest if p.position != "GK"), key=lambda p: -p.xp)
+    xi, subs = auto_subs(picked, bench, minutes)
+    armband = squad.captain
+    if minutes[squad.captain.name] <= 0 and minutes[squad.vice.name] > 0 and squad.vice in xi:
+        armband = squad.vice
+    return Recap(squad=squad, points=by_name, picked=tuple(picked), shape=shape, info=info, minutes=minutes,
+                 xi=tuple(xi), subs=tuple(subs), armband=armband)
+
+
+def _when(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _pts(n: int) -> str:
@@ -133,17 +223,23 @@ def _pts(n: int) -> str:
 def recap_caption(r: Recap) -> str:
     sq = r.squad
     c, v = sq.captain, sq.vice
-    head = f"The locked forecast scored {r.total} pts"
+    head = f"The {r.forecast_word} scored {r.total} pts"
     if r.info.average is not None:
         head += f" ({r.total - r.info.average:+d} on the {r.info.average}-pt GW average)"
     lines = [
         f"OpenFPL Scout AI — Gameweek {sq.gameweek} recap 🦁",
         "",
         head + ".",
-        f"Best-xP starting XI ({r.formation}) + captain; forecast was {r.xp_total:.1f} xP.",
+        f"Best-xP starting XI ({r.formation}) + captain; the {r.forecast_word} was {r.xp_total:.1f} xP.",
+    ]
+    lines += [f"Auto-sub: {on.name} ({_pts(r.pts(on))}) on for {off.name} (didn't play)." for off, on in r.subs]
+    arm = r.armband_player
+    lines += [
         "",
-        f"©️ {c.name}: {_pts(r.pts(c))} ×2 = {r.pts(c) * 2} (forecast {c.xp:.1f} xP)",
-        f"Ⓥ {v.name}: {_pts(r.pts(v))} (forecast {v.xp:.1f} xP)",
+        f"©️ {c.name}: {_pts(r.pts(c))}" + (f" ×2 = {r.pts(c) * 2}" if arm is c else " (didn't play)")
+        + f" (forecast {c.xp:.1f} xP)",
+        f"Ⓥ {v.name}: {_pts(r.pts(v))}" + (f" ×2 = {r.pts(v) * 2}, took the armband" if arm is v else "")
+        + f" (forecast {v.xp:.1f} xP)",
         "",
         "Top hauls:",
     ]
@@ -151,8 +247,11 @@ def recap_caption(r: Recap) -> str:
     lines += ["", "Misses: " + " · ".join(f"{p.name} {_pts(r.pts(p))} (xP {p.xp:.1f})" for p in r.misses(2))]
     lines += [
         "",
-        "Forecast locked at the deadline — no hindsight edits.",
-        f"GW{sq.gameweek + 1} squad is live 👉 {SITE_URL}",
+        ("Forecast locked at the deadline — no hindsight edits." if r.locked_pre_deadline else
+         "Note: retro forecast — made " + (f"on {r.captured_label}, " if r.captured_label else "")
+         + "after this gameweek's deadline, so it is not a live pick. "
+         "Live forecasts now lock at the deadline."),
+        f"GW{r.cta_gameweek} squad is live 👉 {SITE_URL}",
         "",
         f"#FPL #FantasyPremierLeague #FPLCommunity #FPLTips #GW{sq.gameweek}",
     ]

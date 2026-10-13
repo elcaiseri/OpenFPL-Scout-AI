@@ -120,6 +120,7 @@ class Squad:
     version: Optional[str] = None
     deadline: Optional[str] = None  # ISO 8601, from /api/fpl/gameweeks
     stats: Mapping[str, Any] = field(default_factory=dict)
+    freeze_method: Optional[str] = None  # "deadline" or "after-deadline"
 
     @property
     def captain(self) -> Player:
@@ -203,6 +204,7 @@ def parse_squad(payload: Mapping[str, Any], deadline: Optional[str] = None) -> S
         captured_at=payload.get("forecast_captured_at"),
         version=payload.get("version"),
         deadline=deadline,
+        freeze_method=payload.get("freeze_method"),
     )
 
 
