@@ -4,41 +4,50 @@ Builds the weekly OpenFPL Scout AI social pack for one gameweek, straight from `
 
 | File | Use |
 | --- | --- |
-| `openfpl_gwNN_reel.mp4` | 24.5 s, 1080×1920, silent track — Reels, TikTok, Shorts |
-| `openfpl_gwNN_0X_<scene>_4x5.png` ×5 | 1080×1350 carousel, numbered 1/5–5/5 — Instagram, LinkedIn, Facebook |
-| `openfpl_gwNN_0X_<scene>_9x16.png` ×5 | 1080×1920 — Stories, photo-mode TikTok, reel cover |
-| `openfpl_gwNN_stills.zip` | all ten stills |
-| `openfpl_gwNN_caption.txt` | ready-to-paste caption |
+| `openfpl_gwNN_preview_reel.mp4` | 24.5 s, 1080×1920, silent track — Reels, TikTok, Shorts |
+| `openfpl_gwNN_preview_0X_<scene>_4x5.png` ×5 | 1080×1350 carousel, numbered 1/5–5/5 — Instagram, LinkedIn, Facebook |
+| `openfpl_gwNN_preview_0X_<scene>_9x16.png` ×5 | 1080×1920 — Stories, photo-mode TikTok, reel cover |
+| `openfpl_gwNN_preview_stills.zip` | all ten stills |
+| `openfpl_gwNN_preview_caption.txt` | ready-to-paste caption |
 
 Scenes: hook → captain and vice → the full 15 on the pitch → top 5 by xP with club stacks → model and link.
 
-## Run
+## Modes
+
+One generator, two modes. The mode is the hook's headline ("THE PREVIEW" / "THE RECAP") and sits in the brand-bar chip on every scene ("GW7 · PREVIEW").
+
+| Mode | When | Output |
+| --- | --- | --- |
+| `--mode preview` (default) | before the deadline | `out/social/gwNN_preview/`, files `openfpl_gwNN_preview_*` |
+| `--mode recap` | after the gameweek | `out/social/gwNN_recap/`, files `openfpl_gwNN_recap_*` |
+
+## Run (preview)
 
 ```bash
 # next gameweek (FPL's is_next), fetched live
 python -m scripts.social_reel
 
 # a specific gameweek
-python -m scripts.social_reel --gameweek 7
+python -m scripts.social_reel --mode preview --gameweek 7
 
 # from a saved /api/scout response (when the API isn't reachable from the build machine)
 python -m scripts.social_reel --data scout.json --deadline 2026-10-17T10:00:00Z
 ```
 
-Output lands in `out/social/gwNN/` (git-ignored). `--no-video` skips the MP4.
+Output lands in `out/social/gwNN_preview/` (git-ignored). `--no-video` skips the MP4.
 Needs Pillow, NumPy and `ffmpeg`; with uv: `uv run --with pillow --with numpy python -m scripts.social_reel`.
 
 ## Recap (after the gameweek)
 
-`--recap` scores the locked squad against official FPL points and writes a recap pack to `out/social/gwNN_recap/`
+`--mode recap` (or `--recap`) scores the locked squad against official FPL points and writes a recap pack to `out/social/gwNN_recap/`
 (29 s reel, six stills in each format numbered 1/6–6/6, zip, caption):
 
 ```bash
 # fetches /api/scout?gameweek=6, FPL /event/6/live/ and /bootstrap-static/
-python -m scripts.social_reel --recap --gameweek 6
+python -m scripts.social_reel --mode recap --gameweek 6
 
 # offline, from saved responses
-python -m scripts.social_reel --recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
+python -m scripts.social_reel --mode recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
 ```
 
 Scenes: hook → the score vs the GW average and the locked forecast → captain and vice with actual points and the hindsight armband → the full 15 with points (bench greyed) → top 5 hauls against their forecast, plus the two biggest misses → CTA for the next gameweek.

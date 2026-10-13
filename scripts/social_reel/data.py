@@ -257,7 +257,7 @@ def caption(squad: Squad) -> str:
     """Ready-to-paste post caption."""
     c, v = squad.captain, squad.vice
     lines = [
-        f"OpenFPL Scout AI — Gameweek {squad.gameweek} squad 🦁",
+        f"OpenFPL Scout AI — Gameweek {squad.gameweek} preview: the AI squad 🦁",
         "",
         f"©️ Captain: {c.name} ({c.club_short}, vs {c.fixture}) — {c.xp:.1f} xP",
         f"Ⓥ Vice: {v.name} ({v.club_short}, vs {v.fixture}) — {v.xp:.1f} xP",

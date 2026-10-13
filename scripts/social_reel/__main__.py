@@ -1,24 +1,29 @@
 """Build the OpenFPL weekly social reel and stills.
 
+Two modes, named in each reel's hook and brand bar:
+
+- ``--mode preview`` (default): the squad for an upcoming gameweek.
+- ``--mode recap``: a finished gameweek's locked squad scored against actual points.
+
 Fetch live (next gameweek by default, or a given one)::
 
     python -m scripts.social_reel
-    python -m scripts.social_reel --gameweek 7
+    python -m scripts.social_reel --mode preview --gameweek 7
 
 Or render from a saved ``/api/scout`` response, e.g. where the API host is
 not reachable from the build machine::
 
     python -m scripts.social_reel --data scout.json --deadline 2026-10-17T10:00:00Z
 
-Outputs go to ``out/social/gwNN/``: a 9:16 MP4 reel, five 9:16 stills, five
+Outputs go to ``out/social/gwNN_preview/``: a 9:16 MP4 reel, five 9:16 stills, five
 4:5 carousel stills, a zip of all stills, and a ready-to-paste caption.
 
-After the gameweek, ``--recap`` scores the locked squad against official FPL
+After the gameweek, ``--mode recap`` scores the locked squad against official FPL
 points (``/event/{gw}/live/``) and writes a recap pack to
 ``out/social/gwNN_recap/``::
 
-    python -m scripts.social_reel --recap --gameweek 6
-    python -m scripts.social_reel --recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
+    python -m scripts.social_reel --mode recap --gameweek 6
+    python -m scripts.social_reel --mode recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
 
 Needs Pillow, NumPy and ffmpeg (``--no-video`` skips ffmpeg).
 """
@@ -65,13 +70,16 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--api", default=DEFAULT_API, help=f"API base URL (default {DEFAULT_API}).")
     parser.add_argument("--out", type=Path, help="Output folder (default out/social/gwNN).")
     parser.add_argument("--no-video", action="store_true", help="Only write the stills, zip and caption.")
+    parser.add_argument("--mode", choices=("preview", "recap"), default="preview",
+                        help="preview: upcoming gameweek's squad (default). recap: finished gameweek vs actual points.")
     recap = parser.add_argument_group("recap (after the gameweek)")
-    recap.add_argument("--recap", action="store_true", help="Score the locked squad against actual points.")
+    recap.add_argument("--recap", action="store_true", help="Same as --mode recap.")
     recap.add_argument("--live", type=Path, help="Saved FPL /event/{gw}/live/ response (fetched when omitted).")
     recap.add_argument("--bootstrap", type=Path, help="Saved FPL /bootstrap-static/ response for the GW average.")
     args = parser.parse_args(argv)
+    args.recap = args.recap or args.mode == "recap"
     if args.recap and not (args.gameweek or args.data):
-        parser.error("--recap needs --gameweek or --data (the next gameweek has no points yet)")
+        parser.error("recap mode needs --gameweek or --data (the next gameweek has no points yet)")
 
     if args.data:
         payload = json.loads(args.data.read_text(encoding="utf-8"))
@@ -95,9 +103,9 @@ def main(argv: Optional[list] = None) -> int:
 
     from .render import build  # Imported late so --help works without Pillow.
 
-    out_dir = args.out or REPO_ROOT / "out" / "social" / f"gw{squad.gameweek:02d}"
+    out_dir = args.out or REPO_ROOT / "out" / "social" / f"gw{squad.gameweek:02d}_preview"
     made = build(squad, out_dir, video=not args.no_video)
-    print(f"GW{squad.gameweek} · captain {squad.captain.name} · vice {squad.vice.name} · frozen={squad.frozen}")
+    print(f"GW{squad.gameweek} preview · captain {squad.captain.name} · vice {squad.vice.name} · frozen={squad.frozen}")
     for kind, paths in made.items():
         for path in paths:
             print(f"{kind}: {path}")

@@ -22,6 +22,8 @@ BEAT = (12, 150, 90)
 
 
 class RecapReel(Reel):
+    MODE = "RECAP"
+
     def __init__(self, recap: Recap):
         # Set before Reel.__init__, which builds the cards through the overrides below.
         self.rc = recap
@@ -135,7 +137,7 @@ class RecapReel(Reel):
         paste(base, self.lion(440), W / 2, 560, cl(pl * 1.4), scale=0.6 + 0.4 * pl)
         p1, p2, p3 = eo(prog(t, 0.45, 0.5)), eo(prog(t, 0.65, 0.5)), eo(prog(t, 1.0, 0.5))
         disp(d, (W / 2, 1000 + 50 * (1 - p1)), f"GAMEWEEK {self.gw}", 190, A(PAPER, p1), max_width=980)
-        disp(d, (W / 2, 1180 + 50 * (1 - p2)), "THE RECAP", 130, A(LIME, p2))
+        disp(d, (W / 2, 1180 + 50 * (1 - p2)), f"THE {self.MODE}", 130, A(LIME, p2))
         lw = 560 * eo(prog(t, 0.9, 0.6))
         d.rectangle([W / 2 - lw / 2, 1282, W / 2 + lw / 2, 1290], fill=A(PINK, 1))
         d.text((W / 2, 1360), "AI forecast  vs  what actually happened", font=font("sb", 36), fill=A(PAPER, p3),

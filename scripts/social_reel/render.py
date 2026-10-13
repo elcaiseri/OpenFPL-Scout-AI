@@ -149,7 +149,9 @@ def disp(d: ImageDraw.ImageDraw, xy, text: str, size: int, fill, anchor: str = "
 
 
 class Reel:
-    """All scenes for one gameweek's squad."""
+    """All scenes for one gameweek's squad (preview mode)."""
+
+    MODE = "PREVIEW"  # shown in the hook and the brand bar; RecapReel sets "RECAP"
 
     def __init__(self, squad: Squad):
         self.sq = squad
@@ -344,7 +346,7 @@ class Reel:
         d.text((170, 132), "OpenFPL", font=font("xb", 36), fill=A(PAPER, al))
         d.text((171, 174), "SCOUT AI", font=font("black", 17), fill=A(LIME, al))
         f = font("black", 20)
-        txt = f"GAMEWEEK {self.gw}"
+        txt = f"GW{self.gw}  ·  {self.MODE}"
         w = f.getlength(txt) + 44
         d.rounded_rectangle([W - 60 - w, 136, W - 60, 184], 24, fill=A(LIME, al))
         d.text((W - 60 - w / 2, 160), txt, font=f, fill=A(INK950, al), anchor="mm")
@@ -359,10 +361,10 @@ class Reel:
         paste(base, self.lion(440), W / 2, 560, cl(pl * 1.4), scale=0.6 + 0.4 * pl)
         p1, p2, p3 = eo(prog(t, 0.45, 0.5)), eo(prog(t, 0.65, 0.5)), eo(prog(t, 1.0, 0.5))
         disp(d, (W / 2, 1000 + 50 * (1 - p1)), f"GAMEWEEK {self.gw}", 190, A(PAPER, p1), max_width=980)
-        disp(d, (W / 2, 1180 + 50 * (1 - p2)), "AI SCOUT TEAM", 130, A(LIME, p2))
+        disp(d, (W / 2, 1180 + 50 * (1 - p2)), f"THE {self.MODE}", 130, A(LIME, p2))
         lw = 560 * eo(prog(t, 0.9, 0.6))
         d.rectangle([W / 2 - lw / 2, 1282, W / 2 + lw / 2, 1290], fill=A(PINK, 1))
-        d.text((W / 2, 1360), "15 picks  ·  captain  ·  vice-captain", font=font("sb", 36), fill=A(PAPER, p3),
+        d.text((W / 2, 1360), "AI scout team  ·  15 picks  ·  captain  ·  vice", font=font("sb", 36), fill=A(PAPER, p3),
                anchor="mm")
         pill = status_line(self.sq)
         pf = fit(pill, "b", 28, 900)
@@ -567,4 +569,4 @@ def export(reel: "Reel", out_dir: Path, stem: str, caption_text: str, video: boo
 
 def build(squad: Squad, out_dir: Path, video: bool = True) -> Dict[str, List[Path]]:
     """Write the preview reel, both still sets, a zip of the stills and a caption."""
-    return export(Reel(squad), out_dir, f"openfpl_gw{squad.gameweek:02d}", caption(squad), video=video)
+    return export(Reel(squad), out_dir, f"openfpl_gw{squad.gameweek:02d}_preview", caption(squad), video=video)
