@@ -28,6 +28,25 @@ python -m scripts.social_reel --data scout.json --deadline 2026-10-17T10:00:00Z
 Output lands in `out/social/gwNN/` (git-ignored). `--no-video` skips the MP4.
 Needs Pillow, NumPy and `ffmpeg`; with uv: `uv run --with pillow --with numpy python -m scripts.social_reel`.
 
+## Recap (after the gameweek)
+
+`--recap` scores the locked squad against official FPL points and writes a recap pack to `out/social/gwNN_recap/`
+(29 s reel, six stills in each format numbered 1/6–6/6, zip, caption):
+
+```bash
+# fetches /api/scout?gameweek=6, FPL /event/6/live/ and /bootstrap-static/
+python -m scripts.social_reel --recap --gameweek 6
+
+# offline, from saved responses
+python -m scripts.social_reel --recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
+```
+
+Scenes: hook → the score vs the GW average and the locked forecast → captain and vice with actual points and the hindsight armband → the full 15 with points (bench greyed) → top 5 hauls against their forecast, plus the two biggest misses → CTA for the next gameweek.
+
+- The score is the best-xP legal XI (the same rule as `src/team_rating._best_benchmark_lineup`) plus the captain's points again. No auto-subs are applied.
+- It refuses (exit 2) to recap a forecast that is not `frozen`, or when any of the 15 has no live points.
+- While FPL's `data_checked` is false it prints a warning: points (bonus especially) are provisional.
+
 ## Behaviour
 
 - The squad is validated before anything is drawn: 15 players, 2/5/5/3, one captain, one vice, max 3 per club. A bad payload exits with code 2.

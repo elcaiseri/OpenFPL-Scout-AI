@@ -13,8 +13,18 @@ from scripts.social_reel.data import (
     stacks,
     status_line,
 )
+from scripts.social_reel.recap import (
+    RecapError,
+    best_xi,
+    build_recap,
+    gameweek_info,
+    points_from_live,
+    recap_caption,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "scout_gw06.json"
+LIVE_FIXTURE = Path(__file__).parent / "fixtures" / "live_gw06.json"
+BOOTSTRAP_FIXTURE = Path(__file__).parent / "fixtures" / "bootstrap_gw06.json"
 
 
 class SocialReelDataTest(unittest.TestCase):
@@ -78,6 +88,59 @@ class SocialReelDataTest(unittest.TestCase):
         self.assertIn("Gameweek 6", text)
         self.assertIn("Captain: Groß", text)
         self.assertIn("openfpl.kassem.dev", text)
+
+
+class SocialReelRecapTest(unittest.TestCase):
+    def setUp(self):
+        self.payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        self.live = json.loads(LIVE_FIXTURE.read_text(encoding="utf-8"))
+        self.info = gameweek_info(json.loads(BOOTSTRAP_FIXTURE.read_text(encoding="utf-8")), 6)
+
+    def recap(self):
+        return build_recap(parse_squad(self.payload), points_from_live(self.live), self.info)
+
+    def test_best_xi_matches_team_rating_rule(self):
+        xi, shape = best_xi(parse_squad(self.payload).players)
+        self.assertEqual(shape, (3, 5, 2))
+        self.assertEqual(len(xi), 11)
+        self.assertNotIn("Calvert-Lewin", {p.name for p in xi})
+        self.assertIn("Donnarumma", {p.name for p in xi})
+
+    def test_total_doubles_captain(self):
+        recap = self.recap()
+        self.assertEqual(recap.total, 85)
+        self.assertAlmostEqual(recap.xp_total, 67.89, places=2)
+        self.assertEqual(recap.formation, "3-5-2")
+
+    def test_hauls_misses_and_hindsight(self):
+        recap = self.recap()
+        self.assertEqual([p.name for p in recap.hauls(2)], ["De Cuyper", "João Pedro"])
+        self.assertEqual([p.name for p in recap.misses(2)], ["B.Fernandes", "Saka"])
+        self.assertEqual(recap.hindsight_captain().name, "De Cuyper")
+        self.assertEqual(recap.beat_count(), 6)
+
+    def test_gameweek_info(self):
+        self.assertEqual(self.info.average, 58)
+        self.assertFalse(self.info.data_checked)
+        self.assertIsNone(gameweek_info({}, 6).average)
+
+    def test_rejects_unlocked_forecast(self):
+        live = copy.deepcopy(self.payload)
+        live["frozen"] = False
+        with self.assertRaises(RecapError):
+            build_recap(parse_squad(live), points_from_live(self.live), self.info)
+
+    def test_rejects_missing_points(self):
+        partial = {"elements": self.live["elements"][1:]}
+        with self.assertRaises(RecapError):
+            build_recap(parse_squad(self.payload), points_from_live(partial), self.info)
+
+    def test_recap_caption(self):
+        text = recap_caption(self.recap())
+        self.assertIn("Gameweek 6 recap", text)
+        self.assertIn("85 pts (+27 on the 58-pt GW average)", text)
+        self.assertIn("B.Fernandes 1 pt (xP 5.6)", text)
+        self.assertIn("GW7 squad is live", text)
 
 
 if __name__ == "__main__":

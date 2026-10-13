@@ -518,11 +518,9 @@ class Reel:
         return out
 
 
-def build(squad: Squad, out_dir: Path, video: bool = True) -> Dict[str, List[Path]]:
-    """Write the reel, both still sets, a zip of the stills and a caption."""
+def export(reel: "Reel", out_dir: Path, stem: str, caption_text: str, video: bool = True) -> Dict[str, List[Path]]:
+    """Write a reel's stills (9:16 and 4:5), a zip of them, the caption and optionally the MP4."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    reel = Reel(squad)
-    stem = f"openfpl_gw{squad.gameweek:02d}"
     made: Dict[str, List[Path]] = {"video": [], "stills_4x5": [], "stills_9x16": [], "zip": [], "caption": []}
 
     reel.still_mode = True
@@ -544,7 +542,7 @@ def build(squad: Squad, out_dir: Path, video: bool = True) -> Dict[str, List[Pat
     made["zip"].append(zip_path)
 
     caption_path = out_dir / f"{stem}_caption.txt"
-    caption_path.write_text(caption(squad), encoding="utf-8")
+    caption_path.write_text(caption_text, encoding="utf-8")
     made["caption"].append(caption_path)
 
     if video:
@@ -565,3 +563,8 @@ def build(squad: Squad, out_dir: Path, video: bool = True) -> Dict[str, List[Pat
             raise RuntimeError("ffmpeg failed to encode the reel.")
         made["video"].append(video_path)
     return made
+
+
+def build(squad: Squad, out_dir: Path, video: bool = True) -> Dict[str, List[Path]]:
+    """Write the preview reel, both still sets, a zip of the stills and a caption."""
+    return export(Reel(squad), out_dir, f"openfpl_gw{squad.gameweek:02d}", caption(squad), video=video)

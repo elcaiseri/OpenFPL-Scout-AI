@@ -76,6 +76,7 @@ class Player:
     fixture_count: int
     xp: float
     role: str = ""  # "C", "V" or ""
+    id: Optional[int] = None  # FPL element id
 
     @property
     def club_code(self) -> str:
@@ -175,6 +176,7 @@ def parse_squad(payload: Mapping[str, Any], deadline: Optional[str] = None) -> S
             fixture_count=count,
             xp=float(row["expected_points"]),
             role=role,
+            id=int(row["id"]) if row.get("id") is not None else None,
         ))
 
     problems = []
