@@ -127,6 +127,32 @@ class DataArchiveTests(unittest.TestCase):
 
         self.assertEqual(calls, ["first", "after"])
 
+    def test_a_gameweek_is_captured_at_most_once_per_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [BEFORE_GW3_DEADLINE]
+            archive = DataArchive(
+                Path(directory),
+                enabled=True,
+                clock=lambda: moment[0],
+                capture_interval_seconds=3600,
+            )
+            client = FakeOfficialClient()
+            metadata = Path(directory) / "2026-2027/metadata/gw_03.json"
+
+            first = self.capture(archive, client, prediction_frame())
+            captured = metadata.read_bytes()
+            moment[0] += timedelta(minutes=59)
+            throttled = self.capture(archive, client, prediction_frame())
+            unchanged = metadata.read_bytes() == captured
+            moment[0] += timedelta(minutes=1)
+            again = self.capture(archive, client, prediction_frame())
+
+            self.assertTrue(first["prediction_archived"])
+            self.assertEqual(throttled["status"], "throttled")
+            self.assertTrue(unchanged)
+            self.assertTrue(again["prediction_archived"])
+            self.assertNotEqual(metadata.read_bytes(), captured)
+
     def test_writes_season_gameweek_training_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = DataArchive(Path(directory), enabled=True, clock=fixed_clock())

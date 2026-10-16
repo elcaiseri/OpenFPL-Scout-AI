@@ -853,6 +853,8 @@ class FPLScout:
     ) -> None:
         """Archive a forecast, then the squad selected from it."""
         predictions.attrs["archive"] = capture(predictions=predictions)
+        if not predictions.attrs["archive"].get("prediction_archived"):
+            return  # Throttled or closed: no squad file to save.
         squad = self.select_optimal_team(predictions)
         self.data_archive.capture_squad(predictions, squad)
 

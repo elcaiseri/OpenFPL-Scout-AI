@@ -112,6 +112,7 @@ class DataArchive:
         configured_season: str = "auto",
         clock: Optional[Callable[[], datetime]] = None,
         results_interval_seconds: float = 300.0,
+        capture_interval_seconds: float = 0.0,
         background_writes: bool = False,
     ) -> None:
         self.root_path = Path(root_path)
@@ -119,11 +120,13 @@ class DataArchive:
         self.configured_season = configured_season.strip() or "auto"
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.results_interval = timedelta(seconds=float(results_interval_seconds))
+        self.capture_interval = timedelta(seconds=float(capture_interval_seconds))
         self.background_writes = bool(background_writes)
         self._lock = RLock()
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
+        self._capture_due_at: dict[int, datetime] = {}
         self._writer: Optional[ThreadPoolExecutor] = None
         self._pending: Optional[Future] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
@@ -152,6 +155,9 @@ class DataArchive:
             configured_season=str(archive_config.get("season", "auto")),
             results_interval_seconds=float(
                 archive_config.get("results_interval_seconds", 300)
+            ),
+            capture_interval_seconds=float(
+                archive_config.get("capture_interval_seconds", 0)
             ),
             background_writes=bool(archive_config.get("background_writes", False)),
         )
@@ -207,9 +213,21 @@ class DataArchive:
         enrichment: Mapping[str, Any],
         model_versions: Mapping[str, Any],
     ) -> dict[str, Any]:
-        """Persist official inputs, enriched inputs, and model predictions."""
+        """Persist official inputs, enriched inputs, and model predictions.
+
+        A gameweek is captured at most once per ``capture_interval``; the last
+        capture before its deadline is the forecast that gets frozen.
+        """
         if not self.enabled:
             return {"status": "disabled"}
+        with self._lock:
+            due_at = self._capture_due_at.get(int(prediction_gameweek))
+            if due_at is not None and self.clock() < due_at:
+                return {
+                    "status": "throttled",
+                    "prediction_archived": False,
+                    "prediction_skipped_reason": "captured-recently",
+                }
 
         try:
             result = self._capture_inference(
@@ -228,6 +246,9 @@ class DataArchive:
         else:
             with self._lock:
                 self._results_due_at = self.clock() + self.results_interval
+                self._capture_due_at[int(prediction_gameweek)] = (
+                    self.clock() + self.capture_interval
+                )
         self.last_result = result
         return result
 

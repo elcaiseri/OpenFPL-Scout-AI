@@ -99,6 +99,9 @@ data_archive:
   season: "auto"
   # Serving frozen forecasts still archives official results this often.
   results_interval_seconds: 300
+  # Archive an open gameweek's forecast at most this often (per app copy);
+  # the last capture before the deadline is the one that gets frozen.
+  capture_interval_seconds: 3000
   # Write the archive on a background thread so responses do not wait for it.
   background_writes: true
 
