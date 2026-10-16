@@ -7,6 +7,7 @@ import json
 import math
 import os
 import tempfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
@@ -111,16 +112,20 @@ class DataArchive:
         configured_season: str = "auto",
         clock: Optional[Callable[[], datetime]] = None,
         results_interval_seconds: float = 300.0,
+        background_writes: bool = False,
     ) -> None:
         self.root_path = Path(root_path)
         self.enabled = bool(enabled)
         self.configured_season = configured_season.strip() or "auto"
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.results_interval = timedelta(seconds=float(results_interval_seconds))
+        self.background_writes = bool(background_writes)
         self._lock = RLock()
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
+        self._writer: Optional[ThreadPoolExecutor] = None
+        self._pending: Optional[Future] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -148,6 +153,7 @@ class DataArchive:
             results_interval_seconds=float(
                 archive_config.get("results_interval_seconds", 300)
             ),
+            background_writes=bool(archive_config.get("background_writes", False)),
         )
 
     def status(self) -> dict[str, Any]:
@@ -156,6 +162,38 @@ class DataArchive:
             "root_path": str(self.root_path),
             "last_result": dict(self.last_result),
         }
+
+    def defer(self, write: Callable[[], Any]) -> None:
+        """Run an archive write off the request thread, or inline if disabled.
+
+        Writes run one at a time on a background thread, so a response no
+        longer waits for the bucket. While one is still running, new writes
+        are skipped: the next request archives the newer data anyway.
+        """
+        if not self.background_writes:
+            write()
+            return
+        with self._lock:
+            if self._pending is not None and not self._pending.done():
+                return
+            if self._writer is None:
+                self._writer = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="archive"
+                )
+            self._pending = self._writer.submit(self._run_write, write)
+
+    @staticmethod
+    def _run_write(write: Callable[[], Any]) -> None:
+        try:
+            write()
+        except Exception:  # Archive writes are fail-open.
+            logger.exception("Background archive write failed")
+
+    def wait(self, timeout: Optional[float] = None) -> None:
+        """Block until the background write in progress, if any, finishes."""
+        pending = self._pending
+        if pending is not None:
+            pending.result(timeout=timeout)
 
     def capture_inference(
         self,

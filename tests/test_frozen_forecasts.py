@@ -3,6 +3,7 @@
 import asyncio
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -187,6 +188,8 @@ class FrozenForecastTests(unittest.TestCase):
             configured_season="2026-2027",
             clock=lambda: self.now[0],
         )
+        # Finish any background write before the directory is removed.
+        self.addCleanup(self.archive.wait, 5)
         self.scout = FPLScout(
             {
                 "inference": {"minimum_successful_models": 1},
@@ -417,6 +420,39 @@ class FrozenForecastTests(unittest.TestCase):
     async def respond(self):
         with patch("main.scout", self.scout, create=True):
             return await _generate_scout_response(3, public=False)
+
+    def test_the_response_does_not_wait_for_a_background_archive(self):
+        self.archive.background_writes = True
+        release = threading.Event()
+        capture = self.archive.capture_inference
+
+        def slow_capture(**arguments):
+            release.wait(5)
+            return capture(**arguments)
+
+        metadata = self.season_root / "metadata/gw_03.json"
+        with patch.object(self.archive, "capture_inference", slow_capture):
+            predictions, _ = self.request()
+            archived_before_release = metadata.exists()
+            release.set()
+            self.archive.wait(timeout=5)
+
+        self.assertEqual(predictions.attrs["archive"]["status"], "background")
+        self.assertFalse(archived_before_release)
+        self.assertTrue(metadata.is_file())
+        self.assertTrue((self.season_root / "squads/gw_03.json").is_file())
+
+    def test_a_forecast_archived_in_the_background_is_what_freezes(self):
+        self.archive.background_writes = True
+        before, squad_before = self.request()
+        self.archive.wait(timeout=5)
+        self.pass_the_deadline(injured_player=self.captain_id(squad_before))
+
+        after, squad_after = self.request()
+
+        self.assertTrue(after.attrs["frozen"])
+        self.assertEqual(records(after), records(before))
+        self.assertEqual(records(squad_after), records(squad_before))
 
 
 if __name__ == "__main__":

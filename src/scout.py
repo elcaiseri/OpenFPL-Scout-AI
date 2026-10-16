@@ -6,6 +6,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -753,9 +754,11 @@ class FPLScout:
                 frozen.attrs.get("forecast_captured_at"),
             )
             # Inference is what normally archives results; keep collecting
-            # them (throttled), even after the final deadline. This runs in the
-            # request because Cloud Run throttles CPU between requests.
-            self.data_archive.collect_results(self.official_client)
+            # them (throttled), even after the final deadline. It is started
+            # by a request because Cloud Run throttles CPU between requests.
+            self.data_archive.defer(
+                partial(self.data_archive.collect_results, self.official_client)
+            )
             return frozen
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
@@ -804,12 +807,12 @@ class FPLScout:
             if enrichment.get("status") == "applied"
             else "official-fpl"
         )
-        archive_result = self.data_archive.capture_inference(
+        capture = partial(
+            self.data_archive.capture_inference,
             official_client=self.official_client,
             prediction_gameweek=resolved_gameweek,
             official_history=official_history,
             enriched_history=history,
-            predictions=result,
             source=str(result.attrs["source"]),
             enrichment=enrichment,
             model_versions={
@@ -822,7 +825,19 @@ class FPLScout:
                 if isinstance(metadata, Mapping)
             },
         )
-        result.attrs["archive"] = archive_result
+        if self.data_archive.background_writes:
+            # The response does not wait for the bucket: a copy is archived
+            # in the background, with the squad selected from that copy.
+            self.data_archive.defer(
+                partial(self._archive_forecast, capture, result.copy())
+            )
+            result.attrs["archive"] = {
+                "status": "background",
+                "prediction_archived": False,
+                "prediction_skipped_reason": "archived-in-background",
+            }
+        else:
+            result.attrs["archive"] = capture(predictions=result)
         # A closed gameweek that was never frozen is frozen now, so every
         # later recall returns this same forecast.
         frozen = self.data_archive.freeze_after_deadline(
@@ -832,6 +847,14 @@ class FPLScout:
             validate=self.select_optimal_team,
         )
         return result if frozen is None else frozen
+
+    def _archive_forecast(
+        self, capture: Callable[..., Dict[str, Any]], predictions: pd.DataFrame
+    ) -> None:
+        """Archive a forecast, then the squad selected from it."""
+        predictions.attrs["archive"] = capture(predictions=predictions)
+        squad = self.select_optimal_team(predictions)
+        self.data_archive.capture_squad(predictions, squad)
 
     def _fpl_data_season_problem(self) -> Optional[Dict[str, str]]:
         """Explain why FPL Data must not be used for the live season, if so.

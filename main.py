@@ -123,6 +123,11 @@ async def lifespan(app: FastAPI):
     logger.info("FPLScout initialized and ready")
     yield
     logger.info("Shutting down application")
+    try:
+        # Let a background archive write in progress finish before exiting.
+        scout.data_archive.wait(timeout=8)
+    except Exception:
+        logger.exception("Background archive write did not finish before shutdown")
 
 
 app = FastAPI(

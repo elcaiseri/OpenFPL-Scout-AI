@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -107,6 +108,24 @@ class DataArchiveTests(unittest.TestCase):
             )
 
         self.assertEqual(archive.root_path, Path("/data/archive"))
+
+    def test_background_writes_run_one_at_a_time_and_never_raise(self):
+        archive = DataArchive.from_config(
+            {"data_archive": {"enabled": True, "background_writes": True}}
+        )
+        release = threading.Event()
+        calls = []
+
+        archive.defer(lambda: (calls.append("first"), release.wait(5)))
+        archive.defer(lambda: calls.append("skipped while first runs"))
+        release.set()
+        archive.wait(timeout=5)
+        archive.defer(lambda: 1 / 0)
+        archive.wait(timeout=5)
+        archive.defer(lambda: calls.append("after"))
+        archive.wait(timeout=5)
+
+        self.assertEqual(calls, ["first", "after"])
 
     def test_writes_season_gameweek_training_archive(self):
         with tempfile.TemporaryDirectory() as directory:

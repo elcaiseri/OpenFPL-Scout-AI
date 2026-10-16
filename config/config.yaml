@@ -99,6 +99,8 @@ data_archive:
   season: "auto"
   # Serving frozen forecasts still archives official results this often.
   results_interval_seconds: 300
+  # Write the archive on a background thread so responses do not wait for it.
+  background_writes: true
 
 # Full-data refits from training/runs/2026-10-08-tuned (89,971 rows through GW5).
 # Weights were selected using development out-of-fold predictions.
