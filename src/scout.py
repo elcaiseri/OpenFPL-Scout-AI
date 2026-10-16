@@ -164,6 +164,9 @@ class FPLScout:
             history_cache_ttl=int(
                 official_config.get("history_cache_ttl_seconds", 900)
             ),
+            settled_history_cache_ttl=int(
+                official_config.get("settled_history_cache_ttl_seconds", 21600)
+            ),
             max_workers=int(official_config.get("max_workers", 8)),
         )
         if fixture_provider is None:
@@ -733,7 +736,9 @@ class FPLScout:
         logger.info("Loaded %d records", len(data))
         return self.predict_players(data, gameweek=gameweek)
 
-    def get_official_predictions(self, gameweek: Optional[int] = None) -> pd.DataFrame:
+    def get_official_predictions(
+        self, gameweek: Optional[int] = None, *, archive: Optional[bool] = None
+    ) -> pd.DataFrame:
         """Generate predictions from official history plus guarded enrichment.
 
         Once a gameweek's deadline has passed, the archived pre-deadline
@@ -741,6 +746,10 @@ class FPLScout:
         old gameweek never re-predicts it with newer data. A closed gameweek
         with no frozen forecast is frozen on its first recall. Open gameweeks
         are predicted live.
+
+        ``archive`` forces (True) or skips (False) writing the training
+        archive. By default requests archive unless a scheduler does it (see
+        ``run_scheduled_archive``), in which case they only predict.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         frozen = self.data_archive.frozen_forecast(
@@ -753,9 +762,11 @@ class FPLScout:
                 frozen.attrs.get("forecast_captured_at"),
             )
             # Inference is what normally archives results; keep collecting
-            # them (throttled), even after the final deadline. This runs in the
-            # request because Cloud Run throttles CPU between requests.
-            self.data_archive.collect_results(self.official_client)
+            # them (throttled), even after the final deadline. Without a
+            # scheduler this runs in the request because Cloud Run throttles
+            # CPU between requests.
+            if archive or (archive is None and not self.data_archive.scheduled):
+                self.data_archive.collect_results(self.official_client)
             return frozen
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
@@ -804,24 +815,36 @@ class FPLScout:
             if enrichment.get("status") == "applied"
             else "official-fpl"
         )
-        archive_result = self.data_archive.capture_inference(
-            official_client=self.official_client,
-            prediction_gameweek=resolved_gameweek,
-            official_history=official_history,
-            enriched_history=history,
-            predictions=result,
-            source=str(result.attrs["source"]),
-            enrichment=enrichment,
-            model_versions={
-                name: {
-                    key: value
-                    for key, value in metadata.items()
-                    if key in {"version", "last_trained", "year", "weight", "path"}
-                }
-                for name, metadata in self.config.get("models", {}).items()
-                if isinstance(metadata, Mapping)
-            },
-        )
+        if archive is None:
+            archive = self.data_archive.inline_capture_due(
+                self.official_client, resolved_gameweek
+            )
+        if archive:
+            archive_result = self.data_archive.capture_inference(
+                official_client=self.official_client,
+                prediction_gameweek=resolved_gameweek,
+                official_history=official_history,
+                enriched_history=history,
+                predictions=result,
+                source=str(result.attrs["source"]),
+                enrichment=enrichment,
+                model_versions={
+                    name: {
+                        key: value
+                        for key, value in metadata.items()
+                        if key
+                        in {"version", "last_trained", "year", "weight", "path"}
+                    }
+                    for name, metadata in self.config.get("models", {}).items()
+                    if isinstance(metadata, Mapping)
+                },
+            )
+        else:
+            archive_result = {
+                "status": "deferred",
+                "prediction_archived": False,
+                "prediction_skipped_reason": "scheduled-archive",
+            }
         result.attrs["archive"] = archive_result
         # A closed gameweek that was never frozen is frozen now, so every
         # later recall returns this same forecast.
@@ -832,6 +855,33 @@ class FPLScout:
             validate=self.select_optimal_team,
         )
         return result if frozen is None else frozen
+
+    def run_scheduled_archive(self, force: bool = False) -> Dict[str, Any]:
+        """Write the training archive for a scheduler, not a visitor request.
+
+        Captures the open gameweek's forecast and squad when a capture is due
+        (``DataArchive.capture_due``) or ``force``d. After the final deadline,
+        with no open gameweek left, it collects official results instead.
+        """
+        archive = self.data_archive
+        if not archive.enabled:
+            return {"status": "disabled"}
+        gameweek = archive.open_gameweek(self.official_client)
+        if gameweek is None:
+            return {
+                "status": "results-only",
+                "archive": archive.collect_results(self.official_client),
+            }
+        if not force and not archive.capture_due(self.official_client, gameweek):
+            return {"status": "not-due", "gameweek": gameweek}
+        predictions = self.get_official_predictions(gameweek, archive=True)
+        squad = self.select_optimal_team(predictions)
+        return {
+            "status": "captured",
+            "gameweek": gameweek,
+            "archive": predictions.attrs.get("archive"),
+            "squad": archive.capture_squad(predictions, squad),
+        }
 
     def _fpl_data_season_problem(self) -> Optional[Dict[str, str]]:
         """Explain why FPL Data must not be used for the live season, if so.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -90,8 +91,12 @@ class DataArchive:
     artifacts are written only while that gameweek is still open (before its
     deadline), so the archive keeps the last pre-deadline forecast and never
     changes one that is already being served as frozen. Cumulative official
-    history is refreshed on every capture, and live event files become
-    immutable shortly after Official FPL marks them ``data_checked``.
+    history is refreshed on every capture. Live event files, and each
+    gameweek's player-stats files, become immutable shortly after Official
+    FPL marks the gameweek ``data_checked``.
+
+    With ``scheduled`` set, a scheduler (``FPLScout.run_scheduled_archive``)
+    writes the archive and requests only predict, unless captures go stale.
 
     Written for one service instance: a single lock orders forecast writes
     and frozen reads.
@@ -102,6 +107,10 @@ class DataArchive:
     # fetched just after ``data_checked`` may predate the final data. Live
     # files keep being refreshed for this long after the check is first seen.
     LIVE_SETTLE = timedelta(minutes=30)
+    # Scheduler ticks drift by seconds; a capture this close to due is due.
+    SCHEDULE_TOLERANCE = timedelta(minutes=1)
+    # Requests re-read the last capture time at most this often.
+    CAPTURE_RECHECK = timedelta(minutes=1)
 
     def __init__(
         self,
@@ -111,16 +120,38 @@ class DataArchive:
         configured_season: str = "auto",
         clock: Optional[Callable[[], datetime]] = None,
         results_interval_seconds: float = 300.0,
+        direct_writes: bool = False,
+        scheduled: bool = False,
+        capture_interval_seconds: float = 3600.0,
+        deadline_window_seconds: float = 7200.0,
+        deadline_interval_seconds: float = 600.0,
+        stale_after_seconds: float = 7200.0,
     ) -> None:
         self.root_path = Path(root_path)
         self.enabled = bool(enabled)
         self.configured_season = configured_season.strip() or "auto"
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.results_interval = timedelta(seconds=float(results_interval_seconds))
+        # Object storage mounts replace a file in one step on close, so a
+        # temporary file and rename only double the storage operations.
+        self.direct_writes = bool(direct_writes)
+        self.scheduled = bool(scheduled)
+        self.capture_interval = timedelta(seconds=float(capture_interval_seconds))
+        self.deadline_window = timedelta(seconds=float(deadline_window_seconds))
+        self.deadline_interval = timedelta(seconds=float(deadline_interval_seconds))
+        self.stale_after = timedelta(seconds=float(stale_after_seconds))
         self._lock = RLock()
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
+        # Parsed frozen metadata, keyed to the file's (mtime_ns, size).
+        self._frozen_metadata: dict[
+            Path, tuple[tuple[int, int], dict[str, Any]]
+        ] = {}
+        # metadata path -> (when checked, captured_at_utc of the stored forecast)
+        self._captures_seen: dict[Path, tuple[datetime, Optional[datetime]]] = {}
+        self._settled: set[tuple[Path, int]] = set()
+        self._final: set[Path] = set()
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -141,6 +172,16 @@ class DataArchive:
                 if data_root
                 else str(archive_config.get("root_path", "data/archive"))
             )
+        # Cloud Run mounts the archive bucket, so write in place there.
+        direct_writes = _environment_bool("OPENFPL_ARCHIVE_DIRECT_WRITES")
+        if direct_writes is None:
+            direct_writes = bool(
+                archive_config.get("direct_writes", bool(os.environ.get("K_SERVICE")))
+            )
+        schedule = archive_config.get("scheduled", {})
+        scheduled = _environment_bool("OPENFPL_SCHEDULED_ARCHIVE")
+        if scheduled is None:
+            scheduled = bool(schedule.get("enabled", False))
         return cls(
             Path(root),
             enabled=enabled,
@@ -148,14 +189,107 @@ class DataArchive:
             results_interval_seconds=float(
                 archive_config.get("results_interval_seconds", 300)
             ),
+            direct_writes=direct_writes,
+            scheduled=scheduled,
+            capture_interval_seconds=float(
+                schedule.get("capture_interval_seconds", 3600)
+            ),
+            deadline_window_seconds=float(
+                schedule.get("deadline_window_seconds", 7200)
+            ),
+            deadline_interval_seconds=float(
+                schedule.get("deadline_interval_seconds", 600)
+            ),
+            stale_after_seconds=float(schedule.get("stale_after_seconds", 7200)),
         )
 
     def status(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
+            "scheduled": self.scheduled,
             "root_path": str(self.root_path),
             "last_result": dict(self.last_result),
         }
+
+    def open_gameweek(self, official_client: Any) -> Optional[int]:
+        """The next gameweek whose deadline has not passed, if any."""
+        return self._open_gameweek(official_client.bootstrap())
+
+    def capture_due(self, official_client: Any, gameweek: int) -> bool:
+        """Whether a scheduled capture of ``gameweek``'s forecast is due.
+
+        Hourly by default (``capture_interval``), and every
+        ``deadline_interval`` within ``deadline_window`` of the deadline, so
+        the forecast frozen at the deadline is at most that old.
+        """
+        bootstrap = official_client.bootstrap()
+        captured_at = self._captured_at(bootstrap, gameweek, recheck=True)
+        if captured_at is None:
+            return True
+        now = self.clock()
+        deadline = self._gameweek_deadline(bootstrap, gameweek)
+        near_deadline = deadline is not None and deadline - now <= self.deadline_window
+        interval = self.deadline_interval if near_deadline else self.capture_interval
+        return now - captured_at >= interval - self.SCHEDULE_TOLERANCE
+
+    def inline_capture_due(self, official_client: Any, gameweek: int) -> bool:
+        """Whether a request must write the archive itself.
+
+        Always, unless a scheduler archives. Then only the open gameweek is
+        captured, and only once its last capture is missing or older than
+        ``stale_after`` (the scheduler stopped), so the archive heals itself.
+        """
+        if not self.scheduled:
+            return True
+        if not self.enabled:
+            return False
+        try:
+            bootstrap = official_client.bootstrap()
+            if gameweek != self._open_gameweek(bootstrap):
+                return False
+            captured_at = self._captured_at(bootstrap, gameweek)
+        except Exception:  # Unknown freshness: archiving is the safe default.
+            logger.exception("Could not check the last GW%d capture", gameweek)
+            return True
+        if captured_at is not None and self.clock() - captured_at <= self.stale_after:
+            return False
+        logger.warning(
+            "No scheduled GW%d capture since %s; archiving in this request",
+            gameweek,
+            captured_at,
+        )
+        return True
+
+    def _metadata_path(self, bootstrap: Mapping[str, Any], gameweek: int) -> Path:
+        return (
+            self.root_path
+            / self._season_name(bootstrap)
+            / "metadata"
+            / f"gw_{gameweek:02d}.json"
+        )
+
+    def _captured_at(
+        self, bootstrap: Mapping[str, Any], gameweek: int, *, recheck: bool = False
+    ) -> Optional[datetime]:
+        """When ``gameweek``'s stored forecast was captured, if it exists.
+
+        Requests re-read it at most every CAPTURE_RECHECK, as another
+        instance may have captured since; a scheduled check always re-reads.
+        """
+        path = self._metadata_path(bootstrap, gameweek)
+        now = self.clock()
+        with self._lock:
+            seen = self._captures_seen.get(path)
+        if seen is not None and not recheck and now - seen[0] < self.CAPTURE_RECHECK:
+            return seen[1]
+        try:
+            metadata = self._read_metadata(path)
+        except (OSError, ValueError):  # Unreadable: treat as never captured.
+            metadata = {}
+        captured_at = _parse_deadline(metadata.get("captured_at_utc"))
+        with self._lock:
+            self._captures_seen[path] = (now, captured_at)
+        return captured_at
 
     def capture_inference(
         self,
@@ -275,6 +409,7 @@ class DataArchive:
                     int(gameweek)
                     for gameweek in enrichment.get("unenriched_gameweeks", [])
                 },
+                settled=self._settled_gameweeks(bootstrap, season_root),
             )
         live_gameweeks = self._archive_live_gameweeks(
             official_client, bootstrap, season_root, written
@@ -445,19 +580,27 @@ class DataArchive:
             deadline = self._gameweek_deadline(bootstrap, gameweek)
             if deadline is None or self.clock() < deadline:
                 return None
-            season_root = self.root_path / self._season_name(bootstrap)
-            metadata_path = season_root / "metadata" / f"gw_{gameweek:02d}.json"
+            metadata_path = self._metadata_path(bootstrap, gameweek)
             # Forecast writes hold the same lock and replace this file in one
             # step, so it is always a complete forecast.
             with self._lock:
-                if not metadata_path.is_file():
+                try:
+                    stat = metadata_path.stat()
+                except FileNotFoundError:
                     logger.warning(
                         "GW%d is closed but no pre-deadline forecast was "
                         "archived; predicting live",
                         gameweek,
                     )
                     return None
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                # A frozen forecast never changes, so it is parsed once and
+                # re-read only if the file itself was replaced.
+                version = (stat.st_mtime_ns, stat.st_size)
+                cached = self._frozen_metadata.get(metadata_path)
+                if cached is not None and cached[0] == version:
+                    metadata = cached[1]
+                else:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             problem = self._forecast_problem(metadata, gameweek, deadline)
             if problem:
                 logger.warning(
@@ -466,6 +609,8 @@ class DataArchive:
                     problem,
                 )
                 return None
+            with self._lock:
+                self._frozen_metadata[metadata_path] = (version, metadata)
             return self._served_forecast(metadata, gameweek)
         except Exception:  # Fail open: a live prediction beats an error.
             logger.exception("Could not read the archived GW%d forecast", gameweek)
@@ -478,7 +623,8 @@ class DataArchive:
         predictions = pd.DataFrame(forecast["data"], columns=forecast["columns"])
         predictions.attrs.update(
             gameweek=gameweek,
-            inference=metadata.get("inference", {}),
+            # Frozen metadata is cached and shared; each frame gets its own copy.
+            inference=copy.deepcopy(metadata.get("inference", {})),
             source=metadata.get("source", "official-fpl"),
             frozen=True,
             forecast_captured_at=metadata.get("captured_at_utc"),
@@ -663,8 +809,33 @@ class DataArchive:
             season_root,
             season_root / "official" / "player-stats",
             history,
+            settled=self._settled_gameweeks(bootstrap, season_root),
         )
         return history_cutoff_gameweek, history
+
+    def _settled_gameweeks(
+        self, bootstrap: Mapping[str, Any], season_root: Path
+    ) -> set[int]:
+        """Gameweeks whose official match data can no longer change.
+
+        The same rule as live files: data-checked, and first seen so at least
+        LIVE_SETTLE ago (``official/live/gw_NN.checked``).
+        """
+        settled: set[int] = set()
+        for event in bootstrap.get("events", []):
+            if not (event.get("finished") and event.get("data_checked")):
+                continue
+            gameweek = int(event["id"])
+            key = (season_root, gameweek)
+            if key not in self._settled:
+                marker = (
+                    season_root / "official" / "live" / f"gw_{gameweek:02d}.checked"
+                )
+                if not self._live_settled(marker):
+                    continue
+                self._settled.add(key)
+            settled.add(gameweek)
+        return settled
 
     def _accepts_forecasts(self, deadline: Optional[datetime]) -> bool:
         """Whether a forecast for a gameweek with this deadline may be written."""
@@ -694,13 +865,15 @@ class DataArchive:
         with self._lock:
             if not self._accepts_forecasts(deadline):
                 return False
-            metadata = {**metadata, "captured_at_utc": self.clock().isoformat()}
+            captured_at = self.clock()
+            metadata = {**metadata, "captured_at_utc": captured_at.isoformat()}
             for path, content in (
                 *inputs.items(),
                 (predictions_path, predictions_csv),
                 (metadata_path, self._json_bytes(metadata)),
             ):
                 self._record_write(written, season_root, path, content)
+            self._captures_seen[metadata_path] = (captured_at, captured_at)
         return True
 
     def _archive_live_gameweeks(
@@ -758,20 +931,41 @@ class DataArchive:
         directory: Path,
         frame: pd.DataFrame,
         skip_gameweeks: Optional[set[int]] = None,
+        settled: Optional[set[int]] = None,
     ) -> None:
+        """Write one file per gameweek; a settled gameweek's file is final.
+
+        Rows carry capture-time ownership, so without this every capture
+        would rewrite every finished gameweek. A settled gameweek is written
+        once more, then a ``.final`` marker freezes it.
+        """
         if "gameweek" not in frame.columns or frame.empty:
             return
         gameweeks = pd.to_numeric(frame["gameweek"], errors="coerce")
         for gameweek in sorted(int(value) for value in gameweeks.dropna().unique()):
             if gameweek < 1 or gameweek in (skip_gameweeks or set()):
                 continue
+            path = directory / f"gw_{gameweek:02d}.csv"
+            final_marker = path.with_suffix(".final")
+            is_settled = gameweek in (settled or set())
+            if is_settled and self._is_final(final_marker):
+                continue
             rows = frame.loc[gameweeks == gameweek].copy()
-            self._record_frame(
-                written,
-                season_root,
-                directory / f"gw_{gameweek:02d}.csv",
-                rows,
-            )
+            self._record_frame(written, season_root, path, rows)
+            if is_settled:
+                self._write_bytes(
+                    final_marker,
+                    self._json_bytes({"final_at_utc": self.clock().isoformat()}),
+                )
+                self._final.add(final_marker)
+
+    def _is_final(self, marker: Path) -> bool:
+        if marker in self._final:
+            return True
+        if marker.is_file():
+            self._final.add(marker)
+            return True
+        return False
 
     def _record_frame(
         self,
@@ -799,6 +993,10 @@ class DataArchive:
             if self._digests.get(path) == digest:
                 return False
             path.parent.mkdir(parents=True, exist_ok=True)
+            if self.direct_writes:
+                path.write_bytes(content)
+                self._digests[path] = digest
+                return True
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
             )

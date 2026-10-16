@@ -79,6 +79,16 @@ class FakeOfficialClient:
         )
 
 
+class OwnershipClient(FakeOfficialClient):
+    """Official history whose capture-time ownership keeps moving."""
+
+    ownership = 45.0
+
+    def player_history(self, gameweek, selectable_only=True):
+        history = super().player_history(gameweek, selectable_only)
+        return history.assign(selected_by_percent=self.ownership)
+
+
 def prediction_frame(gameweek=3):
     frame = pd.DataFrame(
         [
@@ -586,6 +596,113 @@ class DataArchiveTests(unittest.TestCase):
             self.assertEqual(again["status"], "saved")
             self.assertTrue(stats.is_file())
             self.assertFalse((Path(directory) / "2026-2027/predictions").exists())
+
+    def test_settled_gameweek_stats_are_written_once_more_then_never_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [BEFORE_GW3_DEADLINE]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = OwnershipClient()
+            stats = Path(directory) / "2026-2027/official/player-stats/gw_01.csv"
+
+            # GW1's data check is first seen now, so it has not settled yet.
+            self.capture(archive, client, prediction_frame())
+            moment[0] += timedelta(minutes=31)
+            client.ownership = 50.0
+            settling = self.capture(archive, client, prediction_frame())
+            moment[0] += timedelta(minutes=31)
+            client.ownership = 55.0
+            settled = self.capture(archive, client, prediction_frame())
+
+            self.assertIn("official/player-stats/gw_01.csv", settling["files_updated"])
+            self.assertNotIn("official/player-stats/gw_01.csv", settled["files_updated"])
+            # Cumulative history still records the latest capture.
+            self.assertIn("official/history/before_gw_02.csv", settled["files_updated"])
+            self.assertEqual(
+                pd.read_csv(stats)["selected_by_percent_at_capture"].tolist(), [50.0]
+            )
+            # A new process trusts the marker rather than rewriting the file.
+            restarted = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client.ownership = 60.0
+            after_restart = self.capture(restarted, client, prediction_frame())
+            self.assertNotIn(
+                "official/player-stats/gw_01.csv", after_restart["files_updated"]
+            )
+
+    def test_direct_writes_replace_files_without_a_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=fixed_clock(), direct_writes=True
+            )
+            client = OwnershipClient()
+            with patch(
+                "src.data_archive.tempfile.mkstemp", side_effect=AssertionError
+            ):
+                self.capture(archive, client, prediction_frame())
+                client.ownership = 70.0
+                result = self.capture(archive, client, prediction_frame())
+
+            history = Path(directory) / "2026-2027/official/history/before_gw_02.csv"
+            self.assertIn("official/history/before_gw_02.csv", result["files_updated"])
+            self.assertEqual(
+                pd.read_csv(history)["selected_by_percent_at_capture"].tolist(), [70.0]
+            )
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+
+    def test_cloud_run_writes_in_place_unless_overridden(self):
+        config = {"data_archive": {"enabled": True}}
+        cases = [
+            ({}, False),
+            ({"K_SERVICE": "openfpl"}, True),
+            ({"K_SERVICE": "openfpl", "OPENFPL_ARCHIVE_DIRECT_WRITES": "false"}, False),
+            ({"OPENFPL_ARCHIVE_DIRECT_WRITES": "true"}, True),
+        ]
+        for environment, expected in cases:
+            with self.subTest(environment), patch.dict(
+                "os.environ", environment, clear=True
+            ):
+                self.assertEqual(
+                    DataArchive.from_config(config).direct_writes, expected
+                )
+
+    def test_scheduled_archive_is_configured_or_switched_on_by_environment(self):
+        config = {
+            "data_archive": {
+                "enabled": True,
+                "scheduled": {"enabled": False, "deadline_interval_seconds": 300},
+            }
+        }
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(DataArchive.from_config(config).scheduled)
+        with patch.dict("os.environ", {"OPENFPL_SCHEDULED_ARCHIVE": "true"}, clear=True):
+            archive = DataArchive.from_config(config)
+        self.assertTrue(archive.scheduled)
+        self.assertEqual(archive.deadline_interval, timedelta(minutes=5))
+
+    def test_a_frozen_forecast_is_read_again_only_when_its_file_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [datetime(2026, 8, 28, 12, tzinfo=timezone.utc)]
+            archive = DataArchive(
+                Path(directory), enabled=True, clock=lambda: moment[0]
+            )
+            client = FakeOfficialClient()
+            self.capture(archive, client, prediction_frame())
+            moment[0] = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+            metadata_path = Path(directory) / "2026-2027/metadata/gw_03.json"
+
+            first = archive.frozen_forecast(client, 3)
+            with patch.object(Path, "read_text", side_effect=AssertionError):
+                cached = archive.frozen_forecast(client, 3)
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["forecast"]["data"][0][3] = 9.5
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            replaced = archive.frozen_forecast(client, 3)
+
+            self.assertEqual(cached.to_dict(), first.to_dict())
+            self.assertEqual(replaced["expected_points"].tolist(), [9.5])
 
     @staticmethod
     def capture(archive, client, predictions):

@@ -1012,6 +1012,27 @@ async def generate_authenticated_scout_team(
     return await _generate_scout_response(gameweek, public=False)
 
 
+@app.post(
+    "/api/internal/archive",
+    include_in_schema=False,
+    dependencies=AUTHENTICATION_REQUIRED,
+)
+async def run_scheduled_archive(force: bool = Query(False)):
+    """Write the training archive for Cloud Scheduler, off the visitor path.
+
+    With OPENFPL_SCHEDULED_ARCHIVE=true, visitor requests stop archiving and
+    a scheduler calls this every 10 minutes; it captures only when due.
+    """
+    try:
+        return await run_in_threadpool(scout.run_scheduled_archive, force)
+    except OfficialFPLAPIError as error:
+        logger.exception("Scheduled archive could not reach Official FPL")
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (InferenceError, ValueError) as error:
+        logger.exception("Scheduled archive failed")
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @app.get(
     "/api/gw/scout",
     response_model=ResponseModel,

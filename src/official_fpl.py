@@ -20,6 +20,9 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 OFFICIAL_FPL_API = "https://fantasy.premierleague.com/api"
+SUMMARY_PATH = "element-summary/"
+# A settled gameweek's histories still receive late corrections this long.
+HISTORY_SETTLE_SECONDS = 1800
 
 
 class OfficialFPLAPIError(RuntimeError):
@@ -51,6 +54,7 @@ class OfficialFPLClient:
         timeout: float = 20.0,
         cache_ttl: int = 300,
         history_cache_ttl: int = 900,
+        settled_history_cache_ttl: int = 21600,
         max_workers: int = 8,
         session: Optional[requests.Session] = None,
     ) -> None:
@@ -58,10 +62,14 @@ class OfficialFPLClient:
         self.timeout = timeout
         self.cache_ttl = cache_ttl
         self.history_cache_ttl = history_cache_ttl
+        self.settled_history_cache_ttl = settled_history_cache_ttl
         self.max_workers = max(1, max_workers)
         self.session = session or self._build_session()
         self._cache: Dict[str, _CacheEntry] = {}
         self._cache_lock = RLock()
+        # (current gameweek, settled) and when this process first saw it.
+        self._history_state: Optional[Tuple[Optional[int], bool]] = None
+        self._history_state_since = 0.0
 
     @staticmethod
     def _build_session() -> requests.Session:
@@ -120,6 +128,37 @@ class OfficialFPLClient:
         with self._cache_lock:
             self._cache.clear()
 
+    def _history_ttl(self) -> int:
+        """Cache lifetime for element-summary match histories.
+
+        Histories change only while a gameweek is being played. Once the
+        current gameweek is finished and data-checked, and has stayed so for
+        HISTORY_SETTLE_SECONDS (late corrections still arrive), they are kept
+        for ``settled_history_cache_ttl``. Any change of that state drops every
+        cached history, so a gameweek going live never serves stale summaries.
+        """
+        events = self.bootstrap()["events"]
+        current = next((event for event in events if event.get("is_current")), None)
+        settled = current is None or bool(
+            current.get("finished") and current.get("data_checked")
+        )
+        state = (int(current["id"]) if current else None, settled)
+        now = time.monotonic()
+        with self._cache_lock:
+            if state != self._history_state:
+                for key in [key for key in self._cache if key.startswith(SUMMARY_PATH)]:
+                    del self._cache[key]
+                self._history_state = state
+                self._history_state_since = now
+            settled_long_enough = (
+                settled and now - self._history_state_since >= HISTORY_SETTLE_SECONDS
+            )
+        return (
+            self.settled_history_cache_ttl
+            if settled_long_enough
+            else self.history_cache_ttl
+        )
+
     def bootstrap(self) -> Mapping[str, Any]:
         payload = self._get_json("bootstrap-static/")
         required = {"elements", "teams", "events", "element_types"}
@@ -140,9 +179,7 @@ class OfficialFPLClient:
     def player_summary(self, player_id: int) -> Mapping[str, Any]:
         """Return one validated official element-summary response."""
         self.mapped_player(player_id)
-        payload = self._get_json(
-            f"element-summary/{player_id}/", ttl=self.history_cache_ttl
-        )
+        payload = self._get_json(f"{SUMMARY_PATH}{player_id}/", ttl=self._history_ttl())
         required = {"fixtures", "history", "history_past"}
         if not isinstance(payload, Mapping) or not required.issubset(payload):
             raise OfficialFPLAPIError(
@@ -769,11 +806,10 @@ class OfficialFPLClient:
         self, players: List[Mapping[str, Any]]
     ) -> Dict[int, Mapping[str, Any]]:
         summaries: Dict[int, Mapping[str, Any]] = {}
+        ttl = self._history_ttl()
 
         def fetch(player_id: int) -> Tuple[int, Mapping[str, Any]]:
-            payload = self._get_json(
-                f"element-summary/{player_id}/", ttl=self.history_cache_ttl
-            )
+            payload = self._get_json(f"{SUMMARY_PATH}{player_id}/", ttl=ttl)
             if not isinstance(payload, Mapping) or "history" not in payload:
                 raise OfficialFPLAPIError(
                     f"Official summary for player {player_id} has an invalid schema"

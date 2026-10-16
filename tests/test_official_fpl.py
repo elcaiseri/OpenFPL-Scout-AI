@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 import numpy as np
 import requests
 
 from src.official_fpl import (
+    HISTORY_SETTLE_SECONDS,
     OfficialFPLAPIError,
     OfficialFPLClient,
     OfficialFPLNotFoundError,
@@ -85,6 +87,22 @@ def bootstrap(finished=False):
             }
         ],
     }
+
+
+def current_bootstrap(current=1):
+    """GW1 is finished and data-checked; ``current`` is the gameweek in play."""
+    payload = bootstrap(finished=True)
+    for event in payload["events"]:
+        event["is_current"] = event["id"] == current
+        event["data_checked"] = event["finished"]
+    return payload
+
+
+SUMMARY = {"history": [], "fixtures": [], "history_past": []}
+
+
+def summary_calls(session):
+    return sum(1 for path, _ in session.calls if path.startswith("element-summary/"))
 
 
 def add_player(payload, player_id=11, web_name="New Player"):
@@ -327,6 +345,45 @@ class OfficialFPLClientTests(unittest.TestCase):
             result["upcoming_fixtures"][0]["opponent_team_name"], "Arsenal"
         )
         self.assertEqual(result["past_seasons"][0]["start_price"], 7.0)
+
+    def test_settled_histories_outlive_the_live_history_ttl(self):
+        session = FakeSession(
+            {"bootstrap-static/": current_bootstrap(), "element-summary/10/": SUMMARY}
+        )
+        client = OfficialFPLClient(session=session)
+        clock = [1000.0]
+
+        with patch("src.official_fpl.time.monotonic", lambda: clock[0]):
+            client.player_summary(10)
+            # Late corrections can still arrive, so the live TTL applies first.
+            clock[0] += HISTORY_SETTLE_SECONDS + 1
+            client.player_summary(10)
+            clock[0] += 3 * 3600
+            client.player_summary(10)
+
+        self.assertEqual(summary_calls(session), 2)
+
+    def test_a_gameweek_going_live_drops_cached_histories(self):
+        responses = {
+            "bootstrap-static/": current_bootstrap(),
+            "element-summary/10/": SUMMARY,
+        }
+        session = FakeSession(responses)
+        client = OfficialFPLClient(session=session)
+        clock = [1000.0]
+
+        with patch("src.official_fpl.time.monotonic", lambda: clock[0]):
+            client.player_summary(10)
+            clock[0] += HISTORY_SETTLE_SECONDS + 1
+            client.player_summary(10)
+            # GW2's deadline passes; the bootstrap cache expires and sees it.
+            responses["bootstrap-static/"] = current_bootstrap(current=2)
+            clock[0] += 301
+            client.player_summary(10)
+            clock[0] += 60
+            client.player_summary(10)
+
+        self.assertEqual(summary_calls(session), 3)
 
     def test_public_player_mapping_raises_not_found(self):
         client = OfficialFPLClient(

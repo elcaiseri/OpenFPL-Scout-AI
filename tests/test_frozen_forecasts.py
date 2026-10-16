@@ -4,7 +4,7 @@ import asyncio
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -417,6 +417,80 @@ class FrozenForecastTests(unittest.TestCase):
     async def respond(self):
         with patch("main.scout", self.scout, create=True):
             return await _generate_scout_response(3, public=False)
+
+    def metadata_bytes(self):
+        return (self.season_root / "metadata/gw_03.json").read_bytes()
+
+    def test_with_a_scheduler_requests_predict_without_writing_the_archive(self):
+        self.archive.scheduled = True
+        self.assertEqual(self.scout.run_scheduled_archive()["status"], "captured")
+        captured = self.metadata_bytes()
+        squad_file = (self.season_root / "squads/gw_03.json").read_bytes()
+        self.now[0] += timedelta(minutes=30)
+
+        predictions, _ = self.request()
+
+        self.assertEqual(predictions.attrs["archive"]["status"], "deferred")
+        self.assertEqual(self.metadata_bytes(), captured)
+        self.assertEqual((self.season_root / "squads/gw_03.json").read_bytes(), squad_file)
+
+    def test_scheduled_captures_run_hourly_then_every_ten_minutes_near_the_deadline(
+        self,
+    ):
+        self.archive.scheduled = True
+        deadline = datetime(2026, 8, 29, 10, tzinfo=timezone.utc)
+        statuses = []
+        for moment in [
+            BEFORE_GW3_DEADLINE,
+            BEFORE_GW3_DEADLINE + timedelta(minutes=10),
+            BEFORE_GW3_DEADLINE + timedelta(minutes=60),
+            deadline - timedelta(minutes=30),
+            deadline - timedelta(minutes=20),
+            deadline - timedelta(minutes=15),
+        ]:
+            self.now[0] = moment
+            statuses.append(self.scout.run_scheduled_archive()["status"])
+
+        self.assertEqual(
+            statuses,
+            ["captured", "not-due", "captured", "captured", "captured", "not-due"],
+        )
+
+    def test_requests_archive_again_once_scheduled_captures_go_stale(self):
+        self.archive.scheduled = True
+        statuses = []
+        for step in [timedelta(0), timedelta(minutes=30), timedelta(hours=3)]:
+            self.now[0] += step
+            predictions, _ = self.request()
+            statuses.append(predictions.attrs["archive"]["status"])
+
+        # Nothing captured yet, then fresh, then the scheduler went quiet.
+        self.assertEqual(statuses, ["saved", "deferred", "saved"])
+
+    def test_the_last_scheduled_capture_is_the_forecast_that_freezes(self):
+        self.archive.scheduled = True
+        self.scout.run_scheduled_archive()
+        before, squad_before = self.request()
+        self.pass_the_deadline(injured_player=self.captain_id(squad_before))
+
+        after, squad_after = self.request()
+
+        self.assertTrue(after.attrs["frozen"])
+        self.assertEqual(records(after), records(before))
+        self.assertEqual(records(squad_after), records(squad_before))
+
+    def test_after_the_final_deadline_the_scheduler_archives_results(self):
+        self.archive.scheduled = True
+        self.now[0] = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+        self.fpl.current = 4
+        self.fpl.finish(4)
+
+        result = self.scout.run_scheduled_archive()
+
+        self.assertEqual(result["status"], "results-only")
+        self.assertTrue(
+            (self.season_root / "official/player-stats/gw_04.csv").is_file()
+        )
 
 
 if __name__ == "__main__":

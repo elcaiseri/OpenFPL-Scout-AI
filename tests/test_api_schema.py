@@ -13,7 +13,9 @@ from main import (
     app,
     get_player_predictions,
     rate_public_manager_team,
+    run_scheduled_archive,
 )
+from src.auth import verify_api_key
 from src.models import PlayerPointsModel
 
 
@@ -153,6 +155,28 @@ class APISchemaTests(unittest.TestCase):
         self.assertEqual(documentation["redoc_url"], "/redoc")
         self.assertEqual(
             _documentation_links(is_production=True), {"redoc": "/redoc"}
+        )
+
+    def test_scheduled_archive_endpoint_is_private_and_runs_the_archive(self):
+        calls = []
+        scout = SimpleNamespace(
+            run_scheduled_archive=lambda force: calls.append(force)
+            or {"status": "not-due"}
+        )
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(run_scheduled_archive(force=True))
+
+        route = next(
+            route
+            for route in app.routes
+            if getattr(route, "path", None) == "/api/internal/archive"
+        )
+        self.assertEqual(result, {"status": "not-due"})
+        self.assertEqual(calls, [True])
+        self.assertFalse(route.include_in_schema)
+        self.assertIn(
+            verify_api_key,
+            [dependency.call for dependency in route.dependant.dependencies],
         )
 
     def test_production_environment_detection(self):

@@ -223,11 +223,35 @@ so a single lock orders forecast writes and frozen reads.
 Serving frozen forecasts still archives official results, at most every
 `data_archive.results_interval_seconds` (300), so the final Gameweek's results
 are collected after its deadline. This runs within the request, because Cloud
-Run throttles CPU between requests. Live files are refreshed
-until 30 minutes after Official FPL marks the Gameweek `data_checked`, then
-kept. Invoke `/api/scout` at least once before each deadline and after each
-Gameweek is finalized (for example with Cloud Scheduler) to guarantee a
-complete season even when the service otherwise receives no traffic.
+Run throttles CPU between requests. Live files, and each Gameweek's
+`player-stats` files, are refreshed until 30 minutes after Official FPL marks
+the Gameweek `data_checked`; the stats are then written once more and a
+`.final` marker keeps them unchanged. Invoke `/api/scout` at least once before
+each deadline and after each Gameweek is finalized (for example with Cloud
+Scheduler) to guarantee a complete season even when the service otherwise
+receives no traffic.
+
+### Scheduled archiving
+
+Writing the archive takes most of a prediction request's time on a bucket
+mount. With `OPENFPL_SCHEDULED_ARCHIVE=true`, requests only predict and a
+scheduler writes the archive by calling `POST /api/internal/archive` (Bearer
+API key, hidden from the API docs) every 10 minutes. It captures the open
+Gameweek hourly, and every 10 minutes in the 2 hours before its deadline, so
+the forecast frozen at a deadline is at most 10 minutes old; after the final
+deadline it collects results. If no capture lands for 2 hours, requests
+archive again by themselves. Intervals live under `data_archive.scheduled`.
+
+```bash
+gcloud scheduler jobs create http openfpl-archive \
+  --location=europe-west1 --schedule="*/10 * * * *" \
+  --http-method=POST --uri="https://openfpl.kassem.dev/api/internal/archive" \
+  --headers="Authorization=Bearer <API key from VALID_API_KEYS>"
+```
+
+On Cloud Run (`K_SERVICE` set) archive files are written in place: the bucket
+mount replaces a file in one step, so a temporary file and rename would only
+double the storage operations. `OPENFPL_ARCHIVE_DIRECT_WRITES` overrides this.
 
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:

@@ -69,6 +69,10 @@ official_fpl:
   timeout_seconds: 20
   cache_ttl_seconds: 300
   history_cache_ttl_seconds: 900
+  # Match histories change only while a gameweek is played. Once it is
+  # finished and data-checked they are kept this long; any change of the
+  # current gameweek's state drops them.
+  settled_history_cache_ttl_seconds: 21600
   max_workers: 8
 
 # Temporary, permission-pending enrichment of missing historical match inputs.
@@ -99,6 +103,22 @@ data_archive:
   season: "auto"
   # Serving frozen forecasts still archives official results this often.
   results_interval_seconds: 300
+  # Bucket mounts replace a file in one step, so files are written in place
+  # rather than through a temporary file and rename. Defaults to on in Cloud
+  # Run (K_SERVICE is set); OPENFPL_ARCHIVE_DIRECT_WRITES overrides.
+  # direct_writes: true
+  # Archive from a scheduler (POST /api/internal/archive every 10 minutes)
+  # instead of inside visitor requests. Turn on with
+  # OPENFPL_SCHEDULED_ARCHIVE=true once the scheduler job exists. Requests
+  # archive again by themselves if no capture lands within stale_after.
+  scheduled:
+    enabled: false
+    capture_interval_seconds: 3600
+    # Within this long of a deadline, capture every deadline_interval, so
+    # the forecast frozen at the deadline is at most that old.
+    deadline_window_seconds: 7200
+    deadline_interval_seconds: 600
+    stale_after_seconds: 7200
 
 # Full-data refits from training/runs/2026-10-08-tuned (89,971 rows through GW5).
 # Weights were selected using development out-of-fold predictions.
