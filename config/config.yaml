@@ -101,7 +101,7 @@ data_archive:
   results_interval_seconds: 300
   # Archive an open gameweek's forecast at most this often (per app copy);
   # the last capture before the deadline is the one that gets frozen.
-  capture_interval_seconds: 3000
+  capture_interval_seconds: 1800
   # Write the archive on a background thread so responses do not wait for it.
   background_writes: true
 
@@ -136,4 +136,4 @@ models:
     year: 2026-2027
     #weight: 0.27106884779116996
 
-version: "6.1.0"
+version: "6.2.0"

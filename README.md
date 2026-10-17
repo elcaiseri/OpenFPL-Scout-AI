@@ -196,7 +196,7 @@ manager count.
 
 Snapshots, predictions, squads, and metadata for a Gameweek are written only
 while that Gameweek is still open (before its deadline), at most once every
-`data_archive.capture_interval_seconds` (3000) per service instance. Each file
+`data_archive.capture_interval_seconds` (1800) per service instance. Each file
 therefore holds the last pre-deadline capture, which can be up to that long
 before the deadline, and requests for past, live, or far-future Gameweeks
 never replace it. Snapshots and `captured_at_utc` record the inputs and time
