@@ -1,5 +1,8 @@
+import concurrent.futures
 import json
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -107,6 +110,139 @@ class DataArchiveTests(unittest.TestCase):
             )
 
         self.assertEqual(archive.root_path, Path("/data/archive"))
+
+    def test_background_writes_run_one_at_a_time_and_never_raise(self):
+        archive = DataArchive.from_config(
+            {"data_archive": {"enabled": True, "background_writes": True}}
+        )
+        release = threading.Event()
+        calls = []
+
+        archive.defer(lambda: (calls.append("first"), release.wait(5)))
+        archive.defer(lambda: calls.append("skipped while first runs"))
+        release.set()
+        archive.wait(timeout=5)
+        archive.defer(lambda: 1 / 0)
+        archive.wait(timeout=5)
+        archive.defer(lambda: calls.append("after"))
+        archive.wait(timeout=5)
+
+        self.assertEqual(calls, ["first", "after"])
+
+    def test_scheduling_a_write_never_waits_for_one_holding_the_archive_locks(self):
+        archive = DataArchive(Path("unused"), background_writes=True)
+        holding, release = threading.Event(), threading.Event()
+
+        def slow_write():
+            with archive._lock, archive._write_lock:
+                holding.set()
+                release.wait(5)
+
+        archive.defer(slow_write)
+        holding.wait(5)
+        started = time.monotonic()
+        archive.defer(lambda: None, "results")
+        due = (archive.capture_due(3), archive.results_due())
+        elapsed = time.monotonic() - started
+        release.set()
+        archive.wait(timeout=5)
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(due, (True, True))
+
+    def test_a_pending_write_only_skips_writes_of_the_same_kind(self):
+        archive = DataArchive(Path("unused"), background_writes=True)
+        release = threading.Event()
+        calls = []
+
+        archive.defer(lambda: release.wait(5), "results")
+        archive.defer(lambda: calls.append("forecast"), "forecast")
+        archive.defer(lambda: calls.append("second results"), "results")
+        release.set()
+        archive.wait(timeout=5)
+
+        self.assertEqual(calls, ["forecast"])
+
+    def test_wait_gives_up_at_its_timeout_and_never_holds_the_process(self):
+        archive = DataArchive(Path("unused"), background_writes=True)
+        release = threading.Event()
+        archive.defer(lambda: release.wait(5))
+
+        with self.assertRaises(concurrent.futures.TimeoutError):
+            archive.wait(timeout=0.05)
+        self.assertTrue(archive._writer.daemon)
+        release.set()
+        archive.wait(timeout=5)
+
+    def test_concurrent_captures_within_the_interval_capture_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = DataArchive(
+                Path(directory),
+                enabled=True,
+                clock=fixed_clock(),
+                capture_interval_seconds=3600,
+            )
+            client = FakeOfficialClient()
+            started = threading.Barrier(2)
+            results = []
+
+            def capture():
+                started.wait(5)
+                results.append(self.capture(archive, client, prediction_frame()))
+
+            threads = [threading.Thread(target=capture) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(5)
+
+            self.assertEqual(
+                sorted(result["status"] for result in results), ["saved", "throttled"]
+            )
+
+    def test_a_failed_capture_can_be_retried_at_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = DataArchive(
+                Path(directory),
+                enabled=True,
+                clock=fixed_clock(),
+                capture_interval_seconds=3600,
+            )
+            client = FakeOfficialClient()
+            with patch.object(
+                archive, "_capture_inference", side_effect=OSError("volume unavailable")
+            ):
+                failed = self.capture(archive, client, prediction_frame())
+            retried = self.capture(archive, client, prediction_frame())
+
+            self.assertEqual(failed["status"], "failed")
+            self.assertTrue(retried["prediction_archived"])
+
+    def test_a_gameweek_is_captured_at_most_once_per_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            moment = [BEFORE_GW3_DEADLINE]
+            archive = DataArchive(
+                Path(directory),
+                enabled=True,
+                clock=lambda: moment[0],
+                capture_interval_seconds=3600,
+            )
+            client = FakeOfficialClient()
+            metadata = Path(directory) / "2026-2027/metadata/gw_03.json"
+
+            first = self.capture(archive, client, prediction_frame())
+            captured = metadata.read_bytes()
+            moment[0] += timedelta(minutes=59)
+            throttled = self.capture(archive, client, prediction_frame())
+            unchanged = metadata.read_bytes() == captured
+            moment[0] += timedelta(minutes=1)
+            again = self.capture(archive, client, prediction_frame())
+
+            self.assertTrue(first["prediction_archived"])
+            self.assertEqual(throttled["status"], "throttled")
+            self.assertTrue(unchanged)
+            self.assertTrue(again["prediction_archived"])
+            self.assertNotEqual(metadata.read_bytes(), captured)
 
     def test_writes_season_gameweek_training_archive(self):
         with tempfile.TemporaryDirectory() as directory:
