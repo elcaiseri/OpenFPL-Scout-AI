@@ -5,7 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -453,6 +453,75 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertTrue(after.attrs["frozen"])
         self.assertEqual(records(after), records(before))
         self.assertEqual(records(squad_after), records(squad_before))
+
+    def test_a_throttled_request_starts_no_background_write(self):
+        self.archive.background_writes = True
+        self.archive.capture_interval = timedelta(hours=1)
+        self.request()
+        self.archive.wait(timeout=5)
+
+        with patch.object(self.archive, "defer") as defer:
+            predictions, _ = self.request()
+
+        self.assertEqual(predictions.attrs["archive"]["status"], "throttled")
+        defer.assert_not_called()
+
+    def test_with_the_archive_disabled_no_background_writer_starts(self):
+        self.archive.background_writes = True
+        self.archive.enabled = False
+
+        predictions, _ = self.request()
+
+        self.assertEqual(predictions.attrs["archive"], {"status": "disabled"})
+        self.assertIsNone(self.archive._writer)
+
+    def test_a_capture_close_to_the_deadline_is_written_before_responding(self):
+        self.archive.background_writes = True
+        self.now[0] = datetime(2026, 8, 29, 9, 55, tzinfo=timezone.utc)
+
+        predictions, _ = self.request()
+
+        self.assertEqual(predictions.attrs["archive"]["status"], "saved")
+        self.assertTrue((self.season_root / "metadata/gw_03.json").is_file())
+
+    def test_a_background_capture_archives_the_predictions_own_inputs(self):
+        self.archive.background_writes = True
+        release = threading.Event()
+        capture = self.archive.capture_inference
+
+        def slow_capture(**arguments):
+            release.wait(5)
+            return capture(**arguments)
+
+        with patch.object(self.archive, "capture_inference", slow_capture):
+            self.request()
+            # Before the write runs, ownership moves and time passes.
+            self.fpl.elements[0]["selected_by_percent"] = "38.0"
+            self.client.clear_cache()
+            self.now[0] += timedelta(minutes=7)
+            release.set()
+            self.archive.wait(timeout=5)
+
+        snapshot = json.loads(
+            (self.season_root / "official/snapshots/gw_03/bootstrap.json").read_text()
+        )
+        metadata = json.loads((self.season_root / "metadata/gw_03.json").read_text())
+        self.assertEqual(snapshot["elements"][0]["selected_by_percent"], "5.0")
+        self.assertEqual(metadata["captured_at_utc"], BEFORE_GW3_DEADLINE.isoformat())
+
+    def test_archive_now_writes_at_once_despite_the_capture_interval(self):
+        self.archive.background_writes = True
+        self.archive.capture_interval = timedelta(hours=1)
+        self.request()
+        self.archive.wait(timeout=5)
+        self.fpl.elements[0]["selected_by_percent"] = "38.0"
+        self.client.clear_cache()
+
+        predictions = self.scout.get_official_predictions(3, archive_now=True)
+
+        self.assertEqual(predictions.attrs["archive"]["status"], "saved")
+        self.assertTrue(predictions.attrs["archive"]["prediction_archived"])
+        self.assertIn(predictions.attrs["squad_archive"]["status"], {"saved", "unchanged"})
 
 
 if __name__ == "__main__":

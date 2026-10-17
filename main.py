@@ -840,8 +840,8 @@ async def _generate_scout_response(
 ) -> ResponseModel:
     try:
         predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
+        # The squad file is saved with the forecast it was picked from.
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
-        await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
         logger.info(
             "Generated %s scout team for gameweek %d",

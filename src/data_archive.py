@@ -6,11 +6,13 @@ import hashlib
 import json
 import math
 import os
+import queue
 import tempfile
-from concurrent.futures import Future, ThreadPoolExecutor
+import time
+from concurrent.futures import Future
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock, Thread
 from typing import Any, Callable, Mapping, Optional
 
 import numpy as np
@@ -95,7 +97,8 @@ class DataArchive:
     immutable shortly after Official FPL marks them ``data_checked``.
 
     Written for one service instance: a single lock orders forecast writes
-    and frozen reads.
+    and frozen reads. Other file writes and the throttle and writer state use
+    their own locks, so they never make a request wait on the bucket.
     """
 
     SCHEMA_VERSION = 2
@@ -103,6 +106,10 @@ class DataArchive:
     # fetched just after ``data_checked`` may predate the final data. Live
     # files keep being refreshed for this long after the check is first seen.
     LIVE_SETTLE = timedelta(minutes=30)
+    # A background write can wait for the next request (Cloud Run throttles
+    # CPU between requests), so this close to a deadline a capture is written
+    # inline and commits before the deadline.
+    INLINE_BEFORE_DEADLINE = timedelta(minutes=10)
 
     def __init__(
         self,
@@ -122,13 +129,16 @@ class DataArchive:
         self.results_interval = timedelta(seconds=float(results_interval_seconds))
         self.capture_interval = timedelta(seconds=float(capture_interval_seconds))
         self.background_writes = bool(background_writes)
-        self._lock = RLock()
+        self._lock = RLock()  # forecast commits and frozen reads
+        self._write_lock = RLock()  # file writes and their digests
+        self._state_lock = Lock()  # throttles and the background writer
         self._digests: dict[Path, str] = {}
         self._squad_digests: dict[Path, str] = {}
         self._results_due_at: Optional[datetime] = None
         self._capture_due_at: dict[int, datetime] = {}
-        self._writer: Optional[ThreadPoolExecutor] = None
-        self._pending: Optional[Future] = None
+        self._writes: queue.SimpleQueue = queue.SimpleQueue()
+        self._pending: dict[str, Future] = {}
+        self._writer: Optional[Thread] = None
         self.last_result: dict[str, Any] = {"status": "not-attempted"}
 
     @classmethod
@@ -169,37 +179,78 @@ class DataArchive:
             "last_result": dict(self.last_result),
         }
 
-    def defer(self, write: Callable[[], Any]) -> None:
-        """Run an archive write off the request thread, or inline if disabled.
+    def defer(
+        self,
+        write: Callable[[], Any],
+        kind: str = "forecast",
+        *,
+        inline: bool = False,
+    ) -> None:
+        """Run an archive write off the request thread, or inline.
 
-        Writes run one at a time on a background thread, so a response no
-        longer waits for the bucket. While one is still running, new writes
-        are skipped: the next request archives the newer data anyway.
+        Writes run one at a time on a daemon thread, so a response does not
+        wait for the bucket. While a write of the same ``kind`` is pending, a
+        new one is skipped and its data is not archived; for forecasts the
+        next due capture (``capture_interval``) archives newer data.
         """
-        if not self.background_writes:
+        if inline or not self.background_writes:
             write()
             return
-        with self._lock:
-            if self._pending is not None and not self._pending.done():
+        with self._state_lock:
+            pending = self._pending.get(kind)
+            if pending is not None and not pending.done():
                 return
+            done: Future = Future()
+            self._pending[kind] = done
+            self._writes.put((write, done))
             if self._writer is None:
-                self._writer = ThreadPoolExecutor(
-                    max_workers=1, thread_name_prefix="archive"
+                self._writer = Thread(
+                    target=self._run_writes, name="archive", daemon=True
                 )
-            self._pending = self._writer.submit(self._run_write, write)
+                self._writer.start()
 
-    @staticmethod
-    def _run_write(write: Callable[[], Any]) -> None:
-        try:
-            write()
-        except Exception:  # Archive writes are fail-open.
-            logger.exception("Background archive write failed")
+    def _run_writes(self) -> None:
+        while True:
+            write, done = self._writes.get()
+            try:
+                write()
+            except Exception:  # Archive writes are fail-open.
+                logger.exception("Background archive write failed")
+            finally:
+                done.set_result(None)
 
     def wait(self, timeout: Optional[float] = None) -> None:
-        """Block until the background write in progress, if any, finishes."""
-        pending = self._pending
-        if pending is not None:
-            pending.result(timeout=timeout)
+        """Block until pending background writes finish, ``timeout`` in total.
+
+        The writer is a daemon thread, so a write still running when this
+        times out does not keep the process alive.
+        """
+        with self._state_lock:
+            pending = list(self._pending.values())
+        end = None if timeout is None else time.monotonic() + timeout
+        for done in pending:
+            remaining = None if end is None else max(0.0, end - time.monotonic())
+            done.result(timeout=remaining)
+
+    def capture_due(self, gameweek: int) -> bool:
+        """Whether a capture of ``gameweek`` would run now, not be throttled."""
+        with self._state_lock:
+            due_at = self._capture_due_at.get(int(gameweek))
+        return due_at is None or self.clock() >= due_at
+
+    def results_due(self) -> bool:
+        """Whether ``collect_results`` would run now, not be throttled."""
+        with self._state_lock:
+            due_at = self._results_due_at
+        return due_at is None or self.clock() >= due_at
+
+    def near_deadline(self, bootstrap: Mapping[str, Any], gameweek: int) -> bool:
+        """Whether ``gameweek``'s deadline is within INLINE_BEFORE_DEADLINE."""
+        deadline = self._gameweek_deadline(bootstrap, gameweek)
+        now = self.clock()
+        if deadline is None:
+            return False
+        return now < deadline <= now + self.INLINE_BEFORE_DEADLINE
 
     def capture_inference(
         self,
@@ -212,43 +263,59 @@ class DataArchive:
         source: str,
         enrichment: Mapping[str, Any],
         model_versions: Mapping[str, Any],
+        bootstrap: Optional[Mapping[str, Any]] = None,
+        fixtures: Optional[list[Any]] = None,
+        captured_at: Optional[datetime] = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Persist official inputs, enriched inputs, and model predictions.
 
-        A gameweek is captured at most once per ``capture_interval``; the last
-        capture before its deadline is the forecast that gets frozen.
+        A gameweek is captured at most once per ``capture_interval`` unless
+        ``force``d; the last capture before its deadline is the forecast that
+        gets frozen. ``bootstrap``, ``fixtures`` and ``captured_at`` are the
+        prediction's own inputs and time, so a capture written later (in the
+        background) still matches what produced the predictions.
         """
         if not self.enabled:
             return {"status": "disabled"}
-        with self._lock:
-            due_at = self._capture_due_at.get(int(prediction_gameweek))
-            if due_at is not None and self.clock() < due_at:
+        gameweek = int(prediction_gameweek)
+        with self._state_lock:
+            previous_due_at = self._capture_due_at.get(gameweek)
+            throttled = previous_due_at is not None and self.clock() < previous_due_at
+            if throttled and not force:
                 return {
                     "status": "throttled",
                     "prediction_archived": False,
                     "prediction_skipped_reason": "captured-recently",
                 }
+            # Claim the slot now, so concurrent requests do not all capture.
+            self._capture_due_at[gameweek] = self.clock() + self.capture_interval
 
         try:
             result = self._capture_inference(
                 official_client=official_client,
-                prediction_gameweek=int(prediction_gameweek),
+                prediction_gameweek=gameweek,
                 official_history=official_history,
                 enriched_history=enriched_history,
                 predictions=predictions,
                 source=source,
                 enrichment=enrichment,
                 model_versions=model_versions,
+                bootstrap=bootstrap,
+                fixtures=fixtures,
+                captured_at=captured_at,
             )
         except Exception as error:  # Archive availability must not break inference.
             logger.exception("Could not persist the gameweek data archive")
             result = {"status": "failed", "error": str(error)}
+            with self._state_lock:  # Let the next request retry.
+                if previous_due_at is None:
+                    self._capture_due_at.pop(gameweek, None)
+                else:
+                    self._capture_due_at[gameweek] = previous_due_at
         else:
-            with self._lock:
+            with self._state_lock:
                 self._results_due_at = self.clock() + self.results_interval
-                self._capture_due_at[int(prediction_gameweek)] = (
-                    self.clock() + self.capture_interval
-                )
         self.last_result = result
         return result
 
@@ -261,7 +328,7 @@ class DataArchive:
         """
         if not self.enabled:
             return {"status": "disabled"}
-        with self._lock:
+        with self._state_lock:
             now = self.clock()
             if self._results_due_at is not None and now < self._results_due_at:
                 return {"status": "throttled"}
@@ -307,8 +374,12 @@ class DataArchive:
         source: str,
         enrichment: Mapping[str, Any],
         model_versions: Mapping[str, Any],
+        bootstrap: Optional[Mapping[str, Any]] = None,
+        fixtures: Optional[list[Any]] = None,
+        captured_at: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        bootstrap = official_client.bootstrap()
+        if bootstrap is None:
+            bootstrap = official_client.bootstrap()
         season = self._season_name(bootstrap)
         season_root = self.root_path / season
         gameweek_name = f"gw_{prediction_gameweek:02d}"
@@ -359,7 +430,7 @@ class DataArchive:
             inputs = {
                 snapshot_root / "bootstrap.json": self._json_bytes(bootstrap),
                 snapshot_root / "fixtures.json": self._json_bytes(
-                    official_client.fixtures()
+                    official_client.fixtures() if fixtures is None else fixtures
                 ),
                 enriched_path: enriched_history.to_csv(index=False).encode("utf-8"),
             }
@@ -399,6 +470,7 @@ class DataArchive:
                 season_root / "metadata" / f"{gameweek_name}.json",
                 metadata,
                 deadline,
+                captured_at,
             ):
                 skipped_reason = "gameweek-closed"
 
@@ -739,6 +811,7 @@ class DataArchive:
         metadata_path: Path,
         metadata: Mapping[str, Any],
         deadline: Optional[datetime],
+        captured_at: Optional[datetime] = None,
     ) -> bool:
         """Write a forecast's files while its gameweek is still open.
 
@@ -753,7 +826,8 @@ class DataArchive:
         with self._lock:
             if not self._accepts_forecasts(deadline):
                 return False
-            metadata = {**metadata, "captured_at_utc": self.clock().isoformat()}
+            captured_at = captured_at or self.clock()
+            metadata = {**metadata, "captured_at_utc": captured_at.isoformat()}
             for path, content in (
                 *inputs.items(),
                 (predictions_path, predictions_csv),
@@ -854,7 +928,7 @@ class DataArchive:
 
     def _write_bytes(self, path: Path, content: bytes) -> bool:
         digest = hashlib.sha256(content).hexdigest()
-        with self._lock:
+        with self._write_lock:
             if self._digests.get(path) == digest:
                 return False
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -195,9 +195,20 @@ leave `selected_by_percent` empty and record the capture-time value as
 manager count.
 
 Snapshots, predictions, squads, and metadata for a Gameweek are written only
-while that Gameweek is still open (before its deadline). Each file therefore
-holds the last pre-deadline forecast, and requests for past, live, or
-far-future Gameweeks never replace it.
+while that Gameweek is still open (before its deadline), at most once every
+`data_archive.capture_interval_seconds` (3000) per service instance. Each file
+therefore holds the last pre-deadline capture, which can be up to that long
+before the deadline, and requests for past, live, or far-future Gameweeks
+never replace it. Snapshots and `captured_at_utc` record the inputs and time
+of the prediction that was archived.
+
+With `data_archive.background_writes`, archive writes run on a background
+thread after the response, one write of each kind at a time; a write skipped
+while another is pending is not retried until the next capture is due. Within
+10 minutes of a deadline the capture is written before responding, so it lands
+before the deadline. An owner capture that must be saved at once calls
+`get_official_predictions(gameweek, archive_now=True)`, which ignores the
+interval and reports `attrs["archive"]` and `attrs["squad_archive"]`.
 
 Once a Gameweek's deadline has passed, its prediction never changes. Every
 prediction endpoint (`/api/scout`, `/api/gw/scout`, `/api/gw/playerpoints`,
@@ -222,12 +233,14 @@ so a single lock orders forecast writes and frozen reads.
 
 Serving frozen forecasts still archives official results, at most every
 `data_archive.results_interval_seconds` (300), so the final Gameweek's results
-are collected after its deadline. This runs within the request, because Cloud
-Run throttles CPU between requests. Live files are refreshed
-until 30 minutes after Official FPL marks the Gameweek `data_checked`, then
-kept. Invoke `/api/scout` at least once before each deadline and after each
-Gameweek is finalized (for example with Cloud Scheduler) to guarantee a
-complete season even when the service otherwise receives no traffic.
+are collected after its deadline. A request starts it, in the background
+when enabled, because Cloud Run throttles CPU between requests; a background
+write may only progress once the next request arrives. Live files are
+refreshed until 30 minutes after Official FPL marks the Gameweek
+`data_checked`, then kept. Invoke `/api/scout` within the 10 minutes before
+each deadline and after each Gameweek is finalized (for example with Cloud
+Scheduler) to guarantee a complete season even when the service otherwise
+receives no traffic.
 
 FPL Data imports remain permission-pending and are guarded by explicit
 acknowledgement, validation, provenance recording, and atomic writes:
