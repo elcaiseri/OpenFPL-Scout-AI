@@ -670,8 +670,9 @@ details.data-table .table-wrap {
     border-left-color: var(--bad);
 }
 
+/* --bad is a border colour; as small text on the panel it read at 3.5:1. */
 .note.limit .label {
-    color: var(--bad);
+    color: #ff6b5b;
 }
 
 /* ---------- Two-column ---------- */
@@ -694,8 +695,12 @@ details.data-table .table-wrap {
     padding: 18px 20px;
 }
 
-.card h4 {
-    margin-top: 0;
+/* Card titles are h3 for a correct outline but keep the smaller look. */
+.card h3 {
+    margin: 0 0 6px;
+    color: var(--ink);
+    font-size: 15px;
+    letter-spacing: normal;
 }
 
 .card p:last-child,
