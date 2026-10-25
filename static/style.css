@@ -654,7 +654,7 @@ select {
     padding-bottom: 42px;
 }
 
-.squad-heading > div > div {
+.squad-heading > div:first-child > div {
     display: grid;
 }
 
@@ -768,12 +768,25 @@ select {
     background: var(--plum-600);
 }
 
-.player-card:hover,
 .player-card:focus-visible {
     z-index: 4;
     border-color: var(--lime);
     box-shadow: 0 14px 34px rgba(0, 20, 12, 0.44), 0 0 0 3px rgba(200, 255, 50, 0.22);
     transform: translateY(-6px) scale(1.025);
+}
+
+/* A tap must not leave a card stuck in its lifted hover state. */
+@media (hover: hover) {
+    .player-card:hover {
+        z-index: 4;
+        border-color: var(--lime);
+        box-shadow: 0 14px 34px rgba(0, 20, 12, 0.44), 0 0 0 3px rgba(200, 255, 50, 0.22);
+        transform: translateY(-6px) scale(1.025);
+    }
+}
+
+.player-card:active {
+    transform: scale(0.96);
 }
 
 .player-card.captain {
@@ -787,13 +800,22 @@ select {
 }
 
 .player-name {
+    --name-size: 0.82rem;
     overflow: hidden;
     margin: 2px 0 5px;
-    font-size: 0.82rem;
+    font-size: calc(var(--name-size) * var(--name-fit, 1));
     font-weight: 900;
     letter-spacing: -0.02em;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.player-name.wrapped {
+    display: -webkit-box;
+    line-height: 1.08;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .team-name {
@@ -803,6 +825,10 @@ select {
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.label-code {
+    display: none;
 }
 
 .fixture {
@@ -1295,7 +1321,7 @@ select {
     padding: 38px 42px 0;
 }
 
-.section-heading > div > div {
+.section-heading > div:first-child > div {
     display: grid;
 }
 
@@ -1859,12 +1885,15 @@ select {
 
 .pitch {
     min-height: 700px;
-    --squad-card-gap: clamp(7px, 1.4vw, 16px);
-    --squad-card-width: 152px;
-    --squad-card-height: 112px;
+    container: pitch / inline-size;
 }
 
+/* Cards size from the pitch itself, not the viewport, so five always fit a
+   line in any layout: (pitch width − four gaps) / 5, capped at 152px. */
 .formation-line {
+    --squad-card-gap: clamp(4px, 1.6cqi, 16px);
+    --squad-card-width: min(152px, calc((100cqi - 4 * var(--squad-card-gap)) / 5));
+    --squad-card-height: 120px;
     gap: var(--squad-card-gap);
 }
 
@@ -1945,6 +1974,160 @@ select {
     border-radius: 50%;
     background: var(--pink);
     place-items: center;
+}
+
+/* Pitch tiers follow the pitch's own width (container queries), so the same
+   rules hold in the scout view, the team rating view and any future layout. */
+@container pitch (max-width: 619px) {
+    .formation-line {
+        --squad-card-height: 104px;
+    }
+
+    .player-card {
+        padding: 8px 5px 34px;
+    }
+
+    .card-position {
+        display: none;
+    }
+
+    .fixture {
+        margin-top: 3px;
+        margin-bottom: 4px;
+    }
+
+    .card-bottom {
+        right: 5px;
+        bottom: 7px;
+        left: 5px;
+    }
+
+    .card-price {
+        font-size: 0.48rem;
+    }
+
+    .expected-points {
+        min-width: 42px;
+        padding-right: 4px;
+        padding-left: 4px;
+        font-size: 0.65rem;
+    }
+}
+
+/* Phone pitch: each card becomes a compact token. Club and opponent switch
+   to official three-letter codes so the fixture survives at 320px, price
+   moves to the player sheet, and the xPts pill spans the card's foot. */
+@container pitch (max-width: 439px) {
+    .position-label {
+        margin-bottom: 5px;
+        padding: 3px 8px;
+        font-size: 0.46rem;
+        letter-spacing: 0.14em;
+    }
+
+    .formation-line {
+        --squad-card-gap: 3px;
+        min-height: 0;
+        align-items: stretch;
+        margin-bottom: 9px;
+    }
+
+    .player-card {
+        display: flex;
+        height: auto;
+        min-height: 0;
+        flex-direction: column;
+        align-items: center;
+        padding: 11px 3px 4px;
+        border-radius: 10px;
+    }
+
+    .player-card::before {
+        right: 24%;
+        left: 24%;
+        height: 2px;
+    }
+
+    .card-price,
+    .label-full {
+        display: none;
+    }
+
+    .label-code {
+        display: inline;
+    }
+
+    .player-name {
+        --name-size: clamp(0.6rem, 3.15cqi, 0.78rem);
+        width: 100%;
+        margin: 0 0 2px;
+    }
+
+    .team-name {
+        width: 100%;
+        font-size: clamp(0.46rem, 2.2cqi, 0.56rem);
+        letter-spacing: 0.06em;
+    }
+
+    .fixture {
+        width: 100%;
+        gap: 2px;
+        margin: 3px 0 5px;
+        color: #4f4657;
+        font-size: clamp(0.5rem, 2.45cqi, 0.62rem);
+        font-weight: 800;
+    }
+
+    .fixture .label-code {
+        display: block;
+        min-width: 0;
+    }
+
+    .fixture b {
+        flex-basis: 13px;
+        height: 13px;
+        font-size: 0.42rem;
+        border-radius: 4px;
+    }
+
+    .card-bottom {
+        position: static;
+        width: 100%;
+        margin-top: auto;
+        justify-content: center;
+    }
+
+    .card-bottom .expected-points {
+        flex: 1 1 auto;
+    }
+
+    .expected-points {
+        min-width: 0;
+        padding: 4px 2px;
+        font-size: clamp(0.66rem, 3.25cqi, 0.82rem);
+        border-radius: 7px;
+    }
+
+    .expected-points::after {
+        display: none;
+    }
+
+    .role-badge {
+        top: -8px;
+        right: -4px;
+        width: 19px;
+        height: 19px;
+        font-size: 0.48rem;
+        border-radius: 6px;
+    }
+
+    .card-alert {
+        top: -7px;
+        left: -4px;
+        width: 17px;
+        height: 17px;
+        font-size: 0.5rem;
+    }
 }
 
 .table-shell {
@@ -2177,19 +2360,6 @@ select {
     .pitch {
         min-height: 620px;
         padding: 28px 20px;
-        --squad-card-gap: 7px;
-        --squad-card-width: min(124px, calc(20% - 5.6px));
-        --squad-card-height: 112px;
-    }
-
-    .formation-line {
-        min-height: var(--squad-card-height);
-        gap: var(--squad-card-gap);
-    }
-
-    .player-card {
-        padding-right: 7px;
-        padding-left: 7px;
     }
 
     .hero-grid {
@@ -2278,41 +2448,6 @@ select {
         justify-content: flex-end;
     }
 
-    .pitch {
-        --squad-card-gap: 3px;
-        --squad-card-width: calc(20% - 2.4px);
-        --squad-card-height: 104px;
-    }
-
-    .player-card {
-        padding: 8px 5px 34px;
-    }
-
-    .card-position {
-        display: none;
-    }
-
-    .fixture {
-        margin-top: 3px;
-        margin-bottom: 4px;
-    }
-
-    .card-bottom {
-        right: 5px;
-        bottom: 7px;
-        left: 5px;
-    }
-
-    .card-price {
-        font-size: 0.48rem;
-    }
-
-    .expected-points {
-        min-width: 42px;
-        padding-right: 4px;
-        padding-left: 4px;
-        font-size: 0.65rem;
-    }
 }
 
 /* Mobile */
@@ -2553,27 +2688,31 @@ select {
     }
 
     .squad-heading {
+        flex-wrap: wrap;
         align-items: flex-start;
         gap: 14px;
     }
 
     .squad-tools {
-        flex-direction: column;
-        align-items: flex-end;
+        width: 100%;
+        justify-content: space-between;
     }
 
     .formation-chip {
         padding: 7px 9px;
         font-size: 0.56rem;
+        white-space: nowrap;
     }
 
+    /* Every pixel goes to the cards: the pitch runs edge to edge on phones. */
     .pitch {
-        min-height: 555px;
-        padding: 25px 8px;
-        border-radius: 20px;
-        --squad-card-gap: 3px;
-        --squad-card-width: calc(20% - 2.4px);
-        --squad-card-height: clamp(86px, 24vw, 100px);
+        min-height: 0;
+        margin-right: -17px;
+        margin-left: -17px;
+        padding: 22px 6px 18px;
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0;
         background:
             linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)) 50% 50% / 100% 2px no-repeat,
             radial-gradient(circle at 50% 50%, transparent 0 47px, rgba(255, 255, 255, 0.22) 48px 49px, transparent 50px),
@@ -2581,77 +2720,12 @@ select {
     }
 
     .pitch::before {
-        inset: 9px;
+        inset: 8px;
     }
 
-    .position-label {
-        margin-bottom: 5px;
-        padding: 4px 8px;
-        font-size: 0.48rem;
-    }
-
-    .formation-line {
-        min-height: var(--squad-card-height);
-        gap: var(--squad-card-gap);
-        margin-bottom: 10px;
-    }
-
-    .player-card {
-        flex-basis: var(--squad-card-width);
-        width: var(--squad-card-width);
-        min-width: var(--squad-card-width);
-        max-width: var(--squad-card-width);
-        height: var(--squad-card-height);
-        min-height: var(--squad-card-height);
-        padding: 8px 4px 31px;
-        border-radius: 11px;
-    }
-
-    .card-position,
-    .card-price {
-        display: none;
-    }
-
-    .player-name {
-        margin-bottom: 3px;
-        font-size: clamp(0.54rem, 2.5vw, 0.66rem);
-    }
-
-    .team-name {
-        font-size: 0.48rem;
-    }
-
-    .fixture {
-        gap: 2px;
-        margin: 4px 0 6px;
-        font-size: 0.44rem;
-    }
-
-    .expected-points {
-        min-width: 38px;
-        padding: 4px 5px;
-        font-size: 0.62rem;
-        border-radius: 7px;
-    }
-
-    .expected-points::after {
-        display: none;
-    }
-
-    .card-bottom {
-        right: 4px;
-        bottom: 6px;
-        left: 4px;
-        justify-content: center;
-    }
-
-    .role-badge {
-        top: -7px;
-        right: -4px;
-        width: 20px;
-        height: 20px;
-        font-size: 0.5rem;
-        border-radius: 6px;
+    .pitch::after {
+        width: 96px;
+        height: 40px;
     }
 
     .loading,
@@ -2695,11 +2769,6 @@ select {
         margin-top: 13px;
     }
 
-    .player-card {
-        padding-right: 2px;
-        padding-left: 2px;
-    }
-
     .refresh-button {
         width: 44px;
         min-width: 44px;
@@ -2708,15 +2777,6 @@ select {
 
     .refresh-button span {
         display: none;
-    }
-
-    .team-name,
-    .fixture span {
-        display: none;
-    }
-
-    .fixture {
-        justify-content: center;
     }
 }
 
