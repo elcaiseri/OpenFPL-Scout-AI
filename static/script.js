@@ -28,6 +28,8 @@ const appState = {
     ratingCache: new Map(),
     referenceCache: null,
     referenceTimestamp: 0,
+    teamCodes: new Map(),
+    pitchWidth: 0,
     countdownTimer: null
 };
 
@@ -63,6 +65,25 @@ const utils = {
             Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Forward: 'FWD'
         };
         return positions[value] || '—';
+    },
+
+    // Official three-letter club codes (LIV, MCI…) keep fixtures legible on a
+    // phone-width pitch; an unmapped club falls back to its first letters.
+    teamCode(name) {
+        const label = String(name ?? '').trim();
+        if (!label) return '—';
+        return appState.teamCodes.get(label.toLowerCase())
+            || label.replace(/[^a-z]/gi, '').slice(0, 3).toUpperCase() || '—';
+    },
+
+    // Double gameweeks join opponents as "Arsenal / Chelsea", and mark each
+    // venue when they differ: "Arsenal (H) / Chelsea (A)".
+    opponentCode(label) {
+        if (!label || label === 'TBC') return 'TBC';
+        return String(label).split(' / ').map(part => {
+            const match = part.match(/^(.*?)\s*\((H|A)\)$/);
+            return match ? `${this.teamCode(match[1])} (${match[2]})` : this.teamCode(part);
+        }).join(' / ');
     },
 
     // A double gameweek with a home and an away match has no single venue;
@@ -234,6 +255,7 @@ const dataLoader = {
         const byIdentity = new Map(reference.players.map(player => [
             `${player.web_name}|${player.team_name}`.toLowerCase(), player
         ]));
+        this.learnTeamCodes(fixturePayload.results || [], reference.players);
 
         const players = (scout.scout_team || []).map(player => {
             const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
@@ -271,6 +293,21 @@ const dataLoader = {
         const rating = await utils.fetchJson(CONFIG.endpoints.teamRating(entryId, gameweek));
         appState.ratingCache.set(key, rating);
         return rating;
+    },
+
+    // Fixtures carry each club's official short name under the official club
+    // name; players carry the app's canonical club name, so both are mapped.
+    learnTeamCodes(fixtures, players) {
+        const codeById = new Map();
+        fixtures.forEach(fixture => [fixture.home_team, fixture.away_team].forEach(team => {
+            if (!team?.short_name) return;
+            codeById.set(Number(team.id), team.short_name);
+            if (team.name) appState.teamCodes.set(String(team.name).toLowerCase(), team.short_name);
+        }));
+        players.forEach(player => {
+            const code = codeById.get(Number(player.team_id));
+            if (code && player.team_name) appState.teamCodes.set(String(player.team_name).toLowerCase(), code);
+        });
     },
 
     playerFixture(player, fixtures) {
@@ -318,6 +355,8 @@ const playerRenderer = {
         const name = utils.escapeHtml(player.web_name);
         const team = utils.escapeHtml(player.team_name);
         const opponent = utils.escapeHtml(player.opponent_team_name);
+        const teamCode = utils.escapeHtml(utils.teamCode(player.team_name));
+        const opponentCode = utils.escapeHtml(utils.opponentCode(player.opponent_team_name));
         const venue = utils.venueCode(player);
         const roleClass = player.role ? ` ${utils.escapeHtml(player.role)}` : '';
         const availability = player.status_info.className !== 'available'
@@ -331,10 +370,10 @@ const playerRenderer = {
                 ${this.roleBadge(player)}${availability}
                 <div class="card-position">${player.position_code}</div>
                 <div class="player-name">${name}</div>
-                <div class="team-name">${team}</div>
+                <div class="team-name"><span class="label-full">${team}</span><span class="label-code">${teamCode}</span></div>
                 <div class="fixture">
                     ${venue ? `<b>${venue}</b>` : ''}
-                    <span>${opponent}</span>
+                    <span class="label-full">${opponent}</span><span class="label-code">${opponentCode}</span>
                 </div>
                 <div class="card-bottom">
                     <span class="card-price">${utils.money(player.price)}</span>
@@ -485,6 +524,7 @@ const dashboardRenderer = {
         }).join('');
         dom.pitch.classList.remove('fade-in');
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
+        this.fitNames();
 
         const ranked = [...players].sort(
             (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
@@ -495,6 +535,31 @@ const dashboardRenderer = {
         dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
         dom.squadSubtitle.textContent = options.subtitle
             || `${players.length} picks · tap a player for xPts, price and ownership`;
+    },
+
+    // Long names (Alexander-Arnold, Van de Ven) first wrap at a space or
+    // hyphen, then shrink to fit their card, before falling back to an
+    // ellipsis. A Range measures the text, since scrollWidth rounds to whole
+    // pixels and misses centred text that overflows to the left.
+    fitNames() {
+        const range = document.createRange();
+        const textWidth = name => {
+            range.selectNodeContents(name);
+            return range.getBoundingClientRect().width;
+        };
+        dom.pitch.querySelectorAll('.player-name').forEach(name => {
+            name.classList.remove('wrapped');
+            name.style.removeProperty('--name-fit');
+            const room = name.clientWidth;
+            if (!room) return;
+            let ratio = room / textWidth(name);
+            if (ratio >= 1) return;
+            if (ratio < 0.86 && /[\s-]/.test(name.textContent.trim())) {
+                name.classList.add('wrapped');
+                ratio = room / textWidth(name);
+            }
+            if (ratio < 1) name.style.setProperty('--name-fit', Math.max(0.72, ratio * 0.97).toFixed(3));
+        });
     },
 
     loading(message = 'Projecting the Gameweek…') {
@@ -759,6 +824,14 @@ const interactions = {
     },
 
     init() {
+        if ('ResizeObserver' in window) {
+            new ResizeObserver(([entry]) => {
+                const width = Math.round(entry.contentRect.width);
+                if (width === appState.pitchWidth) return;
+                appState.pitchWidth = width;
+                dashboardRenderer.fitNames();
+            }).observe(dom.pitch);
+        }
         dom.gameweekSelect.addEventListener('change', utils.debounce(event => {
             const gameweek = Number(event.target.value);
             if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
