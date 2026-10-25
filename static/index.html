@@ -178,6 +178,7 @@
                         OpenFPL Scout AI uses machine learning and live FPL data to predict player points, then
                         optimises a complete 15-man squad with captain and vice-captain for the next Gameweek.
                     </p>
+                    <a class="hero-cta" href="#squad">See this Gameweek's AI squad <span aria-hidden="true">↓</span></a>
                     <div class="hero-proof" aria-label="How the FPL scout works">
                         <span><i aria-hidden="true"></i> Form &amp; minutes</span>
                         <span>Official FPL data</span>
@@ -279,8 +280,8 @@
                 <div class="stats-grid" id="stats-grid">
                     <article class="stat-card stat-primary">
                         <div class="stat-topline"><span class="stat-icon">xPts</span><small>01</small></div>
-                        <div class="stat-value" id="total-points" aria-label="Projected Gameweek points">—</div>
-                        <div class="stat-label">Projected Gameweek points</div>
+                        <div class="stat-value" id="total-points" aria-label="Projected Gameweek points: best starting XI plus captain">—</div>
+                        <div class="stat-label">Projected Gameweek points · best XI + captain</div>
                     </article>
                     <article class="stat-card">
                         <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small
@@ -310,26 +311,10 @@
                 </div>
             </section>
 
-            <section class="fixture-section" aria-label="Premier League fixtures and difficulty">
-                <div class="section-heading">
-                    <div>
-                        <span class="section-index">03</span>
-                        <div>
-                            <h2>Premier League fixtures &amp; FDR</h2>
-                            <small>Kick-off, home or away, and official Fixture Difficulty Rating at a glance</small>
-                        </div>
-                    </div>
-                    <span class="fixture-source">OFFICIAL / FIXTURES</span>
-                </div>
-                <div class="fixture-rail" id="fixture-rail">
-                    <div class="rail-loading">Loading Premier League fixtures…</div>
-                </div>
-            </section>
-
-            <section class="squad-section" aria-label="AI FPL squad selection">
+            <section class="squad-section" id="squad" aria-label="AI FPL squad selection">
                 <div class="section-heading squad-heading">
                     <div>
-                        <span class="section-index">04</span>
+                        <span class="section-index">03</span>
                         <div>
                             <h2>AI squad selection</h2>
                             <small id="squad-subtitle">15 picks, captain and vice-captain for the selected
@@ -442,6 +427,22 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <section class="fixture-section" aria-label="Premier League fixtures and difficulty">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-index">04</span>
+                        <div>
+                            <h2>Premier League fixtures &amp; FDR</h2>
+                            <small>Kick-off, home or away, and official Fixture Difficulty Rating at a glance</small>
+                        </div>
+                    </div>
+                    <span class="fixture-source">OFFICIAL / FIXTURES</span>
+                </div>
+                <div class="fixture-rail" id="fixture-rail">
+                    <div class="rail-loading">Loading Premier League fixtures…</div>
                 </div>
             </section>
 
