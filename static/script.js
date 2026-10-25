@@ -26,6 +26,8 @@ const appState = {
     ratingData: null,
     dashboardCache: new Map(),
     ratingCache: new Map(),
+    eventsCache: null,
+    eventsTimestamp: 0,
     referenceCache: null,
     referenceTimestamp: 0,
     teamCodes: new Map(),
@@ -208,6 +210,8 @@ const utils = {
     clearCache() {
         appState.dashboardCache.clear();
         appState.ratingCache.clear();
+        appState.eventsCache = null;
+        appState.eventsTimestamp = 0;
         appState.referenceCache = null;
         appState.referenceTimestamp = 0;
     }
@@ -251,18 +255,31 @@ const dom = new Proxy({}, {
 });
 
 const dataLoader = {
+    // The season's gameweeks are small and decide which squad to ask for, so
+    // start-up waits for them alone; the ~800-player list then downloads
+    // alongside the squad prediction instead of ahead of it.
+    async loadEvents(force = false) {
+        const fresh = appState.eventsCache
+            && Date.now() - appState.eventsTimestamp < CONFIG.cacheExpiry;
+        if (fresh && !force) return appState.eventsCache;
+        const payload = await utils.fetchJson(CONFIG.endpoints.events);
+        appState.eventsCache = payload.results || [];
+        appState.eventsTimestamp = Date.now();
+        return appState.eventsCache;
+    },
+
     async loadReferenceData(force = false) {
         const fresh = appState.referenceCache
             && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
         if (fresh && !force) return appState.referenceCache;
 
-        const [eventsPayload, playersPayload, statusPayload] = await Promise.all([
-            utils.fetchJson(CONFIG.endpoints.events),
+        const [events, playersPayload, statusPayload] = await Promise.all([
+            this.loadEvents(force),
             utils.fetchJson(CONFIG.endpoints.players),
             utils.fetchJson(CONFIG.endpoints.eventStatus)
         ]);
         const reference = {
-            events: eventsPayload.results || [],
+            events,
             players: playersPayload.results || [],
             eventStatus: statusPayload.data || {}
         };
@@ -900,6 +917,7 @@ const interactions = {
         dom.refreshButton.classList.add('refreshing');
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
+        appState.eventsCache = null;
         appState.referenceCache = null;
         try {
             await gameweekManager.load(appState.currentGameweek, true);
@@ -976,8 +994,7 @@ const app = {
     async start() {
         dashboardRenderer.loading('Checking the official FPL season…');
         try {
-            const reference = await dataLoader.loadReferenceData();
-            appState.events = reference.events;
+            appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = appState.events.find(event => event.is_current)
                 || appState.events.find(event => event.is_next)
