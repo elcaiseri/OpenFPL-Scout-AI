@@ -432,7 +432,6 @@ select {
 
 .gameweek-option:hover:not(:disabled),
 .gameweek-option:focus-visible {
-    outline: none;
     color: var(--paper);
     background: rgba(255, 255, 255, 0.075);
 }
@@ -1130,6 +1129,9 @@ select {
 }
 
 .topbar-actions > a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
     padding: 9px 12px;
     color: var(--muted);
     font-size: 0.6875rem;
@@ -1144,7 +1146,6 @@ select {
 .topbar-actions > a:hover,
 .topbar-actions > a:focus-visible {
     color: var(--paper);
-    outline: none;
     background: rgba(255, 255, 255, 0.07);
 }
 
@@ -1320,7 +1321,6 @@ select {
 
 .refresh-button:hover:not(:disabled),
 .refresh-button:focus-visible {
-    outline: none;
     box-shadow: 0 10px 30px rgba(200, 255, 50, 0.18);
     transform: translateY(-2px);
 }
@@ -1417,7 +1417,7 @@ select {
 }
 
 .stat-primary .stat-topline small {
-    color: rgba(11, 4, 16, 0.55);
+    color: rgba(11, 4, 16, 0.68);
 }
 
 .engine-grid {
@@ -1529,7 +1529,7 @@ select {
 .fdr-1,
 .fdr-2 { color: #07120b; background: var(--lime); }
 .fdr-3 { color: #07120b; background: #d1d6dc; }
-.fdr-4 { background: #d83273; }
+.fdr-4 { background: #c92a69; } /* 4.9:1 with white text */
 .fdr-5 { background: #7d123d; }
 
 .rail-loading {
@@ -1933,8 +1933,8 @@ select {
 }
 
 .view-button {
-    min-height: 36px;
-    padding: 7px 10px;
+    min-height: 44px;
+    padding: 7px 12px;
     cursor: pointer;
     color: var(--muted);
     font-size: 0.6875rem;
@@ -2280,6 +2280,11 @@ select {
 .squad-row:hover,
 .squad-row:focus-visible {
     background: rgba(200, 255, 50, 0.055);
+}
+
+/* Inside the table frame an outer ring would be clipped at its edges. */
+.squad-row:focus-visible {
+    outline-offset: -3px;
 }
 
 .table-player {
@@ -3036,6 +3041,10 @@ select {
 }
 
 .report-button {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
     padding: 11px 18px;
     color: var(--paper);
     font-size: 0.7rem;
@@ -3051,7 +3060,6 @@ select {
 
 .report-button:hover,
 .report-button:focus-visible {
-    outline: none;
     border-color: rgba(200, 255, 50, 0.4);
     background: rgba(255, 255, 255, 0.09);
 }
@@ -3098,8 +3106,11 @@ select {
     line-height: 1;
 }
 
-.report-stats small {
+.report-stats .report-stat-note {
+    margin: 0;
     color: var(--muted);
+    font-weight: 400;
+    font-variant-numeric: normal;
     font-size: 0.6875rem;
     line-height: 1.4;
 }
@@ -3192,7 +3203,6 @@ select {
 }
 
 .faq-item {
-    padding: 16px 20px;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
     background: rgba(255, 255, 255, 0.03);
@@ -3205,11 +3215,15 @@ select {
     background: rgba(200, 255, 50, 0.04);
 }
 
+/* The padding lives on the summary, so the whole card header is the
+   tap target rather than only the question's line of text. */
 .faq-item summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 14px;
+    padding: 16px 20px;
+    border-radius: var(--radius-md);
     color: var(--paper);
     font-size: 0.85rem;
     font-weight: 800;
@@ -3244,8 +3258,12 @@ select {
     transform: rotate(180deg);
 }
 
+.faq-item[open] summary {
+    padding-bottom: 10px;
+}
+
 .faq-item p {
-    margin-top: 10px;
+    padding: 0 20px 16px;
     color: var(--muted);
     font-size: 0.79rem;
     line-height: 1.62;
@@ -3263,7 +3281,23 @@ select {
         padding: 28px 18px 28px;
     }
 
-    .faq-item {
+    .faq-item summary {
         padding: 14px 16px;
     }
+
+    .faq-item[open] summary {
+        padding-bottom: 10px;
+    }
+
+    .faq-item p {
+        padding: 0 16px 14px;
+    }
+}
+
+/* Keyboard focus is always visible: a lime ring just outside the control.
+   It sits last so base rules that clear the outline cannot hide it; the
+   hero link and retry button draw their own rings. */
+:focus-visible {
+    outline: 2px solid var(--lime);
+    outline-offset: 3px;
 }

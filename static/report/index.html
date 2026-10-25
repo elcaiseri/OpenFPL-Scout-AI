@@ -148,7 +148,7 @@
                 pass. Nothing is precomputed overnight.
             </p>
 
-            <div class="diagram" tabindex="0" role="group" aria-label="System architecture diagram">
+            <div class="diagram">
                 <svg viewBox="0 0 900 400" role="img"
                     aria-label="Request flow: the official FPL API and optional enrichment feed history into feature preparation, four models, ensemble averaging, and squad selection.">
                     <!-- Sources -->
@@ -238,7 +238,7 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Training corpus</h4>
+                    <h3>Training corpus</h3>
                     <ul>
                         <li><strong>2023/24</strong> — 29,725 rows</li>
                         <li><strong>2024/25</strong> — 27,605 rows</li>
@@ -248,7 +248,7 @@
                         <strong>29,747</strong> holdout rows.</p>
                 </div>
                 <div class="card">
-                    <h4>Feature construction</h4>
+                    <h3>Feature construction</h3>
                     <p>Every match statistic is replaced by that player's mean over their <strong>previous
                             five matches</strong>, shifted so the match being predicted never contributes to
                         its own inputs. Five categorical fields — position, player, club, opponent, and
@@ -369,7 +369,7 @@
                 learn from May to predict September. Two independent time-respecting checks were used instead.
             </p>
 
-            <div class="diagram" tabindex="0" role="group" aria-label="Validation folds diagram">
+            <div class="diagram">
                 <svg viewBox="0 0 990 300" role="img"
                     aria-label="Five expanding cross-validation folds train on progressively more history and validate on the period that follows; folds four and five validate inside the season later used as the holdout.">
                     <text class="dg-label" fill="#91849e" x="12" y="20">EXPANDING FORWARD-CHAINING CROSS-VALIDATION — used for tuning and model selection</text>
@@ -605,7 +605,7 @@
                     <p class="fig-sub">Holdout players grouped into ten equal buckets by forecast, then plotted
                         against what they actually scored.</p>
                 </div>
-                <div class="chart-scroll fixed-min" id="fig-calib" tabindex="0" role="group" aria-label="Calibration by forecast decile chart"></div>
+                <div class="chart-scroll fixed-min" id="fig-calib"></div>
                 <figcaption>
                     <b>Reading this:</b> the relationship is monotonic — every decile scored more than the one
                     below it, which is precisely the property a ranking system needs. The curve tracks the
@@ -804,17 +804,17 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Starting XI — 80 points</h4>
+                    <h3>Starting XI — 80 points</h3>
                     <p>Your eleven starters' combined forecast, divided by the best legal XI the AI can build
                         from its own benchmark squad, capped at 1.0 and scaled to 80.</p>
                 </div>
                 <div class="card">
-                    <h4>Captaincy — 10 points</h4>
+                    <h3>Captaincy — 10 points</h3>
                     <p>Your captain's forecast divided by the AI benchmark captain's forecast, capped at 1.0
                         and scaled to 10.</p>
                 </div>
                 <div class="card">
-                    <h4>Availability — 10 points</h4>
+                    <h3>Availability — 10 points</h3>
                     <p>The share of your eleven starters currently flagged as available, scaled to 10. Injured
                         or suspended starters score zero here.</p>
                 </div>
@@ -929,38 +929,38 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Individual scores carry real error</h4>
+                    <h3>Individual scores carry real error</h3>
                     <p>RMSE 1.92 against an actual standard deviation of 2.35 means roughly 33% of the variance
                         in FPL points is explained and two-thirds is not. A single goal is worth 4–6 points and
                         arrives largely at random. Use the ordering; do not read a 5.2 forecast as a prediction
                         of five points.</p>
                 </div>
                 <div class="card">
-                    <h4>Gameweek 1 is a heuristic</h4>
+                    <h3>Gameweek 1 is a heuristic</h3>
                     <p>With no current-season history the models are bypassed for an ownership-and-availability
                         ranking. That is a crowd-following prior, not a forecast, and it inherits whatever the
                         crowd gets wrong. The app is serving this path right now.</p>
                 </div>
                 <div class="card">
-                    <h4>No budget, transfers, or chips</h4>
+                    <h3>No budget, transfers, or chips</h3>
                     <p>Selection ignores price entirely and models no transfer cost, bench order, automatic
                         substitution, or chip strategy. The squad is a shortlist, not a directly playable team.</p>
                 </div>
                 <div class="card">
-                    <h4>Defenders are the weak spot</h4>
+                    <h3>Defenders are the weak spot</h3>
                     <p>Highest RMSE of any position at 2.11, and systematically under-forecast — a mean
                         prediction of 1.01 against 1.24 actual. Clean sheets are binary events the model reads
                         conservatively.</p>
                 </div>
                 <div class="card">
-                    <h4>New players have thin history</h4>
+                    <h3>New players have thin history</h3>
                     <p>Features are five-match rolling means. A summer signing, a promoted-club player, or
                         anyone returning from long injury has little or no usable history, and player identity
                         is itself a significant model input. Early-season forecasts for unfamiliar names are
                         the least trustworthy the system produces.</p>
                 </div>
                 <div class="card">
-                    <h4>Rotation and news are not modelled</h4>
+                    <h3>Rotation and news are not modelled</h3>
                     <p>Nothing ingests press conferences, manager comments, or rotation risk beyond official
                         availability flags and rolling minutes. A rested starter looks identical to a
                         guaranteed one until FPL flags them.</p>
