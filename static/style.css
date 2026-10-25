@@ -1,4 +1,20 @@
 /* OpenFPL Scout — 2026/27 matchday system */
+
+/* Anton (SIL OFL, static/fonts/Anton-OFL.txt) stands in for Impact, which
+   iOS, Android and Linux do not ship; without it the display type falls back
+   to a wide sans-serif and the hero headline outgrows a phone screen. It is
+   only downloaded where Impact is missing. Its one heavy weight covers the
+   whole range so browsers never synthesise a faux bold, and size-adjust
+   scales its 0.859em capitals to Impact's 0.790em, so the tight headline
+   leading and tracking tuned for Impact hold for both. */
+@font-face {
+    font-family: Anton;
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    size-adjust: 92%;
+    src: url("/static/fonts/anton-latin-400.woff2") format("woff2");
+}
 * {
     box-sizing: border-box;
     margin: 0;
@@ -30,7 +46,7 @@
     --radius-lg: 30px;
     --shadow: 0 24px 70px rgba(4, 0, 10, 0.42);
     --font-body: Inter, Aptos, "Segoe UI", Helvetica, Arial, sans-serif;
-    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", Anton, sans-serif;
     --ease: 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -265,10 +281,11 @@ select {
     font-family: var(--font-display);
     font-size: clamp(4rem, 9vw, 7.8rem);
     font-weight: 900;
-    line-height: 0.79;
-    letter-spacing: -0.035em;
+    line-height: 0.82;
+    letter-spacing: -0.02em;
     text-transform: uppercase;
     text-wrap: balance;
+    overflow-wrap: break-word;
 }
 
 .hero-copy h1 span {
@@ -1976,6 +1993,26 @@ select {
     place-items: center;
 }
 
+/* A manager's bench sits in its own band below the XI, in substitution
+   order, so it never reads as part of the starting lineup. */
+.pitch-bench {
+    position: relative;
+    z-index: 2;
+    margin-top: 20px;
+    padding: 10px 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 18px;
+    background: rgba(0, 24, 14, 0.5);
+}
+
+.pitch-bench .formation-line {
+    margin-bottom: 0;
+}
+
+.formation-bench .player-card:not(.captain):not(.vice) {
+    background: linear-gradient(155deg, rgba(229, 234, 231, 0.96), rgba(204, 214, 208, 0.9));
+}
+
 /* Pitch tiers follow the pitch's own width (container queries), so the same
    rules hold in the scout view, the team rating view and any future layout. */
 @container pitch (max-width: 619px) {
@@ -2030,6 +2067,12 @@ select {
         min-height: 0;
         align-items: stretch;
         margin-bottom: 9px;
+    }
+
+    .pitch-bench {
+        margin-top: 12px;
+        padding: 7px 4px 8px;
+        border-radius: 14px;
     }
 
     .player-card {
@@ -2131,6 +2174,7 @@ select {
 }
 
 .table-shell {
+    container: squad-table / inline-size;
     overflow-x: auto;
     border: 1px solid var(--line);
     border-radius: 20px;
@@ -2256,6 +2300,81 @@ select {
 .status-pill.doubtful i { background: #ffc83d; }
 .status-pill.unavailable i { background: var(--pink); }
 .table-xpts { color: var(--lime); font-size: 0.9rem; }
+.table-role.bench { color: var(--paper); background: rgba(255, 255, 255, 0.16); }
+.table-flag { font-weight: 900; }
+.table-flag.doubtful { color: #ffc83d; }
+.table-flag.unavailable { color: var(--pink); }
+
+/* The list fits its frame instead of scrolling sideways past xPts, the
+   number that matters. Below the full table's 810px, position and any
+   availability flag move under the name; on a phone it drops to player,
+   fixture and xPts, with price and ownership one tap away in the sheet. */
+@container squad-table (max-width: 809px) {
+    .squad-table {
+        min-width: 0;
+    }
+
+    .squad-table th:nth-child(2),
+    .squad-table td:nth-child(2),
+    .squad-table th:nth-child(6),
+    .squad-table td:nth-child(6) {
+        display: none;
+    }
+
+    .table-player .label-full {
+        display: none;
+    }
+
+    .table-player .label-code {
+        display: inline;
+    }
+}
+
+@container squad-table (max-width: 599px) {
+    .squad-table th:nth-child(4),
+    .squad-table td:nth-child(4),
+    .squad-table th:nth-child(5),
+    .squad-table td:nth-child(5) {
+        display: none;
+    }
+
+    .squad-table th,
+    .squad-table td {
+        padding: 12px 10px;
+    }
+
+    .squad-table th:first-child,
+    .squad-table td:first-child {
+        padding-left: 14px;
+    }
+
+    .squad-table th:last-child,
+    .squad-table td:last-child {
+        padding-right: 14px;
+        text-align: right;
+    }
+
+    .squad-table td:nth-child(3) {
+        white-space: nowrap;
+    }
+
+    .squad-table .label-full {
+        display: none;
+    }
+
+    .squad-table .label-code {
+        display: inline;
+    }
+
+    .table-player {
+        gap: 9px;
+    }
+
+    .table-rank {
+        flex-basis: 26px;
+        height: 26px;
+    }
+}
 
 .dialog-heading {
     display: flex;
@@ -2396,22 +2515,6 @@ select {
     .engine-card {
         grid-column: span 2;
     }
-
-    .squad-table th:first-child,
-    .squad-table td:first-child {
-        position: sticky;
-        left: 0;
-    }
-
-    .squad-table th:first-child {
-        z-index: 3;
-        background: #160b1e;
-    }
-
-    .squad-table td:first-child {
-        z-index: 2;
-        background: #120818;
-    }
 }
 
 /* Small tablet */
@@ -2425,7 +2528,7 @@ select {
     }
 
     .hero-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 26px;
     }
 
@@ -2493,7 +2596,7 @@ select {
     }
 
     .hero-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 24px;
         margin-top: 48px;
     }

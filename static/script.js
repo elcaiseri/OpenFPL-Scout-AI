@@ -86,6 +86,12 @@ const utils = {
         }).join(' / ');
     },
 
+    // A published FPL pick carries its slot: 1–11 start, 12–15 are the bench
+    // in substitution order. Scout picks carry no slot.
+    isBench(player) {
+        return this.number(player.pick_position, 0) > 11;
+    },
+
     // A double gameweek with a home and an away match has no single venue;
     // its opponent label then names each fixture's venue.
     venueCode(player) {
@@ -389,16 +395,23 @@ const playerRenderer = {
         const role = player.role
             ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
             : '';
+        const bench = utils.isBench(player) ? '<span class="table-role bench">SUB</span>' : '';
+        // On a phone the list drops to player, fixture and xPts, so position,
+        // club code and any availability flag ride under the name instead.
+        const flag = status.className !== 'available'
+            ? ` · <b class="table-flag ${status.className}">${status.label}</b>`
+            : '';
+        const teamCode = utils.escapeHtml(utils.teamCode(player.team_name));
         return `
             <tr class="squad-row" tabindex="0" data-player="${this.dataAttribute(player)}">
                 <td>
                     <div class="table-player">
                         <span class="table-rank">${String(index + 1).padStart(2, '0')}</span>
-                        <span><strong>${utils.escapeHtml(player.web_name)} ${role}</strong><small>${utils.escapeHtml(player.team_name)}</small></span>
+                        <span><strong>${utils.escapeHtml(player.web_name)} ${role}${bench}</strong><small><span class="label-full">${utils.escapeHtml(player.team_name)}</span><span class="label-code">${player.position_code} · ${teamCode}${flag}</span></small></span>
                     </div>
                 </td>
                 <td><span class="position-pill">${player.position_code}</span></td>
-                <td>${venue ? `<strong>${venue}</strong> · ` : ''}${utils.escapeHtml(player.opponent_team_name)}</td>
+                <td>${venue ? `<strong>${venue}</strong> · ` : ''}<span class="label-full">${utils.escapeHtml(player.opponent_team_name)}</span><span class="label-code">${utils.escapeHtml(utils.opponentCode(player.opponent_team_name))}</span></td>
                 <td>${utils.money(player.price)}</td>
                 <td>${utils.percentage(player.selected_by_percent)}</td>
                 <td><span class="status-pill ${status.className}"><i></i>${status.label}</span></td>
@@ -504,9 +517,17 @@ const dashboardRenderer = {
         if (!Array.isArray(players) || !players.length) {
             throw new Error('The AI engine returned no squad players');
         }
+        // A manager's published squad has a starting XI and an ordered bench;
+        // the scout squad has neither, so all 15 picks take the pitch.
+        const hasLineup = players.every(player => utils.number(player.pick_position, 0) >= 1);
+        const starters = hasLineup ? players.filter(player => !utils.isBench(player)) : players;
+        const bench = hasLineup
+            ? players.filter(player => utils.isBench(player))
+                .sort((a, b) => utils.number(a.pick_position, 0) - utils.number(b.pick_position, 0))
+            : [];
         const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
         const grouped = Object.fromEntries(positionOrder.map(position => [position, []]));
-        players.forEach(player => {
+        starters.forEach(player => {
             const position = player.position || player.element_type;
             if (grouped[position]) grouped[position].push(player);
         });
@@ -514,7 +535,7 @@ const dashboardRenderer = {
             (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
         ));
 
-        dom.pitch.innerHTML = positionOrder.map(position => {
+        const lines = positionOrder.map(position => {
             const group = grouped[position];
             if (!group.length) return '';
             const positionClass = position.toLowerCase();
@@ -522,6 +543,12 @@ const dashboardRenderer = {
                 <div class="position-label position-${positionClass}">${position}</div>
                 <div class="formation-line formation-${positionClass}">${group.map(player => playerRenderer.card(player)).join('')}</div>`;
         }).join('');
+        const benchLine = bench.length ? `
+            <div class="pitch-bench">
+                <div class="position-label position-bench">Bench</div>
+                <div class="formation-line formation-bench">${bench.map(player => playerRenderer.card(player)).join('')}</div>
+            </div>` : '';
+        dom.pitch.innerHTML = lines + benchLine;
         dom.pitch.classList.remove('fade-in');
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
         this.fitNames();
@@ -532,7 +559,14 @@ const dashboardRenderer = {
         dom.tableBody.innerHTML = ranked.map((player, index) =>
             playerRenderer.tableRow(player, index)
         ).join('');
-        dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
+        const counts = positionOrder.map(position => grouped[position].length);
+        if (hasLineup) {
+            dom.formationChip.textContent = counts.slice(1).join('-');
+            dom.formationChip.title = 'Starting formation: defenders-midfielders-forwards';
+        } else {
+            dom.formationChip.textContent = counts.join(' • ');
+            dom.formationChip.title = 'Squad by position: goalkeepers • defenders • midfielders • forwards';
+        }
         dom.squadSubtitle.textContent = options.subtitle
             || `${players.length} picks · tap a player for xPts, price and ownership`;
     },
@@ -773,7 +807,8 @@ const interactions = {
         }
         const status = utils.statusInfo(player.status, player.can_select !== false);
         const role = player.role === 'captain' ? 'Captain'
-            : player.role === 'vice' ? 'Vice captain' : 'Squad';
+            : player.role === 'vice' ? 'Vice captain'
+            : utils.isBench(player) ? 'Bench' : 'Squad';
 
         dom.dialogPositionBadge.textContent = utils.positionCode(player);
         dom.dialogPlayerName.textContent = player.web_name;

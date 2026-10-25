@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Mapping, Optional
@@ -137,6 +138,9 @@ app = FastAPI(
     **_documentation_config(IS_PRODUCTION),
 )
 
+# Python 3.9's built-in table lacks .woff2, so StaticFiles would serve the
+# display font as text/plain.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
