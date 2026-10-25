@@ -86,6 +86,31 @@ const utils = {
         }).join(' / ');
     },
 
+    // The points a squad can actually score, as the team rating's AI benchmark
+    // counts them (src/team_rating.py): the highest-projected legal XI — one
+    // goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards — plus the
+    // armband, which doubles its top projection. Null without a legal XI.
+    bestLineupPoints(players) {
+        const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
+        players.forEach(player => {
+            byPosition[this.positionCode(player)]?.push(Math.max(0, this.number(player.expected_points, 0)));
+        });
+        Object.values(byPosition).forEach(points => points.sort((a, b) => b - a));
+        let best = null;
+        for (let defenders = 3; defenders <= 5; defenders += 1) {
+            for (let midfielders = 2; midfielders <= 5; midfielders += 1) {
+                const forwards = 10 - defenders - midfielders;
+                if (forwards < 1 || forwards > 3) continue;
+                const counts = { GK: 1, DEF: defenders, MID: midfielders, FWD: forwards };
+                if (Object.entries(counts).some(([code, count]) => byPosition[code].length < count)) continue;
+                const lineup = Object.entries(counts).flatMap(([code, count]) => byPosition[code].slice(0, count));
+                const base = lineup.reduce((sum, points) => sum + points, 0);
+                if (best === null || base > best.base) best = { base, captain: Math.max(...lineup) };
+            }
+        }
+        return best && best.base + best.captain;
+    },
+
     // A published FPL pick carries its slot: 1–11 start, 12–15 are the bench
     // in substitution order. Scout picks carry no slot.
     isBench(player) {
@@ -468,7 +493,8 @@ const dashboardRenderer = {
     },
 
     statistics(players) {
-        const total = players.reduce((sum, player) => sum + utils.number(player.expected_points, 0), 0);
+        const total = utils.bestLineupPoints(players)
+            ?? players.reduce((sum, player) => sum + utils.number(player.expected_points, 0), 0);
         const value = players.reduce((sum, player) => sum + utils.number(player.price, 0), 0);
         const captain = players.find(player => player.role === 'captain');
         const differentialCount = players.filter(player => {
@@ -612,11 +638,25 @@ const dashboardRenderer = {
             <div class="error" role="alert">
                 <strong>Scout temporarily unavailable</strong>
                 <span>${utils.escapeHtml(message)}</span>
-                <small>Official FPL may be updating. Please try again shortly.</small>
+                <small>Official FPL may be updating. Try again in a moment.</small>
+                <button class="retry-button" type="button" data-retry>Try again</button>
             </div>`;
         dom.fixtureRail.innerHTML = '<div class="rail-loading error-inline">Fixture sync paused.</div>';
         dom.signalState.textContent = 'Retry needed';
         dom.sourceState.textContent = 'Sync paused';
+        // Nothing loaded, so nothing on screen may still describe a squad:
+        // clear the heading, the list and the summary, and show the pitch,
+        // where the error and its retry live.
+        dom.formationChip.textContent = '—';
+        dom.formationChip.removeAttribute('title');
+        dom.squadSubtitle.textContent = 'The AI squad could not load for this Gameweek';
+        dom.tableBody.innerHTML = '';
+        dom.totalPoints.textContent = '—';
+        dom.captainName.textContent = '—';
+        dom.captainPoints.textContent = '— xPts';
+        dom.squadValue.textContent = '—';
+        dom.differentialCount.textContent = '—';
+        interactions.switchView('pitch');
     }
 };
 
@@ -844,6 +884,17 @@ const interactions = {
         });
     },
 
+    // Retry from the error panel. If the season list itself never loaded there
+    // is no Gameweek to reload, so the app starts over.
+    retry() {
+        if (appState.isLoading || appState.isRatingLoading) return;
+        if (!appState.events.length) {
+            app.start();
+            return;
+        }
+        this.refresh();
+    },
+
     async refresh() {
         if (appState.isLoading || appState.isRatingLoading) return;
         dom.refreshButton.classList.add('refreshing');
@@ -898,6 +949,9 @@ const interactions = {
             const target = event.target.closest('[data-player]');
             if (target) this.showPlayer(target);
         });
+        dom.pitch.addEventListener('click', event => {
+            if (event.target.closest('[data-retry]')) this.retry();
+        });
         document.addEventListener('keydown', event => {
             const target = event.target.closest('.squad-row');
             if (target && (event.key === 'Enter' || event.key === ' ')) {
@@ -914,8 +968,12 @@ const interactions = {
 };
 
 const app = {
-    async init() {
+    init() {
         interactions.init();
+        this.start();
+    },
+
+    async start() {
         dashboardRenderer.loading('Checking the official FPL season…');
         try {
             const reference = await dataLoader.loadReferenceData();

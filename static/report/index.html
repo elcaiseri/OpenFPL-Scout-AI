@@ -36,6 +36,7 @@
 <body>
     <header class="masthead">
         <div class="wrap">
+            <a class="back-link" href="/">← Back to the app</a>
             <p class="eyebrow">Technical Report · Version 6.0.0</p>
             <h1>How OpenFPL<br>Picks a Squad</h1>
             <p class="lede">
@@ -147,7 +148,7 @@
                 pass. Nothing is precomputed overnight.
             </p>
 
-            <div class="diagram">
+            <div class="diagram" tabindex="0" role="group" aria-label="System architecture diagram">
                 <svg viewBox="0 0 900 400" role="img"
                     aria-label="Request flow: the official FPL API and optional enrichment feed history into feature preparation, four models, ensemble averaging, and squad selection.">
                     <!-- Sources -->
@@ -368,7 +369,7 @@
                 learn from May to predict September. Two independent time-respecting checks were used instead.
             </p>
 
-            <div class="diagram">
+            <div class="diagram" tabindex="0" role="group" aria-label="Validation folds diagram">
                 <svg viewBox="0 0 990 300" role="img"
                     aria-label="Five expanding cross-validation folds train on progressively more history and validate on the period that follows; folds four and five validate inside the season later used as the holdout.">
                     <text class="dg-label" fill="#91849e" x="12" y="20">EXPANDING FORWARD-CHAINING CROSS-VALIDATION — used for tuning and model selection</text>
@@ -604,7 +605,7 @@
                     <p class="fig-sub">Holdout players grouped into ten equal buckets by forecast, then plotted
                         against what they actually scored.</p>
                 </div>
-                <div class="chart-scroll" id="fig-calib"></div>
+                <div class="chart-scroll fixed-min" id="fig-calib" tabindex="0" role="group" aria-label="Calibration by forecast decile chart"></div>
                 <figcaption>
                     <b>Reading this:</b> the relationship is monotonic — every decile scored more than the one
                     below it, which is precisely the property a ranking system needs. The curve tracks the

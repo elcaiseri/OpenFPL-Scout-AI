@@ -89,6 +89,22 @@ main section:first-of-type {
         radial-gradient(700px 380px at 88% 0%, rgba(57, 241, 255, 0.09), transparent 60%);
 }
 
+.back-link {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    margin: -20px 0 12px;
+    color: var(--ink-2);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.back-link:hover,
+.back-link:focus-visible {
+    color: var(--lime);
+}
+
 .eyebrow {
     font-size: 12px;
     letter-spacing: 0.16em;
@@ -697,6 +713,11 @@ details.data-table .table-wrap {
     margin: 24px 0 8px;
 }
 
+.diagram {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .diagram svg {
     display: block;
     width: 100%;
@@ -768,6 +789,12 @@ footer a {
 @media (max-width: 640px) {
     .wrap {
         padding: 0 18px;
+    }
+
+    /* Scaled to a phone, the diagrams' labels fell to 4-5px; at 760px they
+       stay near 10px and scroll sideways, as the charts already do. */
+    .diagram svg {
+        min-width: 760px;
     }
 
     figure {
