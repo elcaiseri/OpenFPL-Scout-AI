@@ -4,12 +4,15 @@
    iOS, Android and Linux do not ship; without it the display type falls back
    to a wide sans-serif and the hero headline outgrows a phone screen. It is
    only downloaded where Impact is missing. Its one heavy weight covers the
-   whole range so browsers never synthesise a faux bold. */
+   whole range so browsers never synthesise a faux bold, and size-adjust
+   scales its 0.859em capitals to Impact's 0.790em, so the tight headline
+   leading and tracking tuned for Impact hold for both. */
 @font-face {
     font-family: Anton;
     font-style: normal;
     font-weight: 100 900;
     font-display: swap;
+    size-adjust: 92%;
     src: url("/static/fonts/anton-latin-400.woff2") format("woff2");
 }
 * {
@@ -278,8 +281,8 @@ select {
     font-family: var(--font-display);
     font-size: clamp(4rem, 9vw, 7.8rem);
     font-weight: 900;
-    line-height: 0.79;
-    letter-spacing: -0.035em;
+    line-height: 0.82;
+    letter-spacing: -0.02em;
     text-transform: uppercase;
     text-wrap: balance;
     overflow-wrap: break-word;
