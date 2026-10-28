@@ -1,6 +1,6 @@
-# OpenFPL Scout AI
+# OpenFPL Scout AI Team
 
-<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI logo" width="160">
+<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI Team logo" width="160">
 
 OpenFPL predicts Fantasy Premier League player points and selects a complete
 15-player squad for each Gameweek. It combines live official FPL data with a

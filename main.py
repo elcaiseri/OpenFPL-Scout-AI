@@ -1,4 +1,4 @@
-"""OpenFPL Scout API with official FPL data and guarded stat enrichment."""
+"""OpenFPL Scout AI Team API with official FPL data and guarded stat enrichment."""
 
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OpenFPL API",
+    title="OpenFPL Scout AI Team API",
     description=(
         "AI-powered FPL Scout using official Fantasy Premier League data with "
         "guarded historical-stat enrichment"

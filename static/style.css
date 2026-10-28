@@ -1,4 +1,4 @@
-/* OpenFPL Scout — 2026/27 matchday system */
+/* OpenFPL Scout AI Team — 2026/27 matchday system */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -210,6 +210,7 @@ select {
     font-weight: 800;
     letter-spacing: 0.19em;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .season-chip,
@@ -2678,6 +2679,11 @@ select {
 }
 
 @media (max-width: 370px) {
+    /* Keeps "Scout AI Team" on one line beside the season chip. */
+    .brand-copy small {
+        letter-spacing: 0.1em;
+    }
+
     .season-chip {
         max-width: 105px;
         line-height: 1.2;

@@ -1,4 +1,4 @@
-/** OpenFPL Scout — official-data prediction dashboard. */
+/** OpenFPL Scout AI Team — official-data prediction dashboard. */
 
 const CONFIG = {
     defaultGameweek: 1,

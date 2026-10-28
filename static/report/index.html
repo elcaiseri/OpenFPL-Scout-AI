@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#12061a">
     <title>How OpenFPL Predicts FPL Points — Technical Report</title>
     <meta name="description"
-        content="How OpenFPL Scout AI forecasts Fantasy Premier League points: data sources, the four-model ensemble, out-of-sample validation on a full held-out season, and the measured limits of the system.">
+        content="How OpenFPL Scout AI Team forecasts Fantasy Premier League points: data sources, the four-model ensemble, out-of-sample validation on a full held-out season, and the measured limits of the system.">
     <meta name="author" content="@elcaiseri">
     <meta name="keywords"
         content="FPL predictions, expected points, xPts, Fantasy Premier League model, machine learning, XGBoost, CatBoost, Ridge, MLP ensemble, backtest, Gameweek, squad selection, captaincy">
@@ -17,17 +17,17 @@
 
     <meta property="og:title" content="OpenFPL Technical Report">
     <meta property="og:description"
-        content="Data, models, and measured accuracy behind OpenFPL Scout AI — validated on a full held-out Premier League season.">
+        content="Data, models, and measured accuracy behind OpenFPL Scout AI Team — validated on a full held-out Premier League season.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://openfpl.kassem.dev/static/report/index.html">
     <meta property="og:locale" content="en_GB">
-    <meta property="og:site_name" content="OpenFPL Scout">
+    <meta property="og:site_name" content="OpenFPL Scout AI Team">
     <meta property="og:image"
         content="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="How OpenFPL Predicts FPL Points — Technical Report">
     <meta name="twitter:description"
-        content="Data, models, and measured accuracy behind OpenFPL Scout AI — validated on a full held-out Premier League season.">
+        content="Data, models, and measured accuracy behind OpenFPL Scout AI Team — validated on a full held-out Premier League season.">
     <meta name="twitter:creator" content="@elcaiseri">
 
     <link rel="stylesheet" href="style.css">
@@ -39,7 +39,7 @@
             <p class="eyebrow">Technical Report · Version 6.0.0</p>
             <h1>How OpenFPL<br>Picks a Squad</h1>
             <p class="lede">
-                OpenFPL Scout AI forecasts Fantasy Premier League points for every player and builds a legal
+                OpenFPL Scout AI Team forecasts Fantasy Premier League points for every player and builds a legal
                 15-player squad for the coming Gameweek. This report documents what the system is trained on,
                 how it is validated, exactly how accurate it proved to be on a season it was not trained on,
                 and the places where it is known to be weak.
@@ -1071,7 +1071,7 @@ uv run python -m scripts.collect_official_fpl --gameweek 39</code></pre>
     <footer>
         <div class="wrap">
             <p>
-                <strong style="color:var(--ink)">OpenFPL Scout AI</strong> · Technical report for version 6.0.0
+                <strong style="color:var(--ink)">OpenFPL Scout AI Team</strong> · Technical report for version 6.0.0
                 · Models trained 14 August 2026 · Report generated 16 August 2026.
             </p>
             <p>
