@@ -180,7 +180,7 @@ its venue (`"Chelsea (H) / Tottenham (A)"`).
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",
   "freeze_method": "deadline",
-  "credits": "OpenFPL Scout AI Team | Official FPL + FPL Data when available | @elcaiseri, 2026"
+  "credits": "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
 }
 ```
 

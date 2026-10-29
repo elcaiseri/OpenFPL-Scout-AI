@@ -17,7 +17,7 @@ class ResponseModel(BaseModel):
     # "after-deadline" (frozen on the gameweek's first recall after it).
     freeze_method: Optional[str] = None
     credits: str = (
-        "OpenFPL Scout AI Team | Official FPL + FPL Data when available | @elcaiseri, 2026"
+        "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
     )
 
 

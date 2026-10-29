@@ -1032,10 +1032,19 @@ select {
     background: rgba(255, 255, 255, 0.025);
 }
 
-.credits::after {
-    content: "  //  Built by @elcaiseri";
+.credits-sep {
+    margin: 0 0.6em;
+}
+
+.credits-author {
     color: var(--lime);
     font-weight: 800;
+    text-decoration: none;
+}
+
+.credits-author:hover,
+.credits-author:focus-visible {
+    text-decoration: underline;
 }
 
 .fade-in {

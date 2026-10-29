@@ -251,6 +251,10 @@ uv run python -m scripts.download_fpl_data \
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |
 
+## Author
+
+Built by [Islam Kassem](https://kassem.dev/), Senior AI/ML Engineer in Riyadh ([GitHub](https://github.com/elcaiseri) · [LinkedIn](https://www.linkedin.com/in/elcaiseri) · [Kaggle](https://www.kaggle.com/elcaiseri)).
+
 ## License
 
 [MIT](LICENSE)
