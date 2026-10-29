@@ -10,7 +10,7 @@
         content="OpenFPL is an AI-powered FPL Scout using historical and live official data to predict player performance and optimise squad selection.">
     <meta name="keywords"
         content="FPL, Fantasy Premier League, FPL predictions, FPL tips, expected points, xPts, FPL captain picks, armband, differentials, FDR, Fixture Difficulty Rating, Gameweek, FPL deadline, Premier League fantasy football, FPL squad selector, team rating, FPL scout, price changes, bonus points, clean sheets">
-    <meta name="author" content="@elcaiseri">
+    <meta name="author" content="Islam Kassem">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
     <link rel="canonical" href="https://openfpl.kassem.dev/">
 
@@ -46,7 +46,7 @@
                 "@id": "https://openfpl.kassem.dev/#app",
                 "name": "OpenFPL Scout AI",
                 "alternateName": "OpenFPL",
-                "description": "AI Fantasy Premier League scout that forecasts expected points (xPts) for every Premier League player and builds a budget-free 15-player Gameweek shortlist with captain and vice-captain recommendations, using official FPL data."
+                "description": "AI Fantasy Premier League scout that forecasts expected points (xPts) for every Premier League player and builds a budget-free 15-player Gameweek shortlist with captain and vice-captain recommendations, using official FPL data.",
                 "url": "https://openfpl.kassem.dev/",
                 "image": "https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png",
                 "applicationCategory": "SportsApplication",
@@ -63,7 +63,9 @@
                     "FPL deadline countdown and Gameweek planner",
                     "Team rating out of 100 for any public FPL team ID"
                 ],
-                "author": { "@type": "Person", "name": "@elcaiseri" },
+                "author": { "@type": "Person", "@id": "https://kassem.dev/#person", "name": "Islam Kassem", "url": "https://kassem.dev/" },
+                "creator": { "@type": "Person", "@id": "https://kassem.dev/#person", "name": "Islam Kassem", "url": "https://kassem.dev/" },
+                "sameAs": ["https://github.com/elcaiseri/OpenFPL-Scout-AI"],
                 "about": {
                     "@type": "Thing",
                     "name": "Fantasy Premier League",
@@ -600,8 +602,10 @@
             </section>
         </main>
 
-        <footer class="credits" id="credits">
-            OpenFPL Scout AI · Official FPL data
+        <footer class="credits">
+            <span id="credits">OpenFPL Scout AI · Official FPL data</span>
+            <span class="credits-sep" aria-hidden="true">//</span>
+            <a class="credits-author" href="https://kassem.dev/" rel="author">Built by Islam Kassem</a>
         </footer>
     </div>
 

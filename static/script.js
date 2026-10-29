@@ -377,7 +377,12 @@ const dashboardRenderer = {
         this.squad(data.scout_team);
         dom.signalState.textContent = 'Projections ready';
         dom.sourceState.textContent = 'Official data';
-        if (data.credits) dom.credits.textContent = data.credits;
+        if (data.credits) {
+            // The footer's author link already credits the author, so show only
+            // the app and data-source parts of the API credits string.
+            const parts = data.credits.split(' | ');
+            dom.credits.textContent = (parts.length > 2 ? parts.slice(0, -1) : parts).join(' · ');
+        }
     },
 
     header(data) {
