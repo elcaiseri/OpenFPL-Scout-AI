@@ -1,6 +1,6 @@
 # OpenFPL Scout AI Team API
 
-Version: 6.0.0
+Version: 6.1.1
 
 OpenFPL Scout AI Team generates player projections and a positional 15-player squad.
 The public official Fantasy Premier League API remains the authoritative
@@ -175,7 +175,7 @@ its venue (`"Chelsea (H) / Tottenham (A)"`).
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "6.0.0",
+  "version": "6.1.1",
   "source": "official-fpl+fpl-data",
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",
