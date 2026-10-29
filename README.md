@@ -1,6 +1,6 @@
-# OpenFPL Scout AI
+# OpenFPL Scout AI Team
 
-<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI logo" width="160">
+<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI Team logo" width="160">
 
 OpenFPL predicts Fantasy Premier League player points and selects a complete
 15-player squad for each Gameweek. It combines live official FPL data with a
@@ -250,6 +250,10 @@ uv run python -m scripts.download_fpl_data \
 | `static/` | Responsive dashboard |
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |
+
+## Author
+
+Built by [Islam Kassem](https://kassem.dev/), Senior AI/ML Engineer in Riyadh ([GitHub](https://github.com/elcaiseri) · [LinkedIn](https://www.linkedin.com/in/elcaiseri) · [Kaggle](https://www.kaggle.com/elcaiseri)).
 
 ## License
 
