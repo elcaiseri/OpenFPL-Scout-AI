@@ -425,6 +425,18 @@ class DataArchive:
             logger.exception("Could not persist the selected squad")
             return {"status": "failed", "error": str(error)}
 
+    def seconds_until_deadline(
+        self, official_client: Any, gameweek: int
+    ) -> Optional[float]:
+        """Return how long a gameweek stays open, or None when unknown."""
+        try:
+            deadline = self._gameweek_deadline(official_client.bootstrap(), gameweek)
+        except Exception:  # The caller treats an unknown deadline as closed.
+            return None
+        if deadline is None:
+            return None
+        return (deadline - self.clock()).total_seconds()
+
     def frozen_forecast(
         self, official_client: Any, gameweek: int
     ) -> Optional[pd.DataFrame]:

@@ -4,6 +4,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -417,6 +418,82 @@ class FrozenForecastTests(unittest.TestCase):
     async def respond(self):
         with patch("main.scout", self.scout, create=True):
             return await _generate_scout_response(3, public=False)
+
+    def count_live_predictions(self):
+        """Record each gameweek the scout predicts live from now on."""
+        calls = []
+        live = self.scout._live_official_predictions
+
+        def counted(gameweek):
+            calls.append(gameweek)
+            return live(gameweek)
+
+        self.scout._live_official_predictions = counted
+        return calls
+
+    def test_requests_for_an_open_gameweek_share_one_prediction(self):
+        calls = self.count_live_predictions()
+
+        first, _ = self.request()
+        shared = records(first)
+        first["expected_points"] = -1.0
+        second, _ = self.request()
+
+        self.assertEqual(calls, [3])
+        self.assertFalse(second.attrs["frozen"])
+        self.assertEqual(records(second), shared)
+
+    def test_concurrent_requests_wait_for_one_prediction(self):
+        calls = self.count_live_predictions()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(
+                pool.map(
+                    lambda _: records(self.scout.get_official_predictions(3)),
+                    range(4),
+                )
+            )
+
+        self.assertEqual(calls, [3])
+        self.assertTrue(all(result == results[0] for result in results))
+
+    def test_a_shared_prediction_expires_after_its_ttl(self):
+        calls = self.count_live_predictions()
+
+        self.request()
+        self.monotonic[0] += self.scout.prediction_cache_ttl
+        self.request()
+
+        self.assertEqual(calls, [3, 3])
+
+    def test_a_shared_prediction_never_outlives_the_deadline(self):
+        calls = self.count_live_predictions()
+        self.now[0] = datetime(2026, 8, 29, 9, 59, tzinfo=timezone.utc)
+
+        self.request()
+        self.monotonic[0] += 61
+        self.request()
+
+        self.assertEqual(calls, [3, 3])
+
+    def test_the_frozen_forecast_replaces_a_shared_prediction(self):
+        before, _ = self.request()
+        # The shared entry is still fresh, but the deadline has passed.
+        self.now[0] = AFTER_GW3_DEADLINE
+
+        after, _ = self.request()
+
+        self.assertFalse(before.attrs["frozen"])
+        self.assertTrue(after.attrs["frozen"])
+
+    def test_a_zero_ttl_predicts_every_request(self):
+        self.scout.prediction_cache_ttl = 0
+        calls = self.count_live_predictions()
+
+        self.request()
+        self.request()
+
+        self.assertEqual(calls, [3, 3])
 
 
 if __name__ == "__main__":
