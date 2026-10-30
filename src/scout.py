@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import joblib
@@ -182,6 +182,14 @@ class FPLScout:
         self.fixture_cache_ttl = float(
             inference_config.get("fixture_cache_ttl_seconds", 300)
         )
+        # Requests for the same open gameweek share one live prediction (and
+        # one archive capture) for this long instead of each re-running it.
+        self.prediction_cache_ttl = float(
+            inference_config.get("prediction_cache_ttl_seconds", 300)
+        )
+        self._prediction_cache: Dict[int, Tuple[float, pd.DataFrame]] = {}
+        self._prediction_locks: Dict[int, Lock] = {}
+        self._prediction_locks_guard = Lock()
         self.clock: Callable[[], float] = time.monotonic
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
@@ -740,7 +748,9 @@ class FPLScout:
         forecast is returned unchanged (``attrs["frozen"]``), so recalling an
         old gameweek never re-predicts it with newer data. A closed gameweek
         with no frozen forecast is frozen on its first recall. Open gameweeks
-        are predicted live.
+        are predicted live and shared for ``prediction_cache_ttl_seconds``
+        (never past the deadline), so repeated and concurrent requests run one
+        prediction and one archive capture. Callers receive a copy.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         frozen = self.data_archive.frozen_forecast(
@@ -757,6 +767,33 @@ class FPLScout:
             # request because Cloud Run throttles CPU between requests.
             self.data_archive.collect_results(self.official_client)
             return frozen
+        if self.prediction_cache_ttl <= 0:
+            return self._live_official_predictions(resolved_gameweek)
+
+        with self._prediction_locks_guard:
+            lock = self._prediction_locks.setdefault(resolved_gameweek, Lock())
+        with lock:
+            cached = self._prediction_cache.get(resolved_gameweek)
+            if cached is not None and cached[0] > self.clock():
+                logger.info("Serving the shared GW%d prediction", resolved_gameweek)
+                return cached[1].copy()
+            result = self._live_official_predictions(resolved_gameweek)
+            open_for = self.data_archive.seconds_until_deadline(
+                self.official_client, resolved_gameweek
+            )
+            # A closed gameweek is served frozen from now on, and a failed
+            # freeze must be retried, so only open gameweeks are shared.
+            if open_for is not None and open_for > 0 and not result.attrs["frozen"]:
+                self._prediction_cache[resolved_gameweek] = (
+                    self.clock() + min(self.prediction_cache_ttl, open_for),
+                    result,
+                )
+            else:
+                self._prediction_cache.pop(resolved_gameweek, None)
+            return result.copy()
+
+    def _live_official_predictions(self, resolved_gameweek: int) -> pd.DataFrame:
+        """Predict an unfrozen gameweek live and archive the forecast."""
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
         history = official_history
