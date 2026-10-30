@@ -125,6 +125,12 @@ Increase memory only if Cloud Monitoring reports pressure or out-of-memory
 restarts. Use a minimum instance only when lower cold-start latency is worth
 the idle charge.
 
+On Cloud Run (detected by `K_SERVICE`), application logs are one JSON object
+per line with a `severity` field, so Cloud Logging can filter warnings and
+errors and keeps each traceback in a single entry. Set
+`OPENFPL_LOG_FORMAT=text` or `OPENFPL_LOG_FORMAT=json` to choose explicitly;
+local runs default to text.
+
 ## API
 
 The web application and its supporting read endpoints are public. Administrative
