@@ -2247,7 +2247,7 @@ select {
 /* Small tablet */
 @media (max-width: 680px) {
     .topbar-actions > a {
-        padding: 8px 10px;
+        display: none;
     }
 
     .header {
@@ -2353,13 +2353,8 @@ select {
         font-size: 0.55rem;
     }
 
-    .topbar-actions {
-        gap: 4px;
-    }
-
     .topbar-actions > a {
-        padding: 11px 8px;
-        font-size: 0.6rem;
+        display: none;
     }
 
     .hero-grid {
