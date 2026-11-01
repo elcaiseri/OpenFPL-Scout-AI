@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "aiofiles>=23.1.0",
     "mcp>=2.3,<3",
+    "pyjwt>=2.10",
 ]
 
 [dependency-groups]

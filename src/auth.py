@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 from typing import Optional
@@ -15,6 +16,19 @@ load_dotenv()
 VALID_API_KEYS = {
     key.strip() for key in os.getenv("VALID_API_KEYS", "").split(",") if key.strip()
 }
+
+
+def valid_api_keys() -> set[str]:
+    """The API keys currently configured in ``VALID_API_KEYS``."""
+    return VALID_API_KEYS
+
+
+def is_valid_api_key(api_key: Optional[str]) -> bool:
+    """Whether ``api_key`` is a configured key, compared in constant time."""
+    if not api_key:
+        return False
+    candidate = api_key.encode()
+    return any(hmac.compare_digest(candidate, key.encode()) for key in VALID_API_KEYS)
 
 
 class APIKeyError(Exception):
@@ -35,7 +49,7 @@ def check_api_key(api_key: Optional[str]) -> str:
             "Authentication not properly configured",
         )
 
-    if not api_key or api_key not in VALID_API_KEYS:
+    if not is_valid_api_key(api_key):
         logger.warning("Invalid API key attempted")
         raise APIKeyError(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
 

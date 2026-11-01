@@ -16,6 +16,7 @@ from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 
 from src.auth import verify_api_key
+from src.mcp_oauth import OpenFPLOAuth
 from src.mcp_server import MCPEndpoint, OpenFPLHandlers, create_mcp_server
 from src.logger import get_logger
 from src.models import (
@@ -1074,7 +1075,10 @@ async def get_player_predictions(
 
 
 # The MCP server exposes a subset of the routes above as tools at /mcp. Each
-# tool calls its route's handler, so both share validation, auth, and errors.
+# tool calls its route's handler, so both share validation and errors. MCP
+# clients sign in with OAuth (src/mcp_oauth.py): free tools for anyone, the
+# rest for a session signed in with an OpenFPL API key.
+mcp_oauth = OpenFPLOAuth(SITE_URL, os.getenv("OPENFPL_OAUTH_SECRET"))
 mcp_endpoint = MCPEndpoint(
     create_mcp_server(
         OpenFPLHandlers(
@@ -1086,8 +1090,10 @@ mcp_endpoint = MCPEndpoint(
             fixtures=lambda gameweek: get_official_fpl_fixtures(
                 gameweek=gameweek, team_id=None, future_only=False, finished=None
             ),
-            player_predictions=lambda params, api_key: get_player_predictions(
-                params=params, api_key=api_key
+            # The tool checks the full tier itself; the REST dependency only
+            # needs a value.
+            player_predictions=lambda params: get_player_predictions(
+                params=params, api_key="mcp-full-tier"
             ),
             live_points=lambda gameweek: get_official_fpl_live_gameweek(
                 gameweek=gameweek
@@ -1097,10 +1103,14 @@ mcp_endpoint = MCPEndpoint(
                 entry_id=entry_id, gameweek=gameweek
             ),
         ),
+        tier_for=mcp_oauth.tier_for,
         version=config.get("version", "1.0.0"),
     )
 )
-app.router.routes.append(Route(mcp_endpoint.path, endpoint=mcp_endpoint, name="mcp"))
+app.router.routes.extend(mcp_oauth.routes())
+app.router.routes.append(
+    Route(mcp_endpoint.path, endpoint=mcp_oauth.protect(mcp_endpoint), name="mcp")
+)
 
 
 if __name__ == "__main__":

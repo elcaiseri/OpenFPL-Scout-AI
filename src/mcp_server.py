@@ -1,9 +1,10 @@
 """OpenFPL as a remote MCP server, served at ``/mcp`` inside the FastAPI app.
 
 Every tool delegates to a coroutine that the REST API already runs, so a tool
-and its REST endpoint cannot drift apart. Public tools mirror public REST
-routes; the rest need the same ``VALID_API_KEYS`` bearer token that the REST
-API checks, sent by the MCP client as ``Authorization: Bearer <key>``.
+and its REST endpoint cannot drift apart. Every request needs a bearer token
+(see ``src/mcp_oauth.py``): the free tier unlocks the tools that mirror public
+REST routes, and the full tier, granted by an OpenFPL API key, unlocks the
+tools that mirror bearer-protected routes.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
 from starlette.types import Receive, Scope, Send
 
-from src.auth import APIKeyError, bearer_token, check_api_key
 from src.models import PlayerPointsModel
 
 Gameweek = Annotated[int, Field(ge=1, le=38, description="Gameweek number (1-38)")]
@@ -38,8 +38,8 @@ INSTRUCTIONS = (
     "OpenFPL Scout AI: model-ensemble Fantasy Premier League projections, "
     "optimized 15-player squads, manager team ratings, and official FPL data. "
     "Call get_gameweeks first when the user does not name a gameweek. Tools "
-    "marked 'Requires an OpenFPL API key' need the connection to send "
-    "'Authorization: Bearer <key>'."
+    "marked 'Requires an OpenFPL API key' work only when the connection was "
+    "signed in with a key rather than the free tools."
 )
 
 
@@ -51,7 +51,7 @@ class OpenFPLHandlers:
     rate_team: Callable[[int, int], Awaitable[BaseModel]]
     gameweeks: Callable[[], Awaitable[BaseModel]]
     fixtures: Callable[[Optional[int]], Awaitable[BaseModel]]
-    player_predictions: Callable[[PlayerPointsModel, str], Awaitable[BaseModel]]
+    player_predictions: Callable[[PlayerPointsModel], Awaitable[BaseModel]]
     live_points: Callable[[int], Awaitable[BaseModel]]
     set_piece_notes: Callable[[], Awaitable[BaseModel]]
     manager_picks: Callable[[int, int], Awaitable[BaseModel]]
@@ -66,18 +66,13 @@ async def _run(call: Awaitable[BaseModel]) -> dict[str, Any]:
     return result.model_dump(mode="json")
 
 
-def _require_api_key(ctx: Context) -> str:
-    """Return the caller's API key, or fail the tool call like the REST API."""
-    token = bearer_token((ctx.headers or {}).get("authorization"))
-    try:
-        return check_api_key(token)
-    except APIKeyError as error:
-        if error.status_code == 401:
-            raise ToolError(
-                "This tool requires an OpenFPL API key. Configure the MCP "
-                "connection to send 'Authorization: Bearer <key>'."
-            ) from error
-        raise ToolError(f"{error.status_code}: {error.detail}") from error
+TierLookup = Callable[[Optional[str]], Awaitable[Optional[str]]]
+
+FULL_TIER_REQUIRED = (
+    "This tool requires an OpenFPL API key. This connection is signed in with "
+    "the free tools only: disconnect OpenFPL, connect it again, and enter an "
+    "API key on the sign-in page."
+)
 
 
 def _top(players: list[dict[str, Any]], key: Callable[[dict], Any], limit: int):
@@ -90,8 +85,15 @@ def _top(players: list[dict[str, Any]], key: Callable[[dict], Any], limit: int):
     return sorted(players, key=score, reverse=True)[:limit]
 
 
-def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer:
-    """Build the OpenFPL MCP server with its public and authenticated tools."""
+def create_mcp_server(
+    handlers: OpenFPLHandlers, tier_for: TierLookup, version: str = ""
+) -> MCPServer:
+    """Build the OpenFPL MCP server with its free and full-tier tools.
+
+    ``tier_for`` maps the request's ``Authorization`` header to ``"full"``,
+    ``"free"``, or None; the transport has already refused requests without a
+    valid token, so this only separates the two tiers.
+    """
     server = MCPServer(
         name="openfpl",
         title="OpenFPL Scout AI",
@@ -100,7 +102,11 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
         version=version,
     )
 
-    # Public tools: the same data the web app serves without a key.
+    async def require_full_tier(ctx: Context) -> None:
+        if await tier_for((ctx.headers or {}).get("authorization")) != "full":
+            raise ToolError(FULL_TIER_REQUIRED)
+
+    # Free tier: the same data the web app serves without a key.
 
     @server.tool(title="Get AI scout squad", annotations=READ_ONLY)
     async def get_scout_squad(gameweek: Optional[Gameweek] = None) -> dict[str, Any]:
@@ -140,7 +146,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
         """
         return await _run(handlers.fixtures(gameweek))
 
-    # Authenticated tools: the same split as the REST API's bearer routes.
+    # Full tier: the same split as the REST API's bearer routes.
 
     @server.tool(title="Get player projections", annotations=READ_ONLY)
     async def get_player_predictions(
@@ -167,7 +173,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
         Requires an OpenFPL API key. Results are sorted by expected points
         and cut to ``limit``; ``total`` is the number of matching players.
         """
-        api_key = _require_api_key(ctx)
+        await require_full_tier(ctx)
         filters = {
             name: value
             for name, value in {
@@ -179,9 +185,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
             if value is not None
         }
         response = await _run(
-            handlers.player_predictions(
-                PlayerPointsModel(gameweek=gameweek, **filters), api_key
-            )
+            handlers.player_predictions(PlayerPointsModel(gameweek=gameweek, **filters))
         )
         players = response.pop("player_points")
         response.pop("scout_team", None)
@@ -200,7 +204,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
         Requires an OpenFPL API key. Players are sorted by total points and
         cut to ``limit``; ``total`` is the number of players with live data.
         """
-        _require_api_key(ctx)
+        await require_full_tier(ctx)
         response = await _run(handlers.live_points(gameweek))
         players = response["data"].get("elements", [])
         response["data"]["total"] = len(players)
@@ -215,7 +219,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
 
         Requires an OpenFPL API key.
         """
-        _require_api_key(ctx)
+        await require_full_tier(ctx)
         return await _run(handlers.set_piece_notes())
 
     @server.tool(title="Get manager picks", annotations=READ_ONLY)
@@ -226,7 +230,7 @@ def create_mcp_server(handlers: OpenFPLHandlers, version: str = "") -> MCPServer
 
         Requires an OpenFPL API key. Picks become public after the deadline.
         """
-        _require_api_key(ctx)
+        await require_full_tier(ctx)
         return await _run(handlers.manager_picks(entry_id, gameweek))
 
     return server
