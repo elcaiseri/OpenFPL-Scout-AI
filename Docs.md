@@ -54,6 +54,96 @@ Set comma-separated server tokens in `VALID_API_KEYS`.
 For local development, `.env` is loaded automatically without overriding any
 variables already supplied by the process or deployment environment.
 
+## MCP server
+
+The same service is a remote [Model Context Protocol](https://modelcontextprotocol.io)
+server at `/mcp` (Streamable HTTP, stateless, JSON responses), so Claude and
+other MCP clients can call OpenFPL as tools. Each tool runs the handler of the
+REST route listed beside it, with the same validation, data, and errors.
+
+| Tool | Access | Same as | Arguments |
+| --- | --- | --- | --- |
+| `get_scout_squad` | Free | `GET /api/scout` | `gameweek` (optional) |
+| `rate_team` | Free | `GET /api/scout/team-rating` | `entry_id`, `gameweek` |
+| `get_gameweeks` | Free | `GET /api/fpl/gameweeks` | none |
+| `get_fixtures` | Free | `GET /api/fpl/fixtures` | `gameweek` (optional) |
+| `get_player_predictions` | API key | `GET /api/gw/playerpoints` | `gameweek`, optional `element_type`, `web_name`, `team_name`, `was_home`, `limit` |
+| `get_live_points` | API key | `GET /api/fpl/gameweeks/{gameweek}/live` | `gameweek`, `limit` |
+| `get_set_piece_notes` | API key | `GET /api/fpl/set-piece-notes` | none |
+| `get_manager_picks` | API key | `GET /api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks` | `entry_id`, `gameweek` |
+
+The two tools that cover every player keep a model's context small:
+`get_player_predictions` sorts by `expected_points` and `get_live_points` by
+`total_points`, each returning the top `limit` (default 50, maximum 1000) with
+`total` reporting how many matched. Every tool is read-only.
+
+### Sign-in
+
+Every request to `/mcp` needs a token; without one it answers `401` with OAuth
+discovery headers, which is what makes Claude open the sign-in. OpenFPL is its
+own OAuth 2.1 server (dynamic client registration, PKCE), so there is no
+third-party identity provider. Signing in opens `/oauth/connect` on this site,
+where the person either:
+
+- pastes an OpenFPL API key (one of `VALID_API_KEYS`) to unlock all 8 tools, or
+- chooses **Continue with free tools** for the 4 free ones.
+
+A free connection that calls an API-key tool gets a tool error telling the
+person to reconnect with a key. A raw API key also works as the bearer token,
+for clients that send a fixed header. Removing a key from `VALID_API_KEYS`
+immediately stops every sign-in made with it.
+
+Nothing is stored server-side: client registrations, codes, and tokens are
+signed with `OPENFPL_OAUTH_SECRET`. Set it to a long random value (for
+example `openssl rand -base64 48`) and keep it the same on every instance.
+Without it each process picks a random secret, and every sign-in breaks on a
+restart or on another instance. The issuer is `OPENFPL_SITE_URL`
+(default `https://openfpl.kassem.dev`). Access tokens last an hour and
+refresh for 30 days.
+
+`GET /mcp` returns `405`: a stateless server has no stream to offer.
+
+### Connect from Claude
+
+**Claude (claude.ai, desktop, and mobile).** In Settings → Connectors, add a
+custom connector with the URL `https://openfpl.kassem.dev/mcp` and leave the
+OAuth fields empty. Claude opens the OpenFPL sign-in page; enter an API key
+or continue with the free tools. To switch tiers later, disconnect and
+connect again.
+
+**Claude Code.** Add the server and sign in from `/mcp` in a session, which
+opens the same page:
+
+```bash
+claude mcp add --transport http openfpl https://openfpl.kassem.dev/mcp
+```
+
+Or skip the browser and send a key directly with
+`--header "Authorization: Bearer <API_TOKEN>"`.
+
+**Claude API.** The Messages API's MCP connector sends a key as
+`authorization_token`, with the `mcp-client-2025-11-20` beta:
+
+```python
+response = client.beta.messages.create(
+    model="claude-opus-5-5",
+    max_tokens=16000,
+    betas=["mcp-client-2025-11-20"],
+    mcp_servers=[{
+        "type": "url",
+        "url": "https://openfpl.kassem.dev/mcp",
+        "name": "openfpl",
+        "authorization_token": API_TOKEN,
+    }],
+    tools=[{"type": "mcp_toolset", "mcp_server_name": "openfpl"}],
+    messages=[{"role": "user", "content": "Who should I captain in GW10?"}],
+)
+```
+
+Locally, run with `OPENFPL_SITE_URL=http://localhost:8000` so the OAuth
+issuer matches; the endpoint is `http://localhost:8000/mcp`, and the MCP
+Inspector (`npx @modelcontextprotocol/inspector`) can sign in and call the tools.
+
 ## API tags and endpoints
 
 ### Service

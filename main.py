@@ -12,9 +12,12 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 
 from src.auth import verify_api_key
+from src.mcp_oauth import OpenFPLOAuth
+from src.mcp_server import MCPEndpoint, OpenFPLHandlers, create_mcp_server
 from src.logger import get_logger
 from src.models import (
     APICatalogModel,
@@ -61,11 +64,12 @@ def _documentation_config(is_production: bool) -> dict[str, Optional[str]]:
 def _documentation_links(is_production: bool) -> dict[str, str]:
     """Return the documentation links advertised by the API catalog."""
     if is_production:
-        return {"redoc": "/redoc"}
+        return {"redoc": "/redoc", "mcp": "/mcp"}
     return {
         "swagger": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json",
+        "mcp": "/mcp",
     }
 
 
@@ -121,7 +125,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing application with official FPL as the primary source")
     scout = FPLScout(config)
     logger.info("FPLScout initialized and ready")
-    yield
+    async with mcp_endpoint.lifespan():
+        logger.info("MCP server ready at %s", mcp_endpoint.path)
+        yield
     logger.info("Shutting down application")
 
 
@@ -1066,6 +1072,45 @@ async def get_player_predictions(
         player for player in response.player_points if matches(player)
     ]
     return response
+
+
+# The MCP server exposes a subset of the routes above as tools at /mcp. Each
+# tool calls its route's handler, so both share validation and errors. MCP
+# clients sign in with OAuth (src/mcp_oauth.py): free tools for anyone, the
+# rest for a session signed in with an OpenFPL API key.
+mcp_oauth = OpenFPLOAuth(SITE_URL, os.getenv("OPENFPL_OAUTH_SECRET"))
+mcp_endpoint = MCPEndpoint(
+    create_mcp_server(
+        OpenFPLHandlers(
+            scout_squad=lambda gameweek: generate_public_scout_team(gameweek=gameweek),
+            rate_team=lambda entry_id, gameweek: rate_public_manager_team(
+                entry_id=entry_id, gameweek=gameweek
+            ),
+            gameweeks=get_official_fpl_gameweeks,
+            fixtures=lambda gameweek: get_official_fpl_fixtures(
+                gameweek=gameweek, team_id=None, future_only=False, finished=None
+            ),
+            # The tool checks the full tier itself; the REST dependency only
+            # needs a value.
+            player_predictions=lambda params: get_player_predictions(
+                params=params, api_key="mcp-full-tier"
+            ),
+            live_points=lambda gameweek: get_official_fpl_live_gameweek(
+                gameweek=gameweek
+            ),
+            set_piece_notes=get_official_fpl_set_piece_notes,
+            manager_picks=lambda entry_id, gameweek: get_official_fpl_manager_picks(
+                entry_id=entry_id, gameweek=gameweek
+            ),
+        ),
+        tier_for=mcp_oauth.tier_for,
+        version=config.get("version", "1.0.0"),
+    )
+)
+app.router.routes.extend(mcp_oauth.routes())
+app.router.routes.append(
+    Route(mcp_endpoint.path, endpoint=mcp_oauth.protect(mcp_endpoint), name="mcp")
+)
 
 
 if __name__ == "__main__":

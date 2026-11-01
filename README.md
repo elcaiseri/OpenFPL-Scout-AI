@@ -9,7 +9,8 @@ responsive web dashboard and FastAPI service.
 
 [Live app](https://openfpl.kassem.dev) ·
 [API reference](https://openfpl.kassem.dev/redoc) ·
-[Route catalog](https://openfpl.kassem.dev/api)
+[Route catalog](https://openfpl.kassem.dev/api) ·
+[MCP server](Docs.md#mcp-server)
 
 ## Highlights
 
@@ -39,7 +40,7 @@ but do not affect player projections or selection.
 
 ## Run locally
 
-Requirements: Python 3.9 or newer and
+Requirements: Python 3.12 or newer and
 [uv](https://docs.astral.sh/uv/). Model artifacts must exist at the paths in
 `config/config.yaml`; generated models are not stored in Git.
 
@@ -64,6 +65,11 @@ environment:
 VALID_API_KEYS=local-development-token
 OPENFPL_ENV=development
 ```
+
+The MCP server's OAuth sign-in signs its tokens with `OPENFPL_OAUTH_SECRET`;
+set it in production (the same value on every instance) so sign-ins survive
+restarts. Locally, also set `OPENFPL_SITE_URL=http://localhost:8000`. See
+[Docs.md](Docs.md#mcp-server).
 
 Optional FPL Data enrichment can be disabled immediately with:
 
@@ -93,6 +99,7 @@ docker run --rm \
   --name openfpl-scout-ai \
   -p 8000:8000 \
   -e VALID_API_KEYS=local-development-token \
+  -e OPENFPL_OAUTH_SECRET="$(openssl rand -base64 48)" \
   --mount type=bind,src="${PWD}/data",dst=/app/data \
   --mount type=bind,src="${PWD}/models",dst=/app/models,readonly \
   openfpl-scout-ai
