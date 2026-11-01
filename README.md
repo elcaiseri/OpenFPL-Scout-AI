@@ -9,7 +9,8 @@ responsive web dashboard and FastAPI service.
 
 [Live app](https://openfpl.kassem.dev) ·
 [API reference](https://openfpl.kassem.dev/redoc) ·
-[Route catalog](https://openfpl.kassem.dev/api)
+[Route catalog](https://openfpl.kassem.dev/api) ·
+[MCP server](Docs.md#mcp-server)
 
 ## Highlights
 
@@ -39,7 +40,7 @@ but do not affect player projections or selection.
 
 ## Run locally
 
-Requirements: Python 3.9 or newer and
+Requirements: Python 3.12 or newer and
 [uv](https://docs.astral.sh/uv/). Model artifacts must exist at the paths in
 `config/config.yaml`; generated models are not stored in Git.
 

@@ -152,7 +152,8 @@ class APISchemaTests(unittest.TestCase):
         self.assertIsNone(documentation["swagger_ui_oauth2_redirect_url"])
         self.assertEqual(documentation["redoc_url"], "/redoc")
         self.assertEqual(
-            _documentation_links(is_production=True), {"redoc": "/redoc"}
+            _documentation_links(is_production=True),
+            {"redoc": "/redoc", "mcp": "/mcp"},
         )
 
     def test_production_environment_detection(self):

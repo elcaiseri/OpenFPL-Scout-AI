@@ -1,4 +1,4 @@
-FROM python:3.9-slim-trixie AS builder
+FROM python:3.12-slim-trixie AS builder
 
 COPY --from=ghcr.io/astral-sh/uv@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /bin/uv
 
@@ -6,7 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --all-groups --no-cache --no-install-project
 
-FROM python:3.9-slim-trixie AS runtime
+FROM python:3.12-slim-trixie AS runtime
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \

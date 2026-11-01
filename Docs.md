@@ -54,6 +54,71 @@ Set comma-separated server tokens in `VALID_API_KEYS`.
 For local development, `.env` is loaded automatically without overriding any
 variables already supplied by the process or deployment environment.
 
+## MCP server
+
+The same service is a remote [Model Context Protocol](https://modelcontextprotocol.io)
+server at `/mcp` (Streamable HTTP, stateless, JSON responses), so Claude and
+other MCP clients can call OpenFPL as tools. Each tool runs the handler of the
+REST route listed beside it, with the same validation, data, and errors.
+
+| Tool | Auth | Same as | Arguments |
+| --- | --- | --- | --- |
+| `get_scout_squad` | Public | `GET /api/scout` | `gameweek` (optional) |
+| `rate_team` | Public | `GET /api/scout/team-rating` | `entry_id`, `gameweek` |
+| `get_gameweeks` | Public | `GET /api/fpl/gameweeks` | none |
+| `get_fixtures` | Public | `GET /api/fpl/fixtures` | `gameweek` (optional) |
+| `get_player_predictions` | Bearer | `GET /api/gw/playerpoints` | `gameweek`, optional `element_type`, `web_name`, `team_name`, `was_home`, `limit` |
+| `get_live_points` | Bearer | `GET /api/fpl/gameweeks/{gameweek}/live` | `gameweek`, `limit` |
+| `get_set_piece_notes` | Bearer | `GET /api/fpl/set-piece-notes` | none |
+| `get_manager_picks` | Bearer | `GET /api/fpl/managers/{entry_id}/gameweeks/{gameweek}/picks` | `entry_id`, `gameweek` |
+
+The two tools that cover every player keep a model's context small:
+`get_player_predictions` sorts by `expected_points` and `get_live_points` by
+`total_points`, each returning the top `limit` (default 50, maximum 1000) with
+`total` reporting how many matched. Every tool is read-only.
+
+Bearer tools check the same `VALID_API_KEYS` as the REST API, sent by the MCP
+client as `Authorization: Bearer <API_TOKEN>`. Every tool is listed to every
+client; a bearer tool called without a valid key returns a tool error instead
+of data. `GET /mcp` returns `405`: a stateless server has no stream to offer.
+
+### Connect from Claude
+
+**Claude (claude.ai and the desktop app).** In Settings → Connectors, add a
+custom connector with the URL `https://openfpl.kassem.dev/mcp`. Custom
+connectors authenticate with OAuth rather than a static key, so this
+connection serves the four public tools; the bearer tools answer that they
+need a key.
+
+**Claude Code.** Pass the key as a header to reach every tool:
+
+```bash
+claude mcp add --transport http openfpl https://openfpl.kassem.dev/mcp \
+  --header "Authorization: Bearer <API_TOKEN>"
+```
+
+**Claude API.** The Messages API's MCP connector takes the key as
+`authorization_token`, with the `mcp-client-2025-11-20` beta:
+
+```python
+response = client.beta.messages.create(
+    model="claude-opus-5-5",
+    max_tokens=16000,
+    betas=["mcp-client-2025-11-20"],
+    mcp_servers=[{
+        "type": "url",
+        "url": "https://openfpl.kassem.dev/mcp",
+        "name": "openfpl",
+        "authorization_token": API_TOKEN,
+    }],
+    tools=[{"type": "mcp_toolset", "mcp_server_name": "openfpl"}],
+    messages=[{"role": "user", "content": "Who should I captain in GW10?"}],
+)
+```
+
+Locally the endpoint is `http://localhost:8000/mcp`; the MCP Inspector
+(`npx @modelcontextprotocol/inspector`) can browse and call the tools.
+
 ## API tags and endpoints
 
 ### Service
