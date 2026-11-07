@@ -1,0 +1,169 @@
+{
+ "elements": [
+  {
+   "id": 124,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 1,
+    "clean_sheets": 1,
+    "bonus": 0,
+    "total_points": 6
+   }
+  },
+  {
+   "id": 411,
+   "stats": {
+    "minutes": 79,
+    "goals_scored": 1,
+    "assists": 0,
+    "clean_sheets": 1,
+    "bonus": 0,
+    "total_points": 6
+   }
+  },
+  {
+   "id": 165,
+   "stats": {
+    "minutes": 71,
+    "goals_scored": 2,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 2,
+    "total_points": 12
+   }
+  },
+  {
+   "id": 40,
+   "stats": {
+    "minutes": 83,
+    "goals_scored": 1,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 9
+   }
+  },
+  {
+   "id": 8,
+   "stats": {
+    "minutes": 81,
+    "goals_scored": 1,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 1,
+    "total_points": 9
+   }
+  },
+  {
+   "id": 426,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 1
+   }
+  },
+  {
+   "id": 154,
+   "stats": {
+    "minutes": 87,
+    "goals_scored": 0,
+    "assists": 2,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 8
+   }
+  },
+  {
+   "id": 115,
+   "stats": {
+    "minutes": 67,
+    "goals_scored": 1,
+    "assists": 0,
+    "clean_sheets": 1,
+    "bonus": 3,
+    "total_points": 15
+   }
+  },
+  {
+   "id": 12,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 2
+   }
+  },
+  {
+   "id": 4,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 2
+   }
+  },
+  {
+   "id": 229,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 3
+   }
+  },
+  {
+   "id": 449,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 0
+   }
+  },
+  {
+   "id": 346,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 2
+   }
+  },
+  {
+   "id": 384,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 1,
+    "bonus": 1,
+    "total_points": 9
+   }
+  },
+  {
+   "id": 412,
+   "stats": {
+    "minutes": 90,
+    "goals_scored": 0,
+    "assists": 0,
+    "clean_sheets": 0,
+    "bonus": 0,
+    "total_points": 2
+   }
+  }
+ ]
+}

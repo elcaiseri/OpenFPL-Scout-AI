@@ -45,3 +45,6 @@ catboost_info/
 # Project-specific experiments
 trainer*.py
 models*/
+
+# Generated social media packs (scripts/social_reel)
+out/
