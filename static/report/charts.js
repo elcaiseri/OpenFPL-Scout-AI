@@ -1,4 +1,4 @@
-/* OpenFPL Scout AI — report charts.
+/* OpenFPL Scout AI Team — report charts.
    Hand-built inline SVG so the page stays self-contained (no CDN, no runtime
    dependency). Every figure is driven by static/report/data.js, which is
    generated from the artifacts in models/. */
