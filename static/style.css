@@ -661,6 +661,8 @@ select {
 }
 
 .formation-chip {
+    flex-shrink: 0;
+    white-space: nowrap;
     padding: 8px 12px;
     color: var(--aqua);
     border-color: rgba(57, 241, 255, 0.25);
@@ -1533,6 +1535,7 @@ select {
 
 .squad-tools {
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 10px;
 }
@@ -2867,7 +2870,6 @@ select {
     .formation-chip {
         padding: 7px 9px;
         font-size: 0.56rem;
-        white-space: nowrap;
     }
 
     /* Every pixel goes to the cards: the pitch runs edge to edge on phones. */
