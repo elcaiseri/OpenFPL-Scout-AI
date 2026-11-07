@@ -876,7 +876,9 @@ async def _generate_scout_response(
     gameweek: Optional[int], public=False
 ) -> ResponseModel:
     try:
-        predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
+        predictions = await run_in_threadpool(
+            scout.get_official_predictions, gameweek, collect_results=not public
+        )
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
@@ -924,6 +926,24 @@ async def generate_public_scout_team(
     return await _generate_scout_response(gameweek, public=True)
 
 
+@app.post(
+    "/api/scout/sync-results",
+    tags=["Scout AI"],
+    summary="Collect official results after displaying a saved squad",
+    operation_id="sync_public_scout_results",
+)
+async def sync_public_scout_results() -> dict[str, str]:
+    """Keep archive work in an active request without delaying the squad.
+
+    Collection retains its archive cooldown. A separate request keeps CPU
+    available on request-billed Cloud Run without awaiting it in the web UI.
+    """
+    result = await run_in_threadpool(
+        scout.data_archive.collect_results, scout.official_client
+    )
+    return {"status": str(result["status"])}
+
+
 @app.get(
     "/api/scout/team-rating",
     response_model=TeamRatingModel,
@@ -954,7 +974,7 @@ async def rate_public_manager_team(
             picks_gameweek,
         )
         predictions = await run_in_threadpool(
-            scout.get_official_predictions, gameweek
+            scout.get_official_predictions, gameweek, collect_results=False
         )
         prediction_gameweek = int(predictions.attrs["gameweek"])
 

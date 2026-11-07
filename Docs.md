@@ -54,6 +54,13 @@ Set comma-separated server tokens in `VALID_API_KEYS`.
 For local development, `.env` is loaded automatically without overriding any
 variables already supplied by the process or deployment environment.
 
+The public `POST /api/scout/sync-results` collects official match results into
+the archive and returns a `status` (`saved`, `throttled`, `disabled`, or
+`failed`). The dashboard starts it after displaying a saved squad; its
+five-minute cooldown limits repeated collection. Public squad and team-rating
+reads do not wait for this collection. Live predictions still archive their
+inputs and forecasts before returning.
+
 ## API tags and endpoints
 
 ### Service

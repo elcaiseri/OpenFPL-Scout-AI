@@ -3,12 +3,15 @@
 const CONFIG = {
     defaultGameweek: 1,
     cacheExpiry: 5 * 60 * 1000,
+    requestRetries: 2,
+    retryDelayMs: 500,
+    requestTimeoutMs: 30000,
     endpoints: {
         scout: '/api/scout',
+        syncResults: '/api/scout/sync-results',
         teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
         players: '/api/fpl/players?limit=1000',
-        eventStatus: '/api/fpl/gameweeks/status',
         fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
     }
 };
@@ -30,6 +33,7 @@ const appState = {
     eventsTimestamp: 0,
     referenceCache: null,
     referenceTimestamp: 0,
+    resultsSyncPromise: null,
     teamCodes: new Map(),
     pitchWidth: 0,
     countdownTimer: null
@@ -184,18 +188,43 @@ const utils = {
         };
     },
 
-    async fetchJson(url) {
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        let payload = {};
-        try {
-            payload = await response.json();
-        } catch (_error) {
-            throw new Error(`Invalid response from ${url}`);
+    async fetchJson(url, { method = 'GET', timeoutMs = CONFIG.requestTimeoutMs } = {}) {
+        const retries = method === 'GET' ? CONFIG.requestRetries : 0;
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            const controller = new AbortController();
+            const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
+            let response;
+            try {
+                response = await fetch(url, {
+                    method,
+                    signal: controller.signal,
+                    headers: { Accept: 'application/json' }
+                });
+                let payload;
+                try {
+                    payload = await response.json();
+                } catch (error) {
+                    if (error instanceof TypeError || error.name === 'AbortError') throw error;
+                    throw new Error(`Invalid response from ${url}`);
+                }
+                if (!response.ok) {
+                    throw new Error(payload.detail || `Request failed (${response.status})`);
+                }
+                return payload;
+            } catch (error) {
+                const temporary = error instanceof TypeError || error.name === 'AbortError'
+                    || (response && [429, 500, 502, 503, 504].includes(response.status));
+                if (!temporary || attempt === retries) {
+                    if (error.name === 'AbortError') {
+                        throw new Error('The FPL request timed out. Please try again.');
+                    }
+                    throw error;
+                }
+            } finally {
+                clearTimeout(timer);
+            }
+            await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelayMs * 2 ** attempt));
         }
-        if (!response.ok) {
-            throw new Error(payload.detail || `Request failed (${response.status})`);
-        }
-        return payload;
     },
 
     eventLabel(event) {
@@ -273,31 +302,59 @@ const dataLoader = {
             && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
         if (fresh && !force) return appState.referenceCache;
 
-        const [events, playersPayload, statusPayload] = await Promise.all([
+        const results = await Promise.allSettled([
             this.loadEvents(force),
-            utils.fetchJson(CONFIG.endpoints.players),
-            utils.fetchJson(CONFIG.endpoints.eventStatus)
+            utils.fetchJson(CONFIG.endpoints.players)
         ]);
+        results.filter(result => result.status === 'rejected').forEach(result => {
+            console.warn('Supporting FPL data unavailable:', result.reason);
+        });
         const reference = {
-            events,
-            players: playersPayload.results || [],
-            eventStatus: statusPayload.data || {}
+            events: results[0].status === 'fulfilled'
+                ? results[0].value : appState.events,
+            players: results[1].status === 'fulfilled'
+                ? results[1].value.results || [] : appState.referenceCache?.players || [],
+            available: results.every(result => result.status === 'fulfilled')
         };
-        appState.referenceCache = reference;
-        appState.referenceTimestamp = Date.now();
+        if (reference.available) {
+            appState.referenceCache = reference;
+            appState.referenceTimestamp = Date.now();
+        }
         return reference;
     },
 
-    async loadDashboard(gameweek, force = false) {
+    async loadDashboard(gameweek, force = false, onScoutReady = null) {
         if (appState.dashboardCache.has(gameweek) && !force) {
             return appState.dashboardCache.get(gameweek);
         }
 
-        const [scout, reference, fixturePayload] = await Promise.all([
-            utils.fetchJson(`${CONFIG.endpoints.scout}?gameweek=${gameweek}`),
+        let fixturesAvailable = true;
+        const scoutRequest = utils.fetchJson(
+            `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, { timeoutMs: 0 }
+        );
+        const detailsRequest = Promise.all([
             this.loadReferenceData(force),
-            utils.fetchJson(CONFIG.endpoints.fixtures(gameweek))
+            utils.fetchJson(CONFIG.endpoints.fixtures(gameweek)).catch(error => {
+                console.warn('Fixtures unavailable:', error);
+                fixturesAvailable = false;
+                return { results: [] };
+            })
         ]);
+        const scout = await scoutRequest;
+        if (onScoutReady) {
+            // Predictions already contain the squad's names, positions and
+            // prices. Show them while optional current metadata catches up.
+            onScoutReady({
+                ...scout,
+                event: appState.events.find(event => Number(event.id) === Number(gameweek)) || null,
+                events: appState.events,
+                fixtures: [],
+                fixturesAvailable: false,
+                fixturesLoading: true,
+                syncedAt: new Date()
+            });
+        }
+        const [reference, fixturePayload] = await detailsRequest;
 
         const byId = new Map(reference.players.map(player => [Number(player.id), player]));
         const byIdentity = new Map(reference.players.map(player => [
@@ -325,12 +382,26 @@ const dataLoader = {
             scout_team: players,
             event: reference.events.find(event => Number(event.id) === Number(gameweek)) || null,
             events: reference.events,
-            eventStatus: reference.eventStatus,
             fixtures: fixturePayload.results || [],
+            fixturesAvailable,
             syncedAt: new Date()
         };
-        appState.dashboardCache.set(gameweek, dashboard);
+        if (reference.available && fixturesAvailable) {
+            appState.dashboardCache.set(gameweek, dashboard);
+        }
         return dashboard;
+    },
+
+    syncResults() {
+        if (appState.resultsSyncPromise) return appState.resultsSyncPromise;
+        appState.resultsSyncPromise = utils.fetchJson(CONFIG.endpoints.syncResults, {
+            method: 'POST', timeoutMs: 0
+        }).catch(error => {
+            console.warn('Official results sync unavailable:', error);
+        }).finally(() => {
+            appState.resultsSyncPromise = null;
+        });
+        return appState.resultsSyncPromise;
     },
 
     async loadTeamRating(entryId, gameweek, force = false) {
@@ -467,7 +538,7 @@ const dashboardRenderer = {
         this.header(data);
         this.pulse(data);
         this.statistics(data.scout_team);
-        this.fixtures(data.fixtures);
+        this.fixtures(data.fixtures, data.fixturesAvailable, data.fixturesLoading);
         this.squad(data.scout_team);
         dom.signalState.textContent = 'Projections ready';
         dom.sourceState.textContent = 'Official data';
@@ -504,7 +575,7 @@ const dashboardRenderer = {
         dom.pulseDeadlineSub.textContent = event?.deadline_time
             ? utils.formatDate(event.deadline_time, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
             : 'Official deadline time';
-        dom.fixtureCount.textContent = String(data.fixtures.length);
+        dom.fixtureCount.textContent = data.fixturesAvailable === false ? '—' : String(data.fixtures.length);
         dom.dataState.textContent = event?.data_checked ? 'Checked' : utils.eventLabel(event);
         dom.dataStateSub.textContent = event?.finished
             ? 'Official scores finalised'
@@ -533,7 +604,15 @@ const dashboardRenderer = {
         dom.differentialCount.textContent = String(differentialCount);
     },
 
-    fixtures(fixtures) {
+    fixtures(fixtures, available = true, loading = false) {
+        if (loading) {
+            dom.fixtureRail.innerHTML = '<div class="rail-loading">Loading Premier League fixtures…</div>';
+            return;
+        }
+        if (!available) {
+            dom.fixtureRail.innerHTML = '<div class="rail-loading">Fixtures temporarily unavailable. Squad projections are ready.</div>';
+            return;
+        }
         if (!fixtures.length) {
             dom.fixtureRail.innerHTML = '<div class="rail-loading">No Premier League fixtures have been published for this Gameweek.</div>';
             return;
@@ -733,11 +812,20 @@ const gameweekManager = {
         document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = true; });
         dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
-            const data = await dataLoader.loadDashboard(gameweek, force);
-            appState.currentData = data;
-            appState.currentGameweek = Number(gameweek);
-            this.setActive(gameweek);
-            dashboardRenderer.render(data);
+            let resultsSyncStarted = false;
+            const publish = data => {
+                appState.currentData = data;
+                appState.currentGameweek = Number(gameweek);
+                this.setActive(gameweek);
+                dashboardRenderer.render(data);
+                // Keep collection in its own request, after showing the squad.
+                if (data.frozen && !resultsSyncStarted) {
+                    resultsSyncStarted = true;
+                    dataLoader.syncResults();
+                }
+            };
+            const data = await dataLoader.loadDashboard(gameweek, force, publish);
+            publish(data);
             if (appState.squadMode === 'rating' && appState.ratingEntryId) {
                 await teamRating.rate(appState.ratingEntryId, force);
             }

@@ -52,6 +52,7 @@ Run the test suite with:
 
 ```bash
 uv run python -m unittest discover -s tests
+node --test tests/frontend_loading.test.cjs
 ```
 
 Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
@@ -139,6 +140,7 @@ and extended data routes require `Authorization: Bearer <token>`.
 ```bash
 curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
 curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek=1"
+curl -X POST "https://openfpl.kassem.dev/api/scout/sync-results"
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
@@ -155,6 +157,13 @@ curl -H "Authorization: Bearer <token>" \
 
 See [Docs.md](Docs.md) for authentication and response details, or the
 [Official FPL API Kit](Official-FPL-API-Kit.md) for the complete route map.
+
+The dashboard shows saved squads before collecting archived match results.
+After rendering a frozen squad it starts `POST /api/scout/sync-results`
+without waiting for it; collection retains the archive's five-minute cooldown
+and finishes inside that HTTP request, so request-based Cloud Run CPU remains
+available. Temporary read failures retry twice, and unavailable player metadata
+or fixtures do not hide an otherwise valid squad.
 
 ## Models and data
 

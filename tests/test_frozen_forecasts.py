@@ -212,6 +212,20 @@ class FrozenForecastTests(unittest.TestCase):
         self.client.clear_cache()
         self.monotonic[0] += 3600
 
+    def test_web_read_returns_frozen_forecast_without_collecting_history(self):
+        predictions, squad = self.request()
+        self.pass_the_deadline(int(squad.iloc[0]["id"]))
+
+        with patch.object(
+            self.archive, "collect_results", side_effect=AssertionError("Slow sync")
+        ), patch.object(
+            self.client, "player_history", side_effect=AssertionError("Slow history")
+        ):
+            frozen = self.scout.get_official_predictions(3, collect_results=False)
+
+        self.assertTrue(frozen.attrs["frozen"])
+        self.assertEqual(records(frozen), records(predictions))
+
     def captain_id(self, squad):
         return int(squad.loc[squad["role"] == "captain", "id"].iloc[0])
 
