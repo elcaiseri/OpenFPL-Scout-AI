@@ -41,7 +41,10 @@ from typing import Any, Optional
 
 import os
 
-from .data import SquadError, differentials, ownership_from_bootstrap, parse_squad, pool_rows, with_differentials
+from datetime import datetime, timezone
+
+from .data import (SquadError, differentials, differentials_from_json, differentials_to_json, ownership_from_bootstrap,
+                   parse_squad, pool_rows, with_differentials)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_API = "https://openfpl.kassem.dev"
@@ -87,6 +90,9 @@ def main(argv: Optional[list] = None) -> int:
     recap = parser.add_argument_group("recap (after the gameweek)")
     recap.add_argument("--recap", action="store_true", help="Same as --mode recap.")
     recap.add_argument("--live", type=Path, help="Saved FPL /event/{gw}/live/ response (fetched when omitted).")
+    recap.add_argument("--differentials", type=Path,
+                       help="The preview's *_differentials.json (or a retro file in the same format) to score on a "
+                            "differentials card. The live response must include those players.")
     args = parser.parse_args(argv)
     args.recap = args.recap or args.mode == "recap"
     if args.recap and not (args.gameweek or args.data):
@@ -119,6 +125,13 @@ def main(argv: Optional[list] = None) -> int:
 
     out_dir = args.out or REPO_ROOT / "out" / "social" / f"gw{squad.gameweek:02d}_preview"
     made = build(squad, out_dir, video=not args.no_video)
+    if squad.differentials:
+        # Saved so the recap scores exactly what the preview showed, timestamped against the deadline.
+        path = out_dir / f"openfpl_gw{squad.gameweek:02d}_preview_differentials.json"
+        captured = datetime.now(timezone.utc).isoformat()
+        path.write_text(json.dumps(differentials_to_json(squad, "preview", captured), ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+        made["differentials"] = [path]
     print(f"GW{squad.gameweek} preview · captain {squad.captain.name} · vice {squad.vice.name} · frozen={squad.frozen}")
     for kind, paths in made.items():
         for path in paths:
@@ -162,7 +175,7 @@ def _attach_differentials(args: argparse.Namespace, payload: Any, squad):
 
 
 def _recap(args: argparse.Namespace, squad) -> int:
-    from .recap import RecapError, build_recap, gameweek_info, points_from_live
+    from .recap import RecapError, attach_differentials, build_recap, gameweek_info, points_from_live
 
     gw = squad.gameweek
     live = json.loads(args.live.read_text(encoding="utf-8")) if args.live else _get_json(f"{FPL_API}/event/{gw}/live/")
@@ -179,6 +192,21 @@ def _recap(args: argparse.Namespace, squad) -> int:
     except RecapError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    if args.differentials:
+        diff_payload = json.loads(args.differentials.read_text(encoding="utf-8"))
+        picks, source, captured = differentials_from_json(diff_payload)
+        if int(diff_payload.get("gameweek") or gw) != gw:
+            print(f"warning: differentials file is for GW{diff_payload.get('gameweek')}; card skipped.", file=sys.stderr)
+        elif not picks:
+            print("warning: differentials file has no picks; card skipped.", file=sys.stderr)
+        else:
+            try:
+                recap = attach_differentials(recap, picks, points_from_live(live), source, captured)
+            except RecapError as error:
+                print(f"warning: {error} Differentials card skipped.", file=sys.stderr)
+            else:
+                if not recap.diffs_locked:
+                    print("note: differentials are a retro pick (not saved by a pre-deadline preview).", file=sys.stderr)
     if not info.data_checked:
         print(f"warning: FPL has not confirmed GW{gw} (data_checked=false); points are provisional.", file=sys.stderr)
 
@@ -188,6 +216,9 @@ def _recap(args: argparse.Namespace, squad) -> int:
     made = render_recap(recap, out_dir, video=not args.no_video)
     avg = f" · GW average {info.average}" if info.average is not None else ""
     print(f"GW{gw} recap · XI {recap.formation} · {recap.total} pts vs {recap.xp_total:.1f} xP{avg}")
+    if recap.diffs:
+        print(f"differentials ({'locked' if recap.diffs_locked else 'retro'}): {recap.diff_total} pts vs "
+              f"{recap.diff_xp:.1f} xP · " + " · ".join(f"{r.player.name} {r.points}" for r in recap.diffs))
     for kind, paths in made.items():
         for path in paths:
             print(f"{kind}: {path}")

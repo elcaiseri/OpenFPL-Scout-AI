@@ -286,6 +286,29 @@ def differentials(pool: Sequence[Mapping[str, Any]], squad: Squad, ownership: Ma
     return tuple(picked)
 
 
+def differentials_to_json(squad: Squad, source: str = "preview", captured_at: Optional[str] = None,
+                          note: Optional[str] = None) -> Dict[str, Any]:
+    """The picks as shown, for the recap to score later (``*_differentials.json``)."""
+    position_ids = {v: k for k, v in POSITION_IDS.items()}
+    picks = [{
+        "id": d.player.id, "element_type": position_ids[d.player.position], "web_name": d.player.name,
+        "team_name": d.player.club, "opponent_team_name": ", ".join(d.player.opponents),
+        "was_home": d.player.home, "gameweek": squad.gameweek, "expected_points": d.player.xp,
+        "fixture_count": d.player.fixture_count, "owned": d.owned,
+    } for d in squad.differentials]
+    out = {"gameweek": squad.gameweek, "source": source, "captured_at": captured_at, "max_owned": DIFF_MAX_OWNED,
+           "picks": picks}
+    if note:
+        out["ownership_note"] = note
+    return out
+
+
+def differentials_from_json(payload: Mapping[str, Any]) -> Tuple[Tuple[Differential, ...], str, Optional[str]]:
+    """``(picks, source, captured_at)`` from a ``*_differentials.json`` file."""
+    picks = tuple(Differential(_player_from_row(row), float(row["owned"])) for row in payload.get("picks") or [])
+    return picks, str(payload.get("source") or "retro"), payload.get("captured_at")
+
+
 def with_differentials(squad: Squad, diffs: Sequence[Differential]) -> Squad:
     from dataclasses import replace
 

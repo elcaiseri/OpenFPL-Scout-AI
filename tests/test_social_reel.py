@@ -10,6 +10,8 @@ from scripts.social_reel.data import (
     club_code,
     deadline_label,
     differentials,
+    differentials_from_json,
+    differentials_to_json,
     ownership_from_bootstrap,
     parse_squad,
     pool_rows,
@@ -19,6 +21,7 @@ from scripts.social_reel.data import (
 )
 from scripts.social_reel.recap import (
     RecapError,
+    attach_differentials,
     best_xi,
     build_recap,
     gameweek_info,
@@ -240,6 +243,50 @@ class DifferentialsTest(unittest.TestCase):
         self.assertIn("Differentials (under 10% owned, outside the 15):", text)
         self.assertIn("MID: Rayan (EVE, 4.2 xP, 3.4%)", text)
         self.assertNotIn("Differentials", caption(self.squad))
+
+
+
+class RecapDifferentialsTest(unittest.TestCase):
+    def setUp(self):
+        self.payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        self.live = json.loads(LIVE_FIXTURE.read_text(encoding="utf-8"))
+        self.boot = json.loads(BOOTSTRAP_FIXTURE.read_text(encoding="utf-8"))
+        self.squad = parse_squad(self.payload)
+        self.info = gameweek_info(self.boot, self.squad.gameweek)
+        row = {"id": 970, "element_type": 3, "web_name": "Rayan", "team_name": "Bournemouth",
+               "opponent_team_name": "Leeds", "was_home": True, "gameweek": self.squad.gameweek,
+               "expected_points": 4.0, "fixture_count": 1}
+        self.picks = differentials([row], self.squad, {970: (2.3, "a")})
+        self.live["elements"].append({"id": 970, "stats": {"minutes": 87, "total_points": 3}})
+
+    def _file(self, source, captured):
+        return differentials_to_json(with_differentials(self.squad, self.picks), source, captured)
+
+    def test_json_round_trip(self):
+        picks, source, captured = differentials_from_json(self._file("preview", "2020-01-01T00:00:00Z"))
+        self.assertEqual((picks[0].player.name, picks[0].player.position, picks[0].owned), ("Rayan", "MID", 2.3))
+        self.assertEqual((source, captured), ("preview", "2020-01-01T00:00:00Z"))
+
+    def test_scores_picks_and_flags_locked_only_before_deadline(self):
+        recap = build_recap(self.squad, points_from_live(self.live), self.info)
+        picks, _, _ = differentials_from_json(self._file("preview", "2000-01-01T00:00:00Z"))
+        early = attach_differentials(recap, picks, points_from_live(self.live), "preview", "2000-01-01T00:00:00Z")
+        self.assertEqual((early.diff_total, round(early.diff_xp, 1)), (3, 4.0))
+        self.assertTrue(early.diffs_locked)
+        late = attach_differentials(recap, picks, points_from_live(self.live), "preview", "2999-01-01T00:00:00Z")
+        self.assertFalse(late.diffs_locked)
+        retro = attach_differentials(recap, picks, points_from_live(self.live), "retro", None)
+        self.assertFalse(retro.diffs_locked)
+        text = recap_caption(retro)
+        self.assertIn("retro pick", text)
+        self.assertIn("MID: Rayan 3 pts (xP 4.0, 2.3%)", text)
+
+    def test_refuses_missing_live_points(self):
+        recap = build_recap(self.squad, points_from_live(self.live), self.info)
+        live = copy.deepcopy(self.live)
+        live["elements"] = [e for e in live["elements"] if e["id"] != 970]
+        with self.assertRaises(RecapError):
+            attach_differentials(recap, self.picks, points_from_live(live), "preview", None)
 
 
 if __name__ == "__main__":

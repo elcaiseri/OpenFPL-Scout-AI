@@ -456,26 +456,26 @@ class Reel:
             d.text((340, y + 34), top_line, font=fit(top_line, "black", 27, 640), fill=A(PAPER, ps), anchor="lm")
             d.text((340, y + 72), names, font=fit(names, "sb", 24, 640), fill=A(MUTED, ps), anchor="lm")
 
-    def s_diffs(self, base: Image.Image, t: float) -> None:
+    def diff_grid(self, base: Image.Image, t: float, title_sub: str, items, value_fn, footer: str,
+                  footer_fill=MUTED, value_width: int = 0) -> None:
+        """2 cards per position row. ``items`` are (Differential, extra); ``value_fn`` draws the right side."""
         d = ImageDraw.Draw(base)
         p = eo(prog(t, 0.0, 0.45))
         disp(d, (W / 2, 312), "THE DIFFERENTIALS", 100, A(PAPER, p), max_width=980)
-        sub = f"Under {DIFF_MAX_OWNED:g}% owned  ·  not in the model's 15  ·  top 2 by xP"
-        d.text((W / 2, 392), sub, font=fit(sub, "sb", 28, 960), fill=A(MUTED, p), anchor="mm")
+        d.text((W / 2, 392), title_sub, font=fit(title_sub, "sb", 28, 960), fill=A(MUTED, p), anchor="mm")
         cw, ch, gap = 452, 196, 24
         row_h = 262
         for ri, pos in enumerate(POSITION_ORDER):
-            picks = [x for x in self.sq.differentials if x.player.position == pos]
+            picks = [it for it in items if it[0].player.position == pos]
             y0 = 452 + ri * row_h
             ql = eo(prog(t, 0.25 + ri * 0.3, 0.4))
-            label = POSITION_WORDS[pos] + "S"
-            lf = font("black", 22)
-            d.text((W / 2 - cw - gap / 2, y0 + 14), label, font=lf, fill=A(LIME, ql), anchor="lm")
+            d.text((W / 2 - cw - gap / 2, y0 + 14), POSITION_WORDS[pos] + "S", font=font("black", 22),
+                   fill=A(LIME, ql), anchor="lm")
             if not picks:
                 d.text((W / 2, y0 + 140), "No qualifying player this week", font=font("sb", 28),
                        fill=A(MUTED, ql), anchor="mm")
                 continue
-            for i, dif in enumerate(picks):
+            for i, (dif, extra) in enumerate(picks):
                 q = eo(prog(t, 0.35 + ri * 0.3 + i * 0.12, 0.5))
                 al = cl(q * 1.8)
                 pl = dif.player
@@ -483,7 +483,7 @@ class Reel:
                 y = y0 + 44 + 24 * (1 - q)
                 d.rounded_rectangle([x0, y, x0 + cw, y + ch], 30, fill=A(PLUM800, al), outline=A(PLUM600, al), width=2)
                 d.rounded_rectangle([x0 + 30, y, x0 + cw - 30, y + 6], 3, fill=A(PINK, al))
-                d.text((x0 + 28, y + 50), pl.name, font=fit(pl.name, "black", 40, cw - 56), fill=A(PAPER, al),
+                d.text((x0 + 28, y + 50), pl.name, font=fit(pl.name, "black", 40, cw - 56 - value_width), fill=A(PAPER, al),
                        anchor="lm")
                 ft = fit(pl.opponent_codes, "sb", 24, 150)
                 club = pl.club_code
@@ -496,13 +496,19 @@ class Reel:
                 ow = of.getlength(own) + 30
                 d.rounded_rectangle([x0 + 28, y + 136, x0 + 28 + ow, y + 174], 19, fill=A(PINK, al))
                 d.text((x0 + 28 + ow / 2, y + 155), own, font=of, fill=A(INK950, al), anchor="mm")
-                xs = f"{pl.xp * q:.1f}"
-                xf = font("disp", 70)
-                d.text((x0 + cw - 70, y + 152), xs, font=xf, fill=A(LIME, al), anchor="rs")
-                d.text((x0 + cw - 26, y + 150), "xP", font=font("black", 26), fill=A(LIME, al), anchor="rs")
+                value_fn(d, x0 + cw, y, dif, extra, q, al)
         pn = eo(prog(t, 1.8, 0.5))
-        d.text((W / 2, 1520), "Ownership from FPL at build time  ·  check team news", font=font("sb", 26),
-               fill=A(MUTED, pn), anchor="mm")
+        d.text((W / 2, 1520), footer, font=fit(footer, "sb", 26, 980), fill=A(footer_fill, pn), anchor="mm")
+
+    def s_diffs(self, base: Image.Image, t: float) -> None:
+        def xp_value(d, right, y, dif, _extra, q, al):
+            d.text((right - 70, y + 152), f"{dif.player.xp * q:.1f}", font=font("disp", 70), fill=A(LIME, al),
+                   anchor="rs")
+            d.text((right - 26, y + 150), "xP", font=font("black", 26), fill=A(LIME, al), anchor="rs")
+
+        self.diff_grid(base, t, f"Under {DIFF_MAX_OWNED:g}% owned  ·  not in the model's 15  ·  top 2 by xP",
+                       [(x, None) for x in self.sq.differentials], xp_value,
+                       "Ownership from FPL at build time  ·  check team news")
 
     def s_outro(self, base: Image.Image, t: float) -> None:
         d = ImageDraw.Draw(base)

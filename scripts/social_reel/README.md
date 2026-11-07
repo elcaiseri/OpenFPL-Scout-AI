@@ -31,7 +31,18 @@ python -m scripts.social_reel --data scout_gw11.json --pool pool_gw11.json --boo
     --deadline 2026-11-21T11:00:00Z
 ```
 
-`--no-differentials` leaves the card out.
+`--no-differentials` leaves the card out. When the card is drawn, the preview also writes
+`openfpl_gwNN_preview_differentials.json` (the picks, their ownership and a build timestamp) for the recap.
+
+### Differentials in the recap
+
+`--differentials openfpl_gwNN_preview_differentials.json` adds the same card to the recap, scored: each pick's actual
+points (lime when it met its xP, pink when it didn't) against its xP, plus the group total vs xP. Put after the hauls,
+so the recap becomes 7 scenes (33.8 s). The live response must include those players; any missing → card skipped.
+
+The card says "Picked before the deadline" only when the file came from a preview build timestamped before the
+deadline. Anything else (`"source": "retro"`, e.g. a gameweek from before this feature, with ownership rebuilt from
+FPL's per-gameweek `selected` counts) is labelled "Retro pick" on the card and in the caption.
 
 ## Modes
 
@@ -71,7 +82,7 @@ python -m scripts.social_reel --mode recap --gameweek 6
 python -m scripts.social_reel --mode recap --data scout_gw06.json --live live_gw06.json --bootstrap bootstrap.json
 ```
 
-Scenes: hook → the score vs the GW average and the locked forecast → captain and vice with actual points and the hindsight armband → the full 15 with points (bench greyed) → top 5 hauls against their forecast, plus the two biggest misses → CTA for the next gameweek.
+Scenes: hook → the score vs the GW average and the locked forecast → captain and vice with actual points and the hindsight armband → the full 15 with points (bench greyed) → top 5 hauls against their forecast, plus the two biggest misses → (with `--differentials`) the preview's differentials, scored → CTA for the next gameweek.
 
 - The score is the best-xP legal XI (the same rule as `src/team_rating._best_benchmark_lineup`) plus the captain's points again, with FPL auto-subs (a starter with 0 minutes is replaced by the first bench player, in xP order, who played and keeps the formation legal) and the vice taking the armband if the captain did not play.
 - Only a forecast frozen with `freeze_method: "deadline"` and captured before the deadline is called "locked". Anything else (e.g. `after-deadline` backfills) is labelled a retro forecast on the hook, score, hauls, outro and caption.

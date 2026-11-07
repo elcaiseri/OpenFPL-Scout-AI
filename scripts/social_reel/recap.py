@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .data import SITE_URL, Player, Squad
+from .data import DIFF_MAX_OWNED, SITE_URL, Differential, Player, Squad
 
 POSITION_ORDER = ("GK", "DEF", "MID", "FWD")
 
@@ -105,6 +105,18 @@ def auto_subs(xi: Sequence[Player], bench: Sequence[Player], minutes: Mapping[st
 
 
 @dataclass(frozen=True)
+class DiffResult:
+    """A differential from the preview card, with what it actually scored."""
+    diff: Differential
+    points: int
+    minutes: int
+
+    @property
+    def player(self) -> Player:
+        return self.diff.player
+
+
+@dataclass(frozen=True)
 class Recap:
     squad: Squad
     points: Mapping[str, int]  # player name -> actual FPL points
@@ -115,6 +127,9 @@ class Recap:
     xi: Tuple[Player, ...] = ()  # XI that scored, after automatic substitutions
     subs: Tuple[Tuple[Player, Player], ...] = ()  # (off, on)
     armband: Optional[Player] = None  # captain, or the vice if the captain did not play
+    diffs: Tuple[DiffResult, ...] = ()  # the preview's differentials, scored
+    diff_source: str = ""  # "preview" (saved by the preview build) or "retro" (rebuilt afterwards)
+    diff_captured_at: Optional[str] = None
 
     @property
     def locked_pre_deadline(self) -> bool:
@@ -180,6 +195,25 @@ class Recap:
     def beat_count(self) -> int:
         return sum(self.pts(p) >= p.xp for p in self.squad.players)
 
+    @property
+    def diffs_locked(self) -> bool:
+        """True only when the picks were saved by a preview build before the deadline."""
+        if self.diff_source != "preview":
+            return False
+        captured, deadline = _when(self.diff_captured_at), _when(self.info.deadline or self.squad.deadline)
+        return captured is not None and deadline is not None and captured < deadline
+
+    @property
+    def diff_total(self) -> int:
+        return sum(r.points for r in self.diffs)
+
+    @property
+    def diff_xp(self) -> float:
+        return sum(r.player.xp for r in self.diffs)
+
+    def diff_best(self, n: int = 2) -> List[DiffResult]:
+        return sorted(self.diffs, key=lambda r: (-r.points, -r.player.xp))[:n]
+
     def hindsight_captain(self) -> Player:
         return max(self.squad.players, key=lambda p: (self.pts(p), p.xp))
 
@@ -205,6 +239,21 @@ def build_recap(squad: Squad, points: Mapping[int, Mapping[str, int]], info: Gam
         armband = squad.vice
     return Recap(squad=squad, points=by_name, picked=tuple(picked), shape=shape, info=info, minutes=minutes,
                  xi=tuple(xi), subs=tuple(subs), armband=armband)
+
+
+def attach_differentials(recap: Recap, picks: Sequence[Differential], points: Mapping[int, Mapping[str, int]],
+                          source: str, captured_at: Optional[str] = None) -> Recap:
+    """Score the preview's differentials; refuses (RecapError) if any has no live points."""
+    from dataclasses import replace
+
+    missing = [d.player.name for d in picks if d.player.id is None or d.player.id not in points]
+    if missing:
+        raise RecapError("No live points for differentials: " + ", ".join(missing) + ".")
+    if any(d.player.id in {p.id for p in recap.squad.players} for d in picks):
+        raise RecapError("A differential is in the model's 15; the file is not for this squad.")
+    results = tuple(DiffResult(d, int(points[d.player.id].get("total_points", 0)),
+                               int(points[d.player.id].get("minutes", 0))) for d in picks)
+    return replace(recap, diffs=results, diff_source=source, diff_captured_at=captured_at)
 
 
 def _when(value: Optional[str]) -> Optional[datetime]:
@@ -245,6 +294,16 @@ def recap_caption(r: Recap) -> str:
     ]
     lines += [f"{i}. {p.name} — {_pts(r.pts(p))} (xP {p.xp:.1f})" for i, p in enumerate(r.hauls(5), 1)]
     lines += ["", "Misses: " + " · ".join(f"{p.name} {_pts(r.pts(p))} (xP {p.xp:.1f})" for p in r.misses(2))]
+    if r.diffs:
+        when = "picked before the deadline" if r.diffs_locked else "retro pick, ownership rebuilt after the deadline"
+        lines += ["", f"Differentials (under {DIFF_MAX_OWNED:g}% owned, outside the 15; {when}):",
+                  f"{len(r.diffs)} picks scored {_pts(r.diff_total)} vs {r.diff_xp:.1f} xP. Best: "
+                  + ", ".join(f"{x.player.name} {_pts(x.points)}" for x in r.diff_best(2)) + "."]
+        for pos in POSITION_ORDER:
+            row = [x for x in r.diffs if x.player.position == pos]
+            if row:
+                lines.append(f"{pos}: " + " · ".join(
+                    f"{x.player.name} {_pts(x.points)} (xP {x.player.xp:.1f}, {x.diff.owned:.1f}%)" for x in row))
     lines += [
         "",
         ("Forecast locked at the deadline — no hindsight edits." if r.locked_pre_deadline else

@@ -12,7 +12,7 @@ from typing import Dict, List
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from .data import POSITION_WORDS, SITE_URL, Player
+from .data import DIFF_MAX_OWNED, POSITION_WORDS, SITE_URL, Player
 from .recap import Recap, recap_caption
 from .render import (A, AQUA, FIX_TXT, GREY_TXT, INK950, LIME, MUTED, PAPER, PINK, PITCH_D, PLUM600, PLUM800,
                      PLUM900, REPORT_STATS, W, Reel, cl, disp, eback, eo, export, fit, font, grad, paste, prog,
@@ -36,8 +36,12 @@ class RecapReel(Reel):
             ("hauls", self.s_top, 20.0, 24.6),
             ("cta", self.s_outro, 24.6, 29.0),
         ]
-        self.duration = self.scenes[-1][3]
         self.bar_scenes = {"score", "armband", "full15", "hauls"}
+        if recap.diffs:
+            # After the hauls, before the CTA: how the preview's differentials actually did.
+            self.scenes[-1:] = [("differentials", self.s_diffs_scored, 24.6, 29.4), ("cta", self.s_outro, 29.4, 33.8)]
+            self.bar_scenes.add("differentials")
+        self.duration = self.scenes[-1][3]
 
     @staticmethod
     def pts_pill(pts: int, size: int = 30) -> Image.Image:
@@ -277,6 +281,27 @@ class RecapReel(Reel):
             line2 = f"Forecast {pl.xp:.1f} xP · {pts - pl.xp:+.1f} vs forecast"
             d.text((350, y + 32), line1, font=fit(line1, "black", 27, 620), fill=A(PAPER, ps), anchor="lm")
             d.text((350, y + 70), line2, font=fit(line2, "sb", 24, 620), fill=A(MUTED, ps), anchor="lm")
+
+    def s_diffs_scored(self, base: Image.Image, t: float) -> None:
+        rc = self.rc
+
+        def pts_value(d, right, y, dif, res, q, al):
+            beat = res.points >= dif.player.xp
+            col = LIME if beat else PINK
+            label = "PT" if res.points == 1 else "PTS"
+            lf = font("black", 24)
+            d.text((right - 26, y + 112), label, font=lf, fill=A(col, al), anchor="rs")
+            d.text((right - 34 - lf.getlength(label), y + 118), f"{round(res.points * q)}", font=font("disp", 84),
+                   fill=A(col, al), anchor="rs")
+            sub = f"xP {dif.player.xp:.1f}" + ("  ·  DNP" if res.minutes <= 0 else "")
+            d.text((right - 26, y + 158), sub, font=font("b", 24), fill=A(MUTED, al), anchor="rm")
+
+        sub = (f"Picked before the deadline  ·  under {DIFF_MAX_OWNED:g}% owned  ·  not in the 15" if rc.diffs_locked else
+               f"Retro pick  ·  under {DIFF_MAX_OWNED:g}% owned at the deadline  ·  not in the 15")
+        foot = f"{len(rc.diffs)} differentials: {rc.diff_total} pts vs {rc.diff_xp:.1f} xP  ({rc.diff_total - rc.diff_xp:+.1f})"
+        widest = max(font("disp", 84).getlength(str(r.points)) for r in rc.diffs)
+        self.diff_grid(base, t, sub, [(r.diff, r) for r in rc.diffs], pts_value, foot, PAPER,
+                       value_width=int(widest + font("black", 24).getlength("PTS") + 30))
 
     def s_outro(self, base: Image.Image, t: float) -> None:
         d = ImageDraw.Draw(base)
