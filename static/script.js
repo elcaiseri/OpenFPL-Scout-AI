@@ -257,6 +257,7 @@ const dom = new Proxy({}, {
             pulseDeadlineSub: 'pulse-deadline-sub', fixtureCount: 'fixture-count',
             dataState: 'data-state', dataStateSub: 'data-state-sub', lastSync: 'last-sync',
             signalState: 'signal-state', totalPoints: 'total-points', captainName: 'captain-name',
+            modelVersion: 'model-version',
             captainPoints: 'captain-points', squadValue: 'squad-value',
             differentialCount: 'differential-count', fixtureRail: 'fixture-rail',
             squadSubtitle: 'squad-subtitle', formationChip: 'formation-chip',
@@ -553,6 +554,8 @@ const dashboardRenderer = {
     header(data) {
         const event = data.event;
         dom.gameweekInfo.textContent = `Gameweek ${data.gameweek}`;
+        dom.modelVersion.textContent = data.version ? `GW ${data.gameweek} · Model v${data.version}` : '';
+        dom.modelVersion.hidden = !data.version;
         dom.deadlineDate.textContent = event?.deadline_time
             ? utils.deadline(event.deadline_time)
             : 'Official deadline TBC';
@@ -724,6 +727,7 @@ const dashboardRenderer = {
     },
 
     loading(message = 'Projecting the Gameweek…') {
+        dom.modelVersion.hidden = true;
         dom.pitch.innerHTML = `
             <div class="loading" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
@@ -735,6 +739,7 @@ const dashboardRenderer = {
     },
 
     error(message) {
+        dom.modelVersion.hidden = true;
         dom.pitch.innerHTML = `
             <div class="error" role="alert">
                 <strong>Scout temporarily unavailable</strong>
