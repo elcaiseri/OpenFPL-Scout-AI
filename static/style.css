@@ -304,6 +304,7 @@ select {
     font-size: clamp(1.5rem, 3vw, 2.15rem);
     line-height: 1;
     letter-spacing: -0.05em;
+    white-space: nowrap;
 }
 
 .panel-meta {
@@ -1241,7 +1242,6 @@ select {
 
 .gameweek-panel .gameweek {
     margin: 18px 0 12px;
-    font-size: clamp(2rem, 4vw, 3rem);
 }
 
 .deadline-block {
