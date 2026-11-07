@@ -16,7 +16,8 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from .data import POSITION_WORDS, Player, Squad, armband_line, caption, club_short, stacks, status_line
+from .data import (DIFF_MAX_OWNED, POSITION_ORDER, POSITION_WORDS, Player, Squad, armband_line, caption, club_short,
+                   stacks, status_line)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FONT_DIR = REPO_ROOT / "assets" / "social" / "fonts"
@@ -171,9 +172,13 @@ class Reel:
             ("top5", self.s_top, 15.4, 19.8),
             ("cta", self.s_outro, 19.8, 24.5),
         ]
+        self.bar_scenes = {"captain", "full15", "top5"}
+        if squad.differentials:
+            # After the model's own top 5, before the CTA.
+            self.scenes[-1:] = [("differentials", self.s_diffs, 19.8, 24.6), ("cta", self.s_outro, 24.6, 29.3)]
+            self.bar_scenes.add("differentials")
         self.duration = self.scenes[-1][3]
         self.fade = 0.3
-        self.bar_scenes = {"captain", "full15", "top5"}
         self.still_mode = False
 
     # ---- assets ----
@@ -450,6 +455,54 @@ class Reel:
             names = " · ".join(p.name for p in players)
             d.text((340, y + 34), top_line, font=fit(top_line, "black", 27, 640), fill=A(PAPER, ps), anchor="lm")
             d.text((340, y + 72), names, font=fit(names, "sb", 24, 640), fill=A(MUTED, ps), anchor="lm")
+
+    def s_diffs(self, base: Image.Image, t: float) -> None:
+        d = ImageDraw.Draw(base)
+        p = eo(prog(t, 0.0, 0.45))
+        disp(d, (W / 2, 312), "THE DIFFERENTIALS", 100, A(PAPER, p), max_width=980)
+        sub = f"Under {DIFF_MAX_OWNED:g}% owned  ·  not in the model's 15  ·  top 2 by xP"
+        d.text((W / 2, 392), sub, font=fit(sub, "sb", 28, 960), fill=A(MUTED, p), anchor="mm")
+        cw, ch, gap = 452, 196, 24
+        row_h = 262
+        for ri, pos in enumerate(POSITION_ORDER):
+            picks = [x for x in self.sq.differentials if x.player.position == pos]
+            y0 = 452 + ri * row_h
+            ql = eo(prog(t, 0.25 + ri * 0.3, 0.4))
+            label = POSITION_WORDS[pos] + "S"
+            lf = font("black", 22)
+            d.text((W / 2 - cw - gap / 2, y0 + 14), label, font=lf, fill=A(LIME, ql), anchor="lm")
+            if not picks:
+                d.text((W / 2, y0 + 140), "No qualifying player this week", font=font("sb", 28),
+                       fill=A(MUTED, ql), anchor="mm")
+                continue
+            for i, dif in enumerate(picks):
+                q = eo(prog(t, 0.35 + ri * 0.3 + i * 0.12, 0.5))
+                al = cl(q * 1.8)
+                pl = dif.player
+                x0 = W / 2 - cw - gap / 2 + i * (cw + gap) if len(picks) > 1 else W / 2 - cw / 2
+                y = y0 + 44 + 24 * (1 - q)
+                d.rounded_rectangle([x0, y, x0 + cw, y + ch], 30, fill=A(PLUM800, al), outline=A(PLUM600, al), width=2)
+                d.rounded_rectangle([x0 + 30, y, x0 + cw - 30, y + 6], 3, fill=A(PINK, al))
+                d.text((x0 + 28, y + 50), pl.name, font=fit(pl.name, "black", 40, cw - 56), fill=A(PAPER, al),
+                       anchor="lm")
+                ft = fit(pl.opponent_codes, "sb", 24, 150)
+                club = pl.club_code
+                cf = font("xb", 26)
+                d.text((x0 + 28, y + 100), club, font=cf, fill=A(MUTED, al), anchor="lm")
+                self._venue_chip(d, x0 + 28 + cf.getlength(club) + 16, y + 100, 32, pl.venue, pl.opponent_codes, ft,
+                                 A(MUTED, al))
+                own = f"{dif.owned:.1f}% owned"
+                of = font("black", 22)
+                ow = of.getlength(own) + 30
+                d.rounded_rectangle([x0 + 28, y + 136, x0 + 28 + ow, y + 174], 19, fill=A(PINK, al))
+                d.text((x0 + 28 + ow / 2, y + 155), own, font=of, fill=A(INK950, al), anchor="mm")
+                xs = f"{pl.xp * q:.1f}"
+                xf = font("disp", 70)
+                d.text((x0 + cw - 70, y + 152), xs, font=xf, fill=A(LIME, al), anchor="rs")
+                d.text((x0 + cw - 26, y + 150), "xP", font=font("black", 26), fill=A(LIME, al), anchor="rs")
+        pn = eo(prog(t, 1.8, 0.5))
+        d.text((W / 2, 1520), "Ownership from FPL at build time  ·  check team news", font=font("sb", 26),
+               fill=A(MUTED, pn), anchor="mm")
 
     def s_outro(self, base: Image.Image, t: float) -> None:
         d = ImageDraw.Draw(base)

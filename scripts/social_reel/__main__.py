@@ -15,8 +15,10 @@ not reachable from the build machine::
 
     python -m scripts.social_reel --data scout.json --deadline 2026-10-17T10:00:00Z
 
-Outputs go to ``out/social/gwNN_preview/``: a 9:16 MP4 reel, five 9:16 stills, five
-4:5 carousel stills, a zip of all stills, and a ready-to-paste caption.
+Outputs go to ``out/social/gwNN_preview/``: a 9:16 MP4 reel, 9:16 stills, 4:5
+carousel stills, a zip of all stills, and a ready-to-paste caption. The preview
+adds a differentials card (top 2 per position under 10% owned, outside the 15)
+when FPL ownership is available: ``--bootstrap`` or a live /bootstrap-static/ fetch.
 
 After the gameweek, ``--mode recap`` scores the locked squad against official FPL
 points (``/event/{gw}/live/``) and writes a recap pack to
@@ -37,7 +39,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from .data import SquadError, parse_squad
+import os
+
+from .data import SquadError, differentials, ownership_from_bootstrap, parse_squad, pool_rows, with_differentials
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_API = "https://openfpl.kassem.dev"
@@ -72,10 +76,17 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--no-video", action="store_true", help="Only write the stills, zip and caption.")
     parser.add_argument("--mode", choices=("preview", "recap"), default="preview",
                         help="preview: upcoming gameweek's squad (default). recap: finished gameweek vs actual points.")
+    parser.add_argument("--bootstrap", type=Path,
+                        help="Saved FPL /bootstrap-static/ response (fetched when omitted): ownership for the preview's "
+                             "differentials card, the GW average for the recap.")
+    parser.add_argument("--pool", type=Path,
+                        help="Saved /api/gw/playerpoints?gameweek=N response (the full projected pool) for the "
+                             "differentials card. Defaults to the scout payload's player_points, then a live fetch "
+                             "when OPENFPL_API_TOKEN is set.")
+    parser.add_argument("--no-differentials", action="store_true", help="Leave the differentials card out of the preview.")
     recap = parser.add_argument_group("recap (after the gameweek)")
     recap.add_argument("--recap", action="store_true", help="Same as --mode recap.")
     recap.add_argument("--live", type=Path, help="Saved FPL /event/{gw}/live/ response (fetched when omitted).")
-    recap.add_argument("--bootstrap", type=Path, help="Saved FPL /bootstrap-static/ response for the GW average.")
     args = parser.parse_args(argv)
     args.recap = args.recap or args.mode == "recap"
     if args.recap and not (args.gameweek or args.data):
@@ -101,6 +112,9 @@ def main(argv: Optional[list] = None) -> int:
     if args.recap:
         return _recap(args, squad)
 
+    if not args.no_differentials:
+        squad = _attach_differentials(args, payload, squad)
+
     from .render import build  # Imported late so --help works without Pillow.
 
     out_dir = args.out or REPO_ROOT / "out" / "social" / f"gw{squad.gameweek:02d}_preview"
@@ -110,6 +124,41 @@ def main(argv: Optional[list] = None) -> int:
         for path in paths:
             print(f"{kind}: {path}")
     return 0
+
+
+def _attach_differentials(args: argparse.Namespace, payload: Any, squad):
+    """Add the differentials card's picks; skip the card (with a warning) rather than fail the build."""
+    pool_payload = json.loads(args.pool.read_text(encoding="utf-8")) if args.pool else None
+    pool = pool_rows(pool_payload, payload)
+    token = os.environ.get("OPENFPL_API_TOKEN")
+    if not pool and token:
+        try:
+            request = urllib.request.Request(f"{args.api}/api/gw/playerpoints?gameweek={squad.gameweek}",
+                                             headers={"Authorization": f"Bearer {token}", "User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                pool = pool_rows(json.load(response))
+        except Exception as error:
+            print(f"warning: could not fetch the projected pool ({error}).", file=sys.stderr)
+    if not pool:
+        print("warning: no projected pool (--pool / player_points); differentials card skipped.", file=sys.stderr)
+        return squad
+    try:
+        boot = json.loads(args.bootstrap.read_text(encoding="utf-8")) if args.bootstrap else \
+            _get_json(f"{FPL_API}/bootstrap-static/")
+    except Exception as error:  # Ownership is a nicety; never fail the build over it.
+        print(f"warning: no FPL ownership ({error}); differentials card skipped.", file=sys.stderr)
+        return squad
+    ownership = ownership_from_bootstrap(boot)
+    if not ownership:
+        print("warning: bootstrap has no elements/ownership; differentials card skipped.", file=sys.stderr)
+        return squad
+    picks = differentials(pool, squad, ownership)
+    if not picks:
+        print("warning: no player qualifies as a differential; card skipped.", file=sys.stderr)
+        return squad
+    print("differentials: " + " · ".join(f"{d.player.position} {d.player.name} {d.player.xp:.2f} xP {d.owned:.1f}%"
+                                          for d in picks))
+    return with_differentials(squad, picks)
 
 
 def _recap(args: argparse.Namespace, squad) -> int:

@@ -9,9 +9,13 @@ from scripts.social_reel.data import (
     caption,
     club_code,
     deadline_label,
+    differentials,
+    ownership_from_bootstrap,
     parse_squad,
+    pool_rows,
     stacks,
     status_line,
+    with_differentials,
 )
 from scripts.social_reel.recap import (
     RecapError,
@@ -179,6 +183,63 @@ class SocialReelRecapTest(unittest.TestCase):
         self.assertIn("85 pts (+27 on the 58-pt GW average)", text)
         self.assertIn("B.Fernandes 1 pt (xP 5.6)", text)
         self.assertIn("GW7 squad is live", text)
+
+
+
+class DifferentialsTest(unittest.TestCase):
+    def setUp(self):
+        self.payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        self.squad = parse_squad(self.payload)
+        self.gw = self.squad.gameweek
+
+    def row(self, pid, pos, xp, name=None, fixtures=1, gameweek=None):
+        return {"id": pid, "element_type": pos, "web_name": name or f"P{pid}", "team_name": "Everton",
+                "opponent_team_name": "Brentford", "was_home": False, "gameweek": gameweek or self.gw,
+                "expected_points": xp, "fixture_count": fixtures}
+
+    def test_top_two_per_position_under_ten_percent_outside_squad(self):
+        squad_id = self.squad.players[0].id
+        pool = [
+            self.row(901, 1, 3.0), self.row(902, 1, 3.5), self.row(903, 1, 2.0),   # GK: 902, 901
+            self.row(911, 2, 4.0), self.row(912, 2, 5.0),                          # DEF: 912 too owned -> 911 only
+            self.row(921, 3, 6.0), self.row(922, 3, 5.5), self.row(923, 3, 5.9),   # MID: 923 injured
+            self.row(931, 4, 4.0, fixtures=0), self.row(932, 4, 3.0),             # FWD: 931 blanks
+            self.row(squad_id, 3, 9.9),                                            # in the 15
+            self.row(941, 3, 9.0, gameweek=self.gw + 1),                           # other gameweek
+        ]
+        ownership = ownership_from_bootstrap({"elements": [
+            {"id": 901, "selected_by_percent": "4.0", "status": "a"},
+            {"id": 902, "selected_by_percent": "9.9", "status": "a"},
+            {"id": 903, "selected_by_percent": "1.0", "status": "a"},
+            {"id": 911, "selected_by_percent": "3.0", "status": "a"},
+            {"id": 912, "selected_by_percent": "10.0", "status": "a"},
+            {"id": 921, "selected_by_percent": "2.0", "status": "a"},
+            {"id": 922, "selected_by_percent": "2.0", "status": "a"},
+            {"id": 923, "selected_by_percent": "2.0", "status": "i"},
+            {"id": 931, "selected_by_percent": "1.0", "status": "a"},
+            {"id": 932, "selected_by_percent": "1.0", "status": "a"},
+            {"id": squad_id, "selected_by_percent": "1.0", "status": "a"},
+            {"id": 941, "selected_by_percent": "1.0", "status": "a"},
+        ]})
+        picks = differentials(pool, self.squad, ownership)
+        self.assertEqual([(d.player.position, d.player.id) for d in picks],
+                         [("GK", 902), ("GK", 901), ("DEF", 911), ("MID", 921), ("MID", 922), ("FWD", 932)])
+        self.assertEqual(picks[0].owned, 9.9)
+
+    def test_player_without_ownership_is_skipped(self):
+        picks = differentials([self.row(950, 2, 8.0)], self.squad, {})
+        self.assertEqual(picks, ())
+
+    def test_pool_rows_prefers_first_non_empty(self):
+        self.assertEqual(pool_rows(None, {"player_points": []}, {"player_points": [1]}), [1])
+
+    def test_caption_lists_differentials(self):
+        ownership = {960: (3.4, "a")}
+        squad = with_differentials(self.squad, differentials([self.row(960, 3, 4.2, "Rayan")], self.squad, ownership))
+        text = caption(squad)
+        self.assertIn("Differentials (under 10% owned, outside the 15):", text)
+        self.assertIn("MID: Rayan (EVE, 4.2 xP, 3.4%)", text)
+        self.assertNotIn("Differentials", caption(self.squad))
 
 
 if __name__ == "__main__":

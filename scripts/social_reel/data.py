@@ -18,6 +18,9 @@ POSITIONS = {
     "Midfielder": "MID",
     "Forward": "FWD",
 }
+# /api/scout's player_points pool uses FPL's numeric element_type.
+POSITION_IDS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+POSITION_ORDER = ("GK", "DEF", "MID", "FWD")
 POSITION_WORDS = {"GK": "GOALKEEPER", "DEF": "DEFENDER", "MID": "MIDFIELDER", "FWD": "FORWARD"}
 SQUAD_SHAPE = {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}
 MAX_PER_CLUB = 3
@@ -48,6 +51,11 @@ CLUB_SHORT = {
 }
 
 SITE_URL = "openfpl.kassem.dev"
+
+# Differentials card: players outside the model's 15 owned by fewer than
+# DIFF_MAX_OWNED % of FPL managers, best DIFF_PER_POSITION by xP in each position.
+DIFF_MAX_OWNED = 10.0
+DIFF_PER_POSITION = 2
 
 
 class SquadError(ValueError):
@@ -121,6 +129,7 @@ class Squad:
     deadline: Optional[str] = None  # ISO 8601, from /api/fpl/gameweeks
     stats: Mapping[str, Any] = field(default_factory=dict)
     freeze_method: Optional[str] = None  # "deadline" or "after-deadline"
+    differentials: Tuple["Differential", ...] = ()  # attached by with_differentials()
 
     @property
     def captain(self) -> Player:
@@ -146,6 +155,34 @@ def _opponents(raw: Any) -> Tuple[str, ...]:
     return tuple(p for p in parts if p)
 
 
+def _player_from_row(row: Mapping[str, Any]) -> Player:
+    """One /api/scout row (scout_team or player_points) as a Player."""
+    raw_position = row.get("element_type")
+    position = POSITIONS.get(raw_position) if isinstance(raw_position, str) else None
+    if position is None:
+        try:
+            position = POSITION_IDS.get(int(raw_position))
+        except (TypeError, ValueError):
+            position = None
+    if position is None:
+        raise SquadError(f"Unknown position {raw_position!r} for {row.get('web_name')!r}.")
+    role = {"captain": "C", "vice": "V"}.get(str(row.get("role") or "").lower(), "")
+    opponents = _opponents(row.get("opponent_team_name"))
+    count = row.get("fixture_count")
+    count = int(count) if count is not None else len(opponents) or 1
+    return Player(
+        name=str(row["web_name"]).strip(),
+        position=position,
+        club=str(row["team_name"]).strip(),
+        opponents=opponents,
+        home=bool(row.get("was_home")),
+        fixture_count=count,
+        xp=float(row["expected_points"]),
+        role=role,
+        id=int(row["id"]) if row.get("id") is not None else None,
+    )
+
+
 def parse_squad(payload: Mapping[str, Any], deadline: Optional[str] = None) -> Squad:
     """Validate a ``/api/scout`` payload and return the squad to render."""
     rows = payload.get("scout_team")
@@ -159,26 +196,7 @@ def parse_squad(payload: Mapping[str, Any], deadline: Optional[str] = None) -> S
     if not 1 <= gameweek <= 38:
         raise SquadError(f"Gameweek {gameweek} is outside 1-38.")
 
-    players = []
-    for row in rows:
-        position = POSITIONS.get(row.get("element_type"))
-        if position is None:
-            raise SquadError(f"Unknown position {row.get('element_type')!r} for {row.get('web_name')!r}.")
-        role = {"captain": "C", "vice": "V"}.get(str(row.get("role") or "").lower(), "")
-        opponents = _opponents(row.get("opponent_team_name"))
-        count = row.get("fixture_count")
-        count = int(count) if count is not None else len(opponents) or 1
-        players.append(Player(
-            name=str(row["web_name"]).strip(),
-            position=position,
-            club=str(row["team_name"]).strip(),
-            opponents=opponents,
-            home=bool(row.get("was_home")),
-            fixture_count=count,
-            xp=float(row["expected_points"]),
-            role=role,
-            id=int(row["id"]) if row.get("id") is not None else None,
-        ))
+    players = [_player_from_row(row) for row in rows]
 
     problems = []
     if len(players) != 15:
@@ -206,6 +224,72 @@ def parse_squad(payload: Mapping[str, Any], deadline: Optional[str] = None) -> S
         deadline=deadline,
         freeze_method=payload.get("freeze_method"),
     )
+
+
+@dataclass(frozen=True)
+class Differential:
+    player: Player
+    owned: float  # % of FPL managers who own him (bootstrap selected_by_percent)
+
+
+def ownership_from_bootstrap(bootstrap: Mapping[str, Any]) -> Dict[int, Tuple[float, str]]:
+    """``{element id: (selected_by_percent, status)}`` from FPL's /bootstrap-static/.
+
+    A trimmed ``{"elements": [{"id", "selected_by_percent", "status"}]}`` works too.
+    """
+    out: Dict[int, Tuple[float, str]] = {}
+    for element in bootstrap.get("elements") or []:
+        try:
+            out[int(element["id"])] = (float(element["selected_by_percent"]), str(element.get("status") or "a"))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def pool_rows(*payloads: Optional[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    """The projected pool: the first non-empty ``player_points`` list among the payloads."""
+    for payload in payloads:
+        rows = (payload or {}).get("player_points")
+        if isinstance(rows, list) and rows:
+            return rows
+    return []
+
+
+def differentials(pool: Sequence[Mapping[str, Any]], squad: Squad, ownership: Mapping[int, Tuple[float, str]],
+                  per_position: int = DIFF_PER_POSITION, max_owned: float = DIFF_MAX_OWNED) -> Tuple[Differential, ...]:
+    """Best ``per_position`` by xP in each position, outside the 15 and under ``max_owned`` % owned.
+
+    ``pool`` is the full projected pool (``player_points`` from /api/gw/playerpoints,
+    or from a frozen /api/scout response) for the squad's gameweek. Only players FPL
+    lists as available (status ``a``) with a fixture this gameweek qualify, so a
+    differential is never an injured, suspended or blanking player. Players with
+    no ownership figure are skipped rather than guessed.
+    """
+    in_squad = {p.id for p in squad.players}
+    best: Dict[str, List[Differential]] = {pos: [] for pos in POSITION_ORDER}
+    for row in pool:
+        if row.get("gameweek") is not None and int(row["gameweek"]) != squad.gameweek:
+            continue
+        try:
+            player = _player_from_row(row)
+        except (SquadError, KeyError, TypeError, ValueError):
+            continue
+        if player.id is None or player.id in in_squad or player.fixture_count == 0:
+            continue
+        owned, status = ownership.get(player.id, (None, ""))
+        if owned is None or owned >= max_owned or status != "a":
+            continue
+        best[player.position].append(Differential(player, owned))
+    picked: List[Differential] = []
+    for pos in POSITION_ORDER:
+        picked += sorted(best[pos], key=lambda d: (-d.player.xp, d.owned))[:per_position]
+    return tuple(picked)
+
+
+def with_differentials(squad: Squad, diffs: Sequence[Differential]) -> Squad:
+    from dataclasses import replace
+
+    return replace(squad, differentials=tuple(diffs))
 
 
 def club_counts(players: Sequence[Player]) -> Dict[str, int]:
@@ -268,6 +352,13 @@ def caption(squad: Squad) -> str:
     st = stacks(squad)
     if st:
         lines += ["", "Stacks: " + " · ".join(f"{len(ps)}× {club_short(club)}" for club, ps in st)]
+    if squad.differentials:
+        lines += ["", f"Differentials (under {DIFF_MAX_OWNED:g}% owned, outside the 15):"]
+        for pos in POSITION_ORDER:
+            picks = [d for d in squad.differentials if d.player.position == pos]
+            if picks:
+                lines.append(f"{pos}: " + " · ".join(
+                    f"{d.player.name} ({d.player.club_code}, {d.player.xp:.1f} xP, {d.owned:.1f}%)" for d in picks))
     label = deadline_label(squad.deadline)
     lines += [
         "",
