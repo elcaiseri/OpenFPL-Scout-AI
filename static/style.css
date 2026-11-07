@@ -1,4 +1,20 @@
 /* OpenFPL Scout AI Team — 2026/27 matchday system */
+
+/* Anton (SIL OFL, static/fonts/Anton-OFL.txt) stands in for Impact, which
+   iOS, Android and Linux do not ship; without it the display type falls back
+   to a wide sans-serif and the hero headline outgrows a phone screen. It is
+   only downloaded where Impact is missing. Its one heavy weight covers the
+   whole range so browsers never synthesise a faux bold, and size-adjust
+   scales its 0.859em capitals to Impact's 0.790em, so the tight headline
+   leading and tracking tuned for Impact hold for both. */
+@font-face {
+    font-family: Anton;
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    size-adjust: 92%;
+    src: url("/static/fonts/anton-latin-400.woff2") format("woff2");
+}
 * {
     box-sizing: border-box;
     margin: 0;
@@ -30,7 +46,7 @@
     --radius-lg: 30px;
     --shadow: 0 24px 70px rgba(4, 0, 10, 0.42);
     --font-body: Inter, Aptos, "Segoe UI", Helvetica, Arial, sans-serif;
-    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", Anton, sans-serif;
     --ease: 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -206,7 +222,7 @@ select {
 .brand-copy small {
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.19em;
     text-transform: uppercase;
@@ -266,10 +282,11 @@ select {
     font-family: var(--font-display);
     font-size: clamp(4rem, 9vw, 7.8rem);
     font-weight: 900;
-    line-height: 0.79;
-    letter-spacing: -0.035em;
+    line-height: 0.82;
+    letter-spacing: -0.02em;
     text-transform: uppercase;
     text-wrap: balance;
+    overflow-wrap: break-word;
 }
 
 .hero-copy h1 span {
@@ -334,7 +351,7 @@ select {
     min-width: 36px;
     height: 28px;
     color: var(--lime);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.08em;
     place-items: center;
@@ -395,7 +412,7 @@ select {
 }
 
 .gameweek-option > span {
-    font-size: 0.52rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.06em;
 }
@@ -408,7 +425,7 @@ select {
 .gameweek-option > small {
     grid-column: 1 / -1;
     margin-top: 4px;
-    font-size: 0.48rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -416,7 +433,6 @@ select {
 
 .gameweek-option:hover:not(:disabled),
 .gameweek-option:focus-visible {
-    outline: none;
     color: var(--paper);
     background: rgba(255, 255, 255, 0.075);
 }
@@ -440,7 +456,7 @@ select {
     grid-column: 1 / -1;
     padding: 12px;
     color: var(--muted);
-    font-size: 0.65rem;
+    font-size: 0.6875rem;
     text-align: center;
 }
 
@@ -599,7 +615,7 @@ select {
     justify-content: center;
     padding: 0 7px;
     color: var(--lime);
-    font-size: 0.63rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.08em;
     border: 1px solid rgba(200, 255, 50, 0.28);
@@ -642,7 +658,7 @@ select {
     z-index: 1;
     margin-top: 11px;
     color: var(--muted);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     font-weight: 700;
 }
 
@@ -655,7 +671,7 @@ select {
     padding-bottom: 42px;
 }
 
-.squad-heading > div > div {
+.squad-heading > div:first-child > div {
     display: grid;
 }
 
@@ -769,12 +785,25 @@ select {
     background: var(--plum-600);
 }
 
-.player-card:hover,
 .player-card:focus-visible {
     z-index: 4;
     border-color: var(--lime);
     box-shadow: 0 14px 34px rgba(0, 20, 12, 0.44), 0 0 0 3px rgba(200, 255, 50, 0.22);
     transform: translateY(-6px) scale(1.025);
+}
+
+/* A tap must not leave a card stuck in its lifted hover state. */
+@media (hover: hover) {
+    .player-card:hover {
+        z-index: 4;
+        border-color: var(--lime);
+        box-shadow: 0 14px 34px rgba(0, 20, 12, 0.44), 0 0 0 3px rgba(200, 255, 50, 0.22);
+        transform: translateY(-6px) scale(1.025);
+    }
+}
+
+.player-card:active {
+    transform: scale(0.96);
 }
 
 .player-card.captain {
@@ -788,13 +817,22 @@ select {
 }
 
 .player-name {
+    --name-size: 0.82rem;
     overflow: hidden;
     margin: 2px 0 5px;
-    font-size: 0.82rem;
+    font-size: calc(var(--name-size) * var(--name-fit, 1));
     font-weight: 900;
     letter-spacing: -0.02em;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.player-name.wrapped {
+    display: -webkit-box;
+    line-height: 1.08;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .team-name {
@@ -804,6 +842,10 @@ select {
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.label-code {
+    display: none;
 }
 
 .fixture {
@@ -836,7 +878,7 @@ select {
     content: " xP";
     margin-left: 3px;
     color: var(--lime);
-    font-size: 0.45rem;
+    font-size: 0.5rem;
     letter-spacing: 0.04em;
 }
 
@@ -896,6 +938,27 @@ select {
     font-weight: 800;
     letter-spacing: 0.04em;
     text-align: center;
+}
+
+.retry-button {
+    min-height: 44px;
+    margin-top: 4px;
+    padding: 12px 22px;
+    cursor: pointer;
+    color: var(--ink-950);
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--lime);
+    touch-action: manipulation;
+}
+
+.retry-button:focus-visible {
+    outline: 3px solid var(--paper);
+    outline-offset: 3px;
 }
 
 .loading-ball {
@@ -1009,7 +1072,7 @@ select {
 
 .dialog-details dt {
     color: var(--muted);
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1025,7 +1088,7 @@ select {
 .credits {
     padding: 23px 42px;
     color: var(--muted);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     line-height: 1.5;
     text-align: center;
     border-top: 1px solid var(--line);
@@ -1076,9 +1139,12 @@ select {
 }
 
 .topbar-actions > a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
     padding: 9px 12px;
     color: var(--muted);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-decoration: none;
@@ -1090,7 +1156,6 @@ select {
 .topbar-actions > a:hover,
 .topbar-actions > a:focus-visible {
     color: var(--paper);
-    outline: none;
     background: rgba(255, 255, 255, 0.07);
 }
 
@@ -1102,6 +1167,34 @@ select {
 
 .hero-copy h1 {
     font-size: clamp(4rem, 8vw, 7.2rem);
+}
+
+.hero-cta {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+    padding: 11px 18px;
+    color: var(--ink-950);
+    font-size: 0.8rem;
+    font-weight: 900;
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    background: var(--lime);
+    box-shadow: 0 10px 30px rgba(200, 255, 50, 0.16);
+    transition: transform var(--ease), box-shadow var(--ease);
+}
+
+.hero-cta:hover,
+.hero-cta:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(248, 247, 251, 0.85), 0 14px 34px rgba(200, 255, 50, 0.22);
+    transform: translateY(-2px);
+}
+
+.squad-section {
+    scroll-margin-top: 12px;
 }
 
 .hero-proof {
@@ -1117,7 +1210,7 @@ select {
     gap: 7px;
     padding: 7px 10px;
     color: #d9cfdf;
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.04em;
     border: 1px solid var(--line);
@@ -1142,6 +1235,17 @@ select {
         linear-gradient(145deg, rgba(200, 255, 50, 0.1), rgba(255, 255, 255, 0.035));
 }
 
+/* At 11px the deadline panel's two labels no longer share a line in its
+   narrow tablet column; each stays whole and the second drops below. */
+.panel-topline {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.panel-topline > span {
+    white-space: nowrap;
+}
+
 .panel-topline,
 .panel-foot,
 .stat-topline,
@@ -1155,7 +1259,7 @@ select {
 
 .source-state {
     color: var(--aqua);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1175,7 +1279,7 @@ select {
 
 .deadline-block span {
     display: block;
-    font-size: 0.56rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1191,7 +1295,7 @@ select {
 .panel-foot {
     margin-top: 14px;
     color: var(--muted);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 700;
 }
 
@@ -1227,7 +1331,6 @@ select {
 
 .refresh-button:hover:not(:disabled),
 .refresh-button:focus-visible {
-    outline: none;
     box-shadow: 0 10px 30px rgba(200, 255, 50, 0.18);
     transform: translateY(-2px);
 }
@@ -1273,7 +1376,7 @@ select {
 .pulse-label {
     display: block;
     color: var(--lime);
-    font-size: 0.55rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -1292,11 +1395,9 @@ select {
 .official-pulse small {
     display: block;
     margin-top: 5px;
-    overflow: hidden;
     color: var(--muted);
-    font-size: 0.58rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 0.6875rem;
+    line-height: 1.35;
 }
 
 .stats-section,
@@ -1305,7 +1406,7 @@ select {
     padding: 38px 42px 0;
 }
 
-.section-heading > div > div {
+.section-heading > div:first-child > div {
     display: grid;
 }
 
@@ -1319,14 +1420,14 @@ select {
 
 .stat-topline small {
     color: var(--muted);
-    font-size: 0.55rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
 }
 
 .stat-primary .stat-topline small {
-    color: rgba(11, 4, 16, 0.55);
+    color: rgba(11, 4, 16, 0.68);
 }
 
 .engine-grid {
@@ -1339,7 +1440,7 @@ select {
 .engine-grid span {
     padding: 6px 7px;
     color: var(--aqua);
-    font-size: 0.56rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     text-align: center;
     border: 1px solid rgba(57, 241, 255, 0.19);
@@ -1353,7 +1454,7 @@ select {
 
 .fixture-source {
     color: var(--aqua);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.12em;
 }
@@ -1381,7 +1482,7 @@ select {
 .fixture-card-top {
     padding-bottom: 10px;
     color: var(--muted);
-    font-size: 0.54rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.04em;
     border-bottom: 1px solid var(--line);
@@ -1412,7 +1513,7 @@ select {
     margin-top: 2px;
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.52rem;
+    font-size: 0.6875rem;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1429,7 +1530,7 @@ select {
     flex: 0 0 auto;
     padding: 4px 6px;
     color: var(--paper);
-    font-size: 0.48rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.08);
@@ -1438,7 +1539,7 @@ select {
 .fdr-1,
 .fdr-2 { color: #07120b; background: var(--lime); }
 .fdr-3 { color: #07120b; background: #d1d6dc; }
-.fdr-4 { background: #d83273; }
+.fdr-4 { background: #c92a69; } /* 4.9:1 with white text */
 .fdr-5 { background: #7d123d; }
 
 .rail-loading {
@@ -1512,7 +1613,7 @@ select {
 .squad-mode-button small {
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1527,7 +1628,7 @@ select {
     width: 30px;
     height: 30px;
     color: var(--lime);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 950;
     border: 1px solid rgba(200, 255, 50, 0.28);
     border-radius: 9px;
@@ -1568,7 +1669,7 @@ select {
 
 .team-rating-form label {
     color: var(--aqua);
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.11em;
     text-transform: uppercase;
@@ -1577,7 +1678,7 @@ select {
 .team-rating-form small {
     margin-top: 7px;
     color: var(--muted);
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     line-height: 1.35;
 }
 
@@ -1637,7 +1738,7 @@ select {
 .team-rating-note,
 .team-rating-error {
     padding: 11px 20px;
-    font-size: 0.6rem;
+    font-size: 0.6875rem;
     line-height: 1.5;
     border: 1px solid var(--line);
     border-top: 0;
@@ -1709,7 +1810,7 @@ select {
 .rating-score span {
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.53rem;
+    font-size: 0.6875rem;
     font-weight: 900;
 }
 
@@ -1719,7 +1820,7 @@ select {
 
 .rating-kicker {
     color: var(--lime);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1743,12 +1844,12 @@ select {
     display: block;
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
 }
 
 .rating-team-copy small {
     color: var(--aqua);
-    font-size: 0.55rem;
+    font-size: 0.6875rem;
 }
 
 .rating-metrics {
@@ -1777,7 +1878,7 @@ select {
 .rating-metrics small {
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.5rem;
+    font-size: 0.6875rem;
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1806,7 +1907,7 @@ select {
 .insight-label {
     display: inline-flex;
     padding: 5px 8px;
-    font-size: 0.5rem;
+    font-size: 0.6875rem;
     font-weight: 950;
     letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -1829,7 +1930,7 @@ select {
     margin-top: 12px;
     padding-left: 16px;
     color: #d2c8da;
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     line-height: 1.45;
 }
 
@@ -1842,11 +1943,11 @@ select {
 }
 
 .view-button {
-    min-height: 36px;
-    padding: 7px 10px;
+    min-height: 44px;
+    padding: 7px 12px;
     cursor: pointer;
     color: var(--muted);
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     border: 0;
     border-radius: 7px;
@@ -1869,12 +1970,15 @@ select {
 
 .pitch {
     min-height: 700px;
-    --squad-card-gap: clamp(7px, 1.4vw, 16px);
-    --squad-card-width: 152px;
-    --squad-card-height: 112px;
+    container: pitch / inline-size;
 }
 
+/* Cards size from the pitch itself, not the viewport, so five always fit a
+   line in any layout: (pitch width − four gaps) / 5, capped at 152px. */
 .formation-line {
+    --squad-card-gap: clamp(4px, 1.6cqi, 16px);
+    --squad-card-width: min(152px, calc((100cqi - 4 * var(--squad-card-gap)) / 5));
+    --squad-card-height: 120px;
     gap: var(--squad-card-gap);
 }
 
@@ -1894,7 +1998,7 @@ select {
     width: fit-content;
     margin: 0 auto 5px;
     color: var(--plum-600);
-    font-size: 0.47rem;
+    font-size: 0.55rem;
     font-weight: 950;
     letter-spacing: 0.1em;
 }
@@ -1904,7 +2008,7 @@ select {
     flex: 0 0 16px;
     height: 16px;
     color: white;
-    font-size: 0.47rem;
+    font-size: 0.52rem;
     border-radius: 5px;
     background: var(--plum-900);
     place-items: center;
@@ -1930,7 +2034,7 @@ select {
     min-width: 0;
     overflow: hidden;
     color: #635969;
-    font-size: 0.54rem;
+    font-size: 0.6rem;
     font-weight: 850;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1957,7 +2061,188 @@ select {
     place-items: center;
 }
 
+/* A manager's bench sits in its own band below the XI, in substitution
+   order, so it never reads as part of the starting lineup. */
+.pitch-bench {
+    position: relative;
+    z-index: 2;
+    margin-top: 20px;
+    padding: 10px 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 18px;
+    background: rgba(0, 24, 14, 0.5);
+}
+
+.pitch-bench .formation-line {
+    margin-bottom: 0;
+}
+
+.formation-bench .player-card:not(.captain):not(.vice) {
+    background: linear-gradient(155deg, rgba(229, 234, 231, 0.96), rgba(204, 214, 208, 0.9));
+}
+
+/* Pitch tiers follow the pitch's own width (container queries), so the same
+   rules hold in the scout view, the team rating view and any future layout. */
+@container pitch (max-width: 619px) {
+    .formation-line {
+        --squad-card-height: 104px;
+    }
+
+    .player-card {
+        padding: 8px 5px 34px;
+    }
+
+    .card-position {
+        display: none;
+    }
+
+    .fixture {
+        margin-top: 3px;
+        margin-bottom: 4px;
+    }
+
+    .card-bottom {
+        right: 5px;
+        bottom: 7px;
+        left: 5px;
+    }
+
+    .card-price {
+        font-size: 0.56rem;
+    }
+
+    .expected-points {
+        min-width: 42px;
+        padding-right: 4px;
+        padding-left: 4px;
+        font-size: 0.65rem;
+    }
+}
+
+/* Phone pitch: each card becomes a compact token. Club and opponent switch
+   to official three-letter codes so the fixture survives at 320px, price
+   moves to the player sheet, and the xPts pill spans the card's foot. */
+@container pitch (max-width: 439px) {
+    .position-label {
+        margin-bottom: 5px;
+        padding: 3px 8px;
+        font-size: 0.55rem;
+        letter-spacing: 0.14em;
+    }
+
+    .formation-line {
+        --squad-card-gap: 3px;
+        min-height: 0;
+        align-items: stretch;
+        margin-bottom: 9px;
+    }
+
+    .pitch-bench {
+        margin-top: 12px;
+        padding: 7px 4px 8px;
+        border-radius: 14px;
+    }
+
+    .player-card {
+        display: flex;
+        height: auto;
+        min-height: 0;
+        flex-direction: column;
+        align-items: center;
+        padding: 11px 3px 4px;
+        border-radius: 10px;
+    }
+
+    .player-card::before {
+        right: 24%;
+        left: 24%;
+        height: 2px;
+    }
+
+    .card-price,
+    .label-full {
+        display: none;
+    }
+
+    .label-code {
+        display: inline;
+    }
+
+    .player-name {
+        --name-size: clamp(0.6rem, 3.15cqi, 0.78rem);
+        width: 100%;
+        margin: 0 0 2px;
+    }
+
+    .team-name {
+        width: 100%;
+        font-size: clamp(0.55rem, 2.5cqi, 0.62rem);
+        letter-spacing: 0.06em;
+    }
+
+    .fixture {
+        width: 100%;
+        gap: 2px;
+        margin: 3px 0 5px;
+        color: #4f4657;
+        font-size: clamp(0.58rem, 2.7cqi, 0.68rem);
+        font-weight: 800;
+    }
+
+    .fixture .label-code {
+        display: block;
+        min-width: 0;
+    }
+
+    .fixture b {
+        flex-basis: 13px;
+        height: 13px;
+        font-size: 0.5rem;
+        border-radius: 4px;
+    }
+
+    .card-bottom {
+        position: static;
+        width: 100%;
+        margin-top: auto;
+        justify-content: center;
+    }
+
+    .card-bottom .expected-points {
+        flex: 1 1 auto;
+    }
+
+    .expected-points {
+        min-width: 0;
+        padding: 4px 2px;
+        font-size: clamp(0.6875rem, 3.25cqi, 0.82rem);
+        border-radius: 7px;
+    }
+
+    .expected-points::after {
+        display: none;
+    }
+
+    .role-badge {
+        top: -8px;
+        right: -4px;
+        width: 19px;
+        height: 19px;
+        font-size: 0.52rem;
+        border-radius: 6px;
+    }
+
+    .card-alert {
+        top: -7px;
+        left: -4px;
+        width: 17px;
+        height: 17px;
+        font-size: 0.5rem;
+    }
+}
+
 .table-shell {
+    container: squad-table / inline-size;
     overflow-x: auto;
     border: 1px solid var(--line);
     border-radius: 20px;
@@ -1980,7 +2265,7 @@ select {
 
 .squad-table th {
     color: var(--muted);
-    font-size: 0.56rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -2007,6 +2292,11 @@ select {
     background: rgba(200, 255, 50, 0.055);
 }
 
+/* Inside the table frame an outer ring would be clipped at its edges. */
+.squad-row:focus-visible {
+    outline-offset: -3px;
+}
+
 .table-player {
     display: flex;
     align-items: center;
@@ -2025,7 +2315,7 @@ select {
 .table-player small {
     margin-top: 3px;
     color: var(--muted);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
 }
 
 .table-rank {
@@ -2033,7 +2323,7 @@ select {
     flex: 0 0 30px;
     height: 30px;
     color: var(--lime);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     border: 1px solid rgba(200, 255, 50, 0.2);
     border-radius: 8px;
@@ -2046,7 +2336,7 @@ select {
     display: inline-flex;
     align-items: center;
     width: fit-content;
-    font-size: 0.52rem;
+    font-size: 0.6875rem;
     font-weight: 900;
     border-radius: 6px;
 }
@@ -2083,6 +2373,81 @@ select {
 .status-pill.doubtful i { background: #ffc83d; }
 .status-pill.unavailable i { background: var(--pink); }
 .table-xpts { color: var(--lime); font-size: 0.9rem; }
+.table-role.bench { color: var(--paper); background: rgba(255, 255, 255, 0.16); }
+.table-flag { font-weight: 900; }
+.table-flag.doubtful { color: #ffc83d; }
+.table-flag.unavailable { color: var(--pink); }
+
+/* The list fits its frame instead of scrolling sideways past xPts, the
+   number that matters. Below the full table's 810px, position and any
+   availability flag move under the name; on a phone it drops to player,
+   fixture and xPts, with price and ownership one tap away in the sheet. */
+@container squad-table (max-width: 809px) {
+    .squad-table {
+        min-width: 0;
+    }
+
+    .squad-table th:nth-child(2),
+    .squad-table td:nth-child(2),
+    .squad-table th:nth-child(6),
+    .squad-table td:nth-child(6) {
+        display: none;
+    }
+
+    .table-player .label-full {
+        display: none;
+    }
+
+    .table-player .label-code {
+        display: inline;
+    }
+}
+
+@container squad-table (max-width: 599px) {
+    .squad-table th:nth-child(4),
+    .squad-table td:nth-child(4),
+    .squad-table th:nth-child(5),
+    .squad-table td:nth-child(5) {
+        display: none;
+    }
+
+    .squad-table th,
+    .squad-table td {
+        padding: 12px 10px;
+    }
+
+    .squad-table th:first-child,
+    .squad-table td:first-child {
+        padding-left: 14px;
+    }
+
+    .squad-table th:last-child,
+    .squad-table td:last-child {
+        padding-right: 14px;
+        text-align: right;
+    }
+
+    .squad-table td:nth-child(3) {
+        white-space: nowrap;
+    }
+
+    .squad-table .label-full {
+        display: none;
+    }
+
+    .squad-table .label-code {
+        display: inline;
+    }
+
+    .table-player {
+        gap: 9px;
+    }
+
+    .table-rank {
+        flex-basis: 26px;
+        height: 26px;
+    }
+}
 
 .dialog-heading {
     display: flex;
@@ -2095,7 +2460,7 @@ select {
     flex: 0 0 46px;
     height: 46px;
     color: var(--ink-950);
-    font-size: 0.65rem;
+    font-size: 0.6875rem;
     font-weight: 950;
     border-radius: 13px;
     background: var(--lime);
@@ -2110,7 +2475,7 @@ select {
     margin-top: 14px;
     padding: 11px 12px;
     color: #ffc4df;
-    font-size: 0.68rem;
+    font-size: 0.6875rem;
     line-height: 1.45;
     border: 1px solid rgba(255, 79, 167, 0.25);
     border-radius: 10px;
@@ -2120,7 +2485,7 @@ select {
 .dialog-source {
     margin-top: 16px;
     color: var(--muted);
-    font-size: 0.58rem;
+    font-size: 0.6875rem;
     line-height: 1.45;
     text-align: center;
 }
@@ -2187,19 +2552,6 @@ select {
     .pitch {
         min-height: 620px;
         padding: 28px 20px;
-        --squad-card-gap: 7px;
-        --squad-card-width: min(124px, calc(20% - 5.6px));
-        --squad-card-height: 112px;
-    }
-
-    .formation-line {
-        min-height: var(--squad-card-height);
-        gap: var(--squad-card-gap);
-    }
-
-    .player-card {
-        padding-right: 7px;
-        padding-left: 7px;
     }
 
     .hero-grid {
@@ -2236,22 +2588,6 @@ select {
     .engine-card {
         grid-column: span 2;
     }
-
-    .squad-table th:first-child,
-    .squad-table td:first-child {
-        position: sticky;
-        left: 0;
-    }
-
-    .squad-table th:first-child {
-        z-index: 3;
-        background: #160b1e;
-    }
-
-    .squad-table td:first-child {
-        z-index: 2;
-        background: #120818;
-    }
 }
 
 /* Small tablet */
@@ -2265,7 +2601,7 @@ select {
     }
 
     .hero-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 26px;
     }
 
@@ -2288,41 +2624,6 @@ select {
         justify-content: flex-end;
     }
 
-    .pitch {
-        --squad-card-gap: 3px;
-        --squad-card-width: calc(20% - 2.4px);
-        --squad-card-height: 104px;
-    }
-
-    .player-card {
-        padding: 8px 5px 34px;
-    }
-
-    .card-position {
-        display: none;
-    }
-
-    .fixture {
-        margin-top: 3px;
-        margin-bottom: 4px;
-    }
-
-    .card-bottom {
-        right: 5px;
-        bottom: 7px;
-        left: 5px;
-    }
-
-    .card-price {
-        font-size: 0.48rem;
-    }
-
-    .expected-points {
-        min-width: 42px;
-        padding-right: 4px;
-        padding-left: 4px;
-        font-size: 0.65rem;
-    }
 }
 
 /* Mobile */
@@ -2360,7 +2661,7 @@ select {
     .season-chip {
         gap: 6px;
         padding: 8px 9px;
-        font-size: 0.55rem;
+        font-size: 0.6875rem;
     }
 
     .topbar-actions > a {
@@ -2368,7 +2669,7 @@ select {
     }
 
     .hero-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 24px;
         margin-top: 48px;
     }
@@ -2500,14 +2801,34 @@ select {
     }
 
     .squad-mode-picker {
-        grid-template-columns: 1fr;
         gap: 7px;
         margin-bottom: 14px;
     }
 
     .squad-mode-button {
-        min-height: 70px;
-        padding: 12px 13px;
+        grid-template-columns: auto minmax(0, 1fr);
+        min-height: 54px;
+        gap: 9px;
+        padding: 10px 11px;
+        border-radius: 14px;
+    }
+
+    .squad-mode-button small,
+    .mode-arrow {
+        display: none;
+    }
+
+    .mode-number {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+    }
+
+    /* The squad is the product: on a phone, decorative proof chips and the
+       engine card give way so the pitch starts sooner. */
+    .hero-proof,
+    .engine-card {
+        display: none;
     }
 
     .team-rating-form {
@@ -2563,27 +2884,31 @@ select {
     }
 
     .squad-heading {
+        flex-wrap: wrap;
         align-items: flex-start;
         gap: 14px;
     }
 
     .squad-tools {
-        flex-direction: column;
-        align-items: flex-end;
+        width: 100%;
+        justify-content: space-between;
     }
 
     .formation-chip {
         padding: 7px 9px;
-        font-size: 0.56rem;
+        font-size: 0.6875rem;
+        white-space: nowrap;
     }
 
+    /* Every pixel goes to the cards: the pitch runs edge to edge on phones. */
     .pitch {
-        min-height: 555px;
-        padding: 25px 8px;
-        border-radius: 20px;
-        --squad-card-gap: 3px;
-        --squad-card-width: calc(20% - 2.4px);
-        --squad-card-height: clamp(86px, 24vw, 100px);
+        min-height: 0;
+        margin-right: -17px;
+        margin-left: -17px;
+        padding: 22px 6px 18px;
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0;
         background:
             linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)) 50% 50% / 100% 2px no-repeat,
             radial-gradient(circle at 50% 50%, transparent 0 47px, rgba(255, 255, 255, 0.22) 48px 49px, transparent 50px),
@@ -2591,77 +2916,12 @@ select {
     }
 
     .pitch::before {
-        inset: 9px;
+        inset: 8px;
     }
 
-    .position-label {
-        margin-bottom: 5px;
-        padding: 4px 8px;
-        font-size: 0.48rem;
-    }
-
-    .formation-line {
-        min-height: var(--squad-card-height);
-        gap: var(--squad-card-gap);
-        margin-bottom: 10px;
-    }
-
-    .player-card {
-        flex-basis: var(--squad-card-width);
-        width: var(--squad-card-width);
-        min-width: var(--squad-card-width);
-        max-width: var(--squad-card-width);
-        height: var(--squad-card-height);
-        min-height: var(--squad-card-height);
-        padding: 8px 4px 31px;
-        border-radius: 11px;
-    }
-
-    .card-position,
-    .card-price {
-        display: none;
-    }
-
-    .player-name {
-        margin-bottom: 3px;
-        font-size: clamp(0.54rem, 2.5vw, 0.66rem);
-    }
-
-    .team-name {
-        font-size: 0.48rem;
-    }
-
-    .fixture {
-        gap: 2px;
-        margin: 4px 0 6px;
-        font-size: 0.44rem;
-    }
-
-    .expected-points {
-        min-width: 38px;
-        padding: 4px 5px;
-        font-size: 0.62rem;
-        border-radius: 7px;
-    }
-
-    .expected-points::after {
-        display: none;
-    }
-
-    .card-bottom {
-        right: 4px;
-        bottom: 6px;
-        left: 4px;
-        justify-content: center;
-    }
-
-    .role-badge {
-        top: -7px;
-        right: -4px;
-        width: 20px;
-        height: 20px;
-        font-size: 0.5rem;
-        border-radius: 6px;
+    .pitch::after {
+        width: 96px;
+        height: 40px;
     }
 
     .loading,
@@ -2710,11 +2970,6 @@ select {
         margin-top: 13px;
     }
 
-    .player-card {
-        padding-right: 2px;
-        padding-left: 2px;
-    }
-
     .refresh-button {
         width: 44px;
         min-width: 44px;
@@ -2723,15 +2978,6 @@ select {
 
     .refresh-button span {
         display: none;
-    }
-
-    .team-name,
-    .fixture span {
-        display: none;
-    }
-
-    .fixture {
-        justify-content: center;
     }
 }
 
@@ -2810,6 +3056,10 @@ select {
 }
 
 .report-button {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
     padding: 11px 18px;
     color: var(--paper);
     font-size: 0.7rem;
@@ -2825,7 +3075,6 @@ select {
 
 .report-button:hover,
 .report-button:focus-visible {
-    outline: none;
     border-color: rgba(200, 255, 50, 0.4);
     background: rgba(255, 255, 255, 0.09);
 }
@@ -2857,7 +3106,7 @@ select {
 
 .report-stats dt {
     color: var(--muted);
-    font-size: 0.62rem;
+    font-size: 0.6875rem;
     font-weight: 850;
     letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -2872,9 +3121,12 @@ select {
     line-height: 1;
 }
 
-.report-stats small {
+.report-stats .report-stat-note {
+    margin: 0;
     color: var(--muted);
-    font-size: 0.63rem;
+    font-weight: 400;
+    font-variant-numeric: normal;
+    font-size: 0.6875rem;
     line-height: 1.4;
 }
 
@@ -2966,7 +3218,6 @@ select {
 }
 
 .faq-item {
-    padding: 16px 20px;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
     background: rgba(255, 255, 255, 0.03);
@@ -2979,11 +3230,15 @@ select {
     background: rgba(200, 255, 50, 0.04);
 }
 
+/* The padding lives on the summary, so the whole card header is the
+   tap target rather than only the question's line of text. */
 .faq-item summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 14px;
+    padding: 16px 20px;
+    border-radius: var(--radius-md);
     color: var(--paper);
     font-size: 0.85rem;
     font-weight: 800;
@@ -3018,8 +3273,12 @@ select {
     transform: rotate(180deg);
 }
 
+.faq-item[open] summary {
+    padding-bottom: 10px;
+}
+
 .faq-item p {
-    margin-top: 10px;
+    padding: 0 20px 16px;
     color: var(--muted);
     font-size: 0.79rem;
     line-height: 1.62;
@@ -3037,7 +3296,23 @@ select {
         padding: 28px 18px 28px;
     }
 
-    .faq-item {
+    .faq-item summary {
         padding: 14px 16px;
     }
+
+    .faq-item[open] summary {
+        padding-bottom: 10px;
+    }
+
+    .faq-item p {
+        padding: 0 16px 14px;
+    }
+}
+
+/* Keyboard focus is always visible: a lime ring just outside the control.
+   It sits last so base rules that clear the outline cannot hide it; the
+   hero link and retry button draw their own rings. */
+:focus-visible {
+    outline: 2px solid var(--lime);
+    outline-offset: 3px;
 }

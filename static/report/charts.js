@@ -691,6 +691,49 @@
 
     /* ---------- boot ---------- */
 
+    /* Wide figures, tables and code blocks scroll sideways on a phone. Each
+       one that actually overflows becomes a labelled keyboard stop, so it can
+       be scrolled without a pointer; on wider screens, where nothing
+       overflows, they stay out of the tab order. */
+    var SCROLLERS = ".diagram, .chart-scroll, .table-wrap, pre";
+
+    // Named after the figure, the table caption, or the nearest heading
+    // above; repeats are numbered so each region has a unique name.
+    function scrollerLabel(el) {
+        var figure = el.closest("figure");
+        var title = figure && figure.querySelector(".fig-title");
+        if (title) return title.textContent.trim() + " chart";
+        var caption = el.querySelector("caption");
+        if (caption && caption.textContent.trim()) return caption.textContent.trim();
+        var section = el.closest("section");
+        var heading = null;
+        if (section) {
+            section.querySelectorAll("h2, h3").forEach(function (h) {
+                if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) heading = h;
+            });
+        }
+        var kind = el.matches(".diagram") ? "diagram" : el.matches("pre") ? "code" : "table";
+        return (heading ? heading.textContent.trim() + " " : "") + kind;
+    }
+
+    function keyboardScrollers() {
+        var seen = {};
+        document.querySelectorAll(SCROLLERS).forEach(function (el) {
+            if (el.scrollWidth > el.clientWidth + 1) {
+                var label = scrollerLabel(el);
+                seen[label] = (seen[label] || 0) + 1;
+                if (seen[label] > 1) label += " " + seen[label];
+                el.tabIndex = 0;
+                el.setAttribute("role", "region");
+                el.setAttribute("aria-label", label + ", scrolls sideways");
+            } else {
+                el.removeAttribute("tabindex");
+                el.removeAttribute("role");
+                el.removeAttribute("aria-label");
+            }
+        });
+    }
+
     function boot() {
         holdoutChart();
         cvChart();
@@ -701,6 +744,18 @@
         importanceChart();
         positionChart();
         fillTables();
+        keyboardScrollers();
+        // Tables inside collapsed <details> only overflow once opened.
+        document.addEventListener("toggle", keyboardScrollers, true);
+        var pending = false;
+        window.addEventListener("resize", function () {
+            if (pending) return;
+            pending = true;
+            window.requestAnimationFrame(function () {
+                pending = false;
+                keyboardScrollers();
+            });
+        });
     }
 
     if (document.readyState === "loading") {

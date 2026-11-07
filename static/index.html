@@ -180,6 +180,7 @@
                         OpenFPL Scout AI Team uses machine learning and live FPL data to predict player points, then
                         optimises a complete 15-man squad with captain and vice-captain for the next Gameweek.
                     </p>
+                    <a class="hero-cta" href="#squad">See this Gameweek's AI squad <span aria-hidden="true">↓</span></a>
                     <div class="hero-proof" aria-label="How the FPL scout works">
                         <span><i aria-hidden="true"></i> Form &amp; minutes</span>
                         <span>Official FPL data</span>
@@ -281,8 +282,8 @@
                 <div class="stats-grid" id="stats-grid">
                     <article class="stat-card stat-primary">
                         <div class="stat-topline"><span class="stat-icon">xPts</span><small>01</small></div>
-                        <div class="stat-value" id="total-points" aria-label="Projected Gameweek points">—</div>
-                        <div class="stat-label">Projected Gameweek points</div>
+                        <div class="stat-value" id="total-points" aria-label="Projected Gameweek points: best starting XI plus captain">—</div>
+                        <div class="stat-label">Projected Gameweek points · best XI + captain</div>
                     </article>
                     <article class="stat-card">
                         <div class="stat-topline"><span class="stat-icon crown-icon">C</span><small
@@ -312,26 +313,10 @@
                 </div>
             </section>
 
-            <section class="fixture-section" aria-label="Premier League fixtures and difficulty">
-                <div class="section-heading">
-                    <div>
-                        <span class="section-index">03</span>
-                        <div>
-                            <h2>Premier League fixtures &amp; FDR</h2>
-                            <small>Kick-off, home or away, and official Fixture Difficulty Rating at a glance</small>
-                        </div>
-                    </div>
-                    <span class="fixture-source">OFFICIAL / FIXTURES</span>
-                </div>
-                <div class="fixture-rail" id="fixture-rail">
-                    <div class="rail-loading">Loading Premier League fixtures…</div>
-                </div>
-            </section>
-
-            <section class="squad-section" aria-label="AI FPL squad selection">
+            <section class="squad-section" id="squad" aria-label="AI FPL squad selection">
                 <div class="section-heading squad-heading">
                     <div>
-                        <span class="section-index">04</span>
+                        <span class="section-index">03</span>
                         <div>
                             <h2>AI squad selection</h2>
                             <small id="squad-subtitle">15 picks, captain and vice-captain for the selected
@@ -447,6 +432,22 @@
                 </div>
             </section>
 
+            <section class="fixture-section" aria-label="Premier League fixtures and difficulty">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-index">04</span>
+                        <div>
+                            <h2>Premier League fixtures &amp; FDR</h2>
+                            <small>Kick-off, home or away, and official Fixture Difficulty Rating at a glance</small>
+                        </div>
+                    </div>
+                    <span class="fixture-source">OFFICIAL / FIXTURES</span>
+                </div>
+                <div class="fixture-rail" id="fixture-rail" tabindex="0" role="region" aria-label="Premier League fixtures, scrolls sideways">
+                    <div class="rail-loading">Loading Premier League fixtures…</div>
+                </div>
+            </section>
+
             <section class="report-section" aria-label="Technical report">
                 <div class="section-heading">
                     <div>
@@ -481,22 +482,22 @@
                         <div>
                             <dt>Holdout RMSE</dt>
                             <dd>1.92</dd>
-                            <small>points per player-gameweek</small>
+                            <dd class="report-stat-note">points per player-gameweek</dd>
                         </div>
                         <div>
                             <dt>Rank correlation</dt>
                             <dd>0.70</dd>
-                            <small>mean Spearman ρ, all 38 GWs</small>
+                            <dd class="report-stat-note">mean Spearman ρ, all 38 GWs</dd>
                         </div>
                         <div>
                             <dt>Squad points</dt>
                             <dd>70.6</dd>
-                            <small>per GW vs 56.0 for FPL's xP</small>
+                            <dd class="report-stat-note">per GW vs 56.0 for FPL's xP</dd>
                         </div>
                         <div>
                             <dt>Gameweeks won</dt>
                             <dd>31/38</dd>
-                            <small>against a 5-GW form squad</small>
+                            <dd class="report-stat-note">against a 5-GW form squad</dd>
                         </div>
                     </dl>
                 </div>

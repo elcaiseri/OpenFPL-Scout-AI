@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
@@ -138,6 +140,13 @@ app = FastAPI(
     **_documentation_config(IS_PRODUCTION),
 )
 
+# The app's ~800-player list is ~540KB of JSON and gzips to ~45KB; on a phone
+# that download used to hold up the squad prediction.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Python 3.9's built-in table lacks .woff2, so StaticFiles would serve the
+# display font as text/plain.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 

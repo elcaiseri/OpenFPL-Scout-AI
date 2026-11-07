@@ -89,6 +89,22 @@ main section:first-of-type {
         radial-gradient(700px 380px at 88% 0%, rgba(57, 241, 255, 0.09), transparent 60%);
 }
 
+.back-link {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    margin: -20px 0 12px;
+    color: var(--ink-2);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.back-link:hover,
+.back-link:focus-visible {
+    color: var(--lime);
+}
+
 .eyebrow {
     font-size: 12px;
     letter-spacing: 0.16em;
@@ -654,8 +670,9 @@ details.data-table .table-wrap {
     border-left-color: var(--bad);
 }
 
+/* --bad is a border colour; as small text on the panel it read at 3.5:1. */
 .note.limit .label {
-    color: var(--bad);
+    color: #ff6b5b;
 }
 
 /* ---------- Two-column ---------- */
@@ -678,8 +695,12 @@ details.data-table .table-wrap {
     padding: 18px 20px;
 }
 
-.card h4 {
-    margin-top: 0;
+/* Card titles are h3 for a correct outline but keep the smaller look. */
+.card h3 {
+    margin: 0 0 6px;
+    color: var(--ink);
+    font-size: 15px;
+    letter-spacing: normal;
 }
 
 .card p:last-child,
@@ -695,6 +716,11 @@ details.data-table .table-wrap {
     border-radius: var(--radius);
     padding: 20px;
     margin: 24px 0 8px;
+}
+
+.diagram {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .diagram svg {
@@ -768,6 +794,12 @@ footer a {
 @media (max-width: 640px) {
     .wrap {
         padding: 0 18px;
+    }
+
+    /* Scaled to a phone, the diagrams' labels fell to 4-5px; at 760px they
+       stay near 10px and scroll sideways, as the charts already do. */
+    .diagram svg {
+        min-width: 760px;
     }
 
     figure {

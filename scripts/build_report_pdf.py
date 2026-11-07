@@ -111,6 +111,7 @@ main section:first-of-type { border-top: 0; padding-top: 0; }
 h2.sec { font-size: 19pt; page-break-after: avoid; }
 h3 { font-size: 12pt; page-break-after: avoid; margin-top: 7mm; }
 h4 { font-size: 10pt; page-break-after: avoid; }
+.card h3 { font-size: 10pt; margin-top: 0; }
 p, li { max-width: none; }
 p.intro { font-size: 10.5pt; }
 

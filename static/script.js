@@ -26,8 +26,12 @@ const appState = {
     ratingData: null,
     dashboardCache: new Map(),
     ratingCache: new Map(),
+    eventsCache: null,
+    eventsTimestamp: 0,
     referenceCache: null,
     referenceTimestamp: 0,
+    teamCodes: new Map(),
+    pitchWidth: 0,
     countdownTimer: null
 };
 
@@ -63,6 +67,56 @@ const utils = {
             Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Forward: 'FWD'
         };
         return positions[value] || '—';
+    },
+
+    // Official three-letter club codes (LIV, MCI…) keep fixtures legible on a
+    // phone-width pitch; an unmapped club falls back to its first letters.
+    teamCode(name) {
+        const label = String(name ?? '').trim();
+        if (!label) return '—';
+        return appState.teamCodes.get(label.toLowerCase())
+            || label.replace(/[^a-z]/gi, '').slice(0, 3).toUpperCase() || '—';
+    },
+
+    // Double gameweeks join opponents as "Arsenal / Chelsea", and mark each
+    // venue when they differ: "Arsenal (H) / Chelsea (A)".
+    opponentCode(label) {
+        if (!label || label === 'TBC') return 'TBC';
+        return String(label).split(' / ').map(part => {
+            const match = part.match(/^(.*?)\s*\((H|A)\)$/);
+            return match ? `${this.teamCode(match[1])} (${match[2]})` : this.teamCode(part);
+        }).join(' / ');
+    },
+
+    // The points a squad can actually score, as the team rating's AI benchmark
+    // counts them (src/team_rating.py): the highest-projected legal XI — one
+    // goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards — plus the
+    // armband, which doubles its top projection. Null without a legal XI.
+    bestLineupPoints(players) {
+        const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
+        players.forEach(player => {
+            byPosition[this.positionCode(player)]?.push(Math.max(0, this.number(player.expected_points, 0)));
+        });
+        Object.values(byPosition).forEach(points => points.sort((a, b) => b - a));
+        let best = null;
+        for (let defenders = 3; defenders <= 5; defenders += 1) {
+            for (let midfielders = 2; midfielders <= 5; midfielders += 1) {
+                const forwards = 10 - defenders - midfielders;
+                if (forwards < 1 || forwards > 3) continue;
+                const counts = { GK: 1, DEF: defenders, MID: midfielders, FWD: forwards };
+                if (Object.entries(counts).some(([code, count]) => byPosition[code].length < count)) continue;
+                const lineup = Object.entries(counts).flatMap(([code, count]) => byPosition[code].slice(0, count));
+                const base = lineup.reduce((sum, points) => sum + points, 0);
+                if (best === null || base > best.base) best = { base, captain: Math.max(...lineup) };
+            }
+        }
+        return best && best.base + best.captain;
+    },
+
+    // A published FPL pick carries its slot: 1–11 start, 12–15 are the bench
+    // in substitution order. Scout picks carry no slot.
+    isBench(player) {
+        return this.number(player.pick_position, 0) > 11;
     },
 
     // A double gameweek with a home and an away match has no single venue;
@@ -156,6 +210,8 @@ const utils = {
     clearCache() {
         appState.dashboardCache.clear();
         appState.ratingCache.clear();
+        appState.eventsCache = null;
+        appState.eventsTimestamp = 0;
         appState.referenceCache = null;
         appState.referenceTimestamp = 0;
     }
@@ -199,18 +255,31 @@ const dom = new Proxy({}, {
 });
 
 const dataLoader = {
+    // The season's gameweeks are small and decide which squad to ask for, so
+    // start-up waits for them alone; the ~800-player list then downloads
+    // alongside the squad prediction instead of ahead of it.
+    async loadEvents(force = false) {
+        const fresh = appState.eventsCache
+            && Date.now() - appState.eventsTimestamp < CONFIG.cacheExpiry;
+        if (fresh && !force) return appState.eventsCache;
+        const payload = await utils.fetchJson(CONFIG.endpoints.events);
+        appState.eventsCache = payload.results || [];
+        appState.eventsTimestamp = Date.now();
+        return appState.eventsCache;
+    },
+
     async loadReferenceData(force = false) {
         const fresh = appState.referenceCache
             && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
         if (fresh && !force) return appState.referenceCache;
 
-        const [eventsPayload, playersPayload, statusPayload] = await Promise.all([
-            utils.fetchJson(CONFIG.endpoints.events),
+        const [events, playersPayload, statusPayload] = await Promise.all([
+            this.loadEvents(force),
             utils.fetchJson(CONFIG.endpoints.players),
             utils.fetchJson(CONFIG.endpoints.eventStatus)
         ]);
         const reference = {
-            events: eventsPayload.results || [],
+            events,
             players: playersPayload.results || [],
             eventStatus: statusPayload.data || {}
         };
@@ -234,6 +303,7 @@ const dataLoader = {
         const byIdentity = new Map(reference.players.map(player => [
             `${player.web_name}|${player.team_name}`.toLowerCase(), player
         ]));
+        this.learnTeamCodes(fixturePayload.results || [], reference.players);
 
         const players = (scout.scout_team || []).map(player => {
             const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
@@ -271,6 +341,21 @@ const dataLoader = {
         const rating = await utils.fetchJson(CONFIG.endpoints.teamRating(entryId, gameweek));
         appState.ratingCache.set(key, rating);
         return rating;
+    },
+
+    // Fixtures carry each club's official short name under the official club
+    // name; players carry the app's canonical club name, so both are mapped.
+    learnTeamCodes(fixtures, players) {
+        const codeById = new Map();
+        fixtures.forEach(fixture => [fixture.home_team, fixture.away_team].forEach(team => {
+            if (!team?.short_name) return;
+            codeById.set(Number(team.id), team.short_name);
+            if (team.name) appState.teamCodes.set(String(team.name).toLowerCase(), team.short_name);
+        }));
+        players.forEach(player => {
+            const code = codeById.get(Number(player.team_id));
+            if (code && player.team_name) appState.teamCodes.set(String(player.team_name).toLowerCase(), code);
+        });
     },
 
     playerFixture(player, fixtures) {
@@ -318,6 +403,8 @@ const playerRenderer = {
         const name = utils.escapeHtml(player.web_name);
         const team = utils.escapeHtml(player.team_name);
         const opponent = utils.escapeHtml(player.opponent_team_name);
+        const teamCode = utils.escapeHtml(utils.teamCode(player.team_name));
+        const opponentCode = utils.escapeHtml(utils.opponentCode(player.opponent_team_name));
         const venue = utils.venueCode(player);
         const roleClass = player.role ? ` ${utils.escapeHtml(player.role)}` : '';
         const availability = player.status_info.className !== 'available'
@@ -331,10 +418,10 @@ const playerRenderer = {
                 ${this.roleBadge(player)}${availability}
                 <div class="card-position">${player.position_code}</div>
                 <div class="player-name">${name}</div>
-                <div class="team-name">${team}</div>
+                <div class="team-name"><span class="label-full">${team}</span><span class="label-code">${teamCode}</span></div>
                 <div class="fixture">
                     ${venue ? `<b>${venue}</b>` : ''}
-                    <span>${opponent}</span>
+                    <span class="label-full">${opponent}</span><span class="label-code">${opponentCode}</span>
                 </div>
                 <div class="card-bottom">
                     <span class="card-price">${utils.money(player.price)}</span>
@@ -350,16 +437,23 @@ const playerRenderer = {
         const role = player.role
             ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
             : '';
+        const bench = utils.isBench(player) ? '<span class="table-role bench">SUB</span>' : '';
+        // On a phone the list drops to player, fixture and xPts, so position,
+        // club code and any availability flag ride under the name instead.
+        const flag = status.className !== 'available'
+            ? ` · <b class="table-flag ${status.className}">${status.label}</b>`
+            : '';
+        const teamCode = utils.escapeHtml(utils.teamCode(player.team_name));
         return `
             <tr class="squad-row" tabindex="0" data-player="${this.dataAttribute(player)}">
                 <td>
                     <div class="table-player">
                         <span class="table-rank">${String(index + 1).padStart(2, '0')}</span>
-                        <span><strong>${utils.escapeHtml(player.web_name)} ${role}</strong><small>${utils.escapeHtml(player.team_name)}</small></span>
+                        <span><strong>${utils.escapeHtml(player.web_name)} ${role}${bench}</strong><small><span class="label-full">${utils.escapeHtml(player.team_name)}</span><span class="label-code">${player.position_code} · ${teamCode}${flag}</span></small></span>
                     </div>
                 </td>
                 <td><span class="position-pill">${player.position_code}</span></td>
-                <td>${venue ? `<strong>${venue}</strong> · ` : ''}${utils.escapeHtml(player.opponent_team_name)}</td>
+                <td>${venue ? `<strong>${venue}</strong> · ` : ''}<span class="label-full">${utils.escapeHtml(player.opponent_team_name)}</span><span class="label-code">${utils.escapeHtml(utils.opponentCode(player.opponent_team_name))}</span></td>
                 <td>${utils.money(player.price)}</td>
                 <td>${utils.percentage(player.selected_by_percent)}</td>
                 <td><span class="status-pill ${status.className}"><i></i>${status.label}</span></td>
@@ -421,7 +515,8 @@ const dashboardRenderer = {
     },
 
     statistics(players) {
-        const total = players.reduce((sum, player) => sum + utils.number(player.expected_points, 0), 0);
+        const total = utils.bestLineupPoints(players)
+            ?? players.reduce((sum, player) => sum + utils.number(player.expected_points, 0), 0);
         const value = players.reduce((sum, player) => sum + utils.number(player.price, 0), 0);
         const captain = players.find(player => player.role === 'captain');
         const differentialCount = players.filter(player => {
@@ -470,9 +565,17 @@ const dashboardRenderer = {
         if (!Array.isArray(players) || !players.length) {
             throw new Error('The AI engine returned no squad players');
         }
+        // A manager's published squad has a starting XI and an ordered bench;
+        // the scout squad has neither, so all 15 picks take the pitch.
+        const hasLineup = players.every(player => utils.number(player.pick_position, 0) >= 1);
+        const starters = hasLineup ? players.filter(player => !utils.isBench(player)) : players;
+        const bench = hasLineup
+            ? players.filter(player => utils.isBench(player))
+                .sort((a, b) => utils.number(a.pick_position, 0) - utils.number(b.pick_position, 0))
+            : [];
         const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
         const grouped = Object.fromEntries(positionOrder.map(position => [position, []]));
-        players.forEach(player => {
+        starters.forEach(player => {
             const position = player.position || player.element_type;
             if (grouped[position]) grouped[position].push(player);
         });
@@ -480,7 +583,7 @@ const dashboardRenderer = {
             (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
         ));
 
-        dom.pitch.innerHTML = positionOrder.map(position => {
+        const lines = positionOrder.map(position => {
             const group = grouped[position];
             if (!group.length) return '';
             const positionClass = position.toLowerCase();
@@ -488,8 +591,15 @@ const dashboardRenderer = {
                 <div class="position-label position-${positionClass}">${position}</div>
                 <div class="formation-line formation-${positionClass}">${group.map(player => playerRenderer.card(player)).join('')}</div>`;
         }).join('');
+        const benchLine = bench.length ? `
+            <div class="pitch-bench">
+                <div class="position-label position-bench">Bench</div>
+                <div class="formation-line formation-bench">${bench.map(player => playerRenderer.card(player)).join('')}</div>
+            </div>` : '';
+        dom.pitch.innerHTML = lines + benchLine;
         dom.pitch.classList.remove('fade-in');
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
+        this.fitNames();
 
         const ranked = [...players].sort(
             (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
@@ -497,9 +607,41 @@ const dashboardRenderer = {
         dom.tableBody.innerHTML = ranked.map((player, index) =>
             playerRenderer.tableRow(player, index)
         ).join('');
-        dom.formationChip.textContent = positionOrder.map(position => grouped[position].length).join(' • ');
+        const counts = positionOrder.map(position => grouped[position].length);
+        if (hasLineup) {
+            dom.formationChip.textContent = counts.slice(1).join('-');
+            dom.formationChip.title = 'Starting formation: defenders-midfielders-forwards';
+        } else {
+            dom.formationChip.textContent = counts.join(' • ');
+            dom.formationChip.title = 'Squad by position: goalkeepers • defenders • midfielders • forwards';
+        }
         dom.squadSubtitle.textContent = options.subtitle
             || `${players.length} picks · tap a player for xPts, price and ownership`;
+    },
+
+    // Long names (Alexander-Arnold, Van de Ven) first wrap at a space or
+    // hyphen, then shrink to fit their card, before falling back to an
+    // ellipsis. A Range measures the text, since scrollWidth rounds to whole
+    // pixels and misses centred text that overflows to the left.
+    fitNames() {
+        const range = document.createRange();
+        const textWidth = name => {
+            range.selectNodeContents(name);
+            return range.getBoundingClientRect().width;
+        };
+        dom.pitch.querySelectorAll('.player-name').forEach(name => {
+            name.classList.remove('wrapped');
+            name.style.removeProperty('--name-fit');
+            const room = name.clientWidth;
+            if (!room) return;
+            let ratio = room / textWidth(name);
+            if (ratio >= 1) return;
+            if (ratio < 0.86 && /[\s-]/.test(name.textContent.trim())) {
+                name.classList.add('wrapped');
+                ratio = room / textWidth(name);
+            }
+            if (ratio < 1) name.style.setProperty('--name-fit', Math.max(0.72, ratio * 0.97).toFixed(3));
+        });
     },
 
     loading(message = 'Projecting the Gameweek…') {
@@ -518,11 +660,25 @@ const dashboardRenderer = {
             <div class="error" role="alert">
                 <strong>Scout temporarily unavailable</strong>
                 <span>${utils.escapeHtml(message)}</span>
-                <small>Official FPL may be updating. Please try again shortly.</small>
+                <small>Official FPL may be updating. Try again in a moment.</small>
+                <button class="retry-button" type="button" data-retry>Try again</button>
             </div>`;
         dom.fixtureRail.innerHTML = '<div class="rail-loading error-inline">Fixture sync paused.</div>';
         dom.signalState.textContent = 'Retry needed';
         dom.sourceState.textContent = 'Sync paused';
+        // Nothing loaded, so nothing on screen may still describe a squad:
+        // clear the heading, the list and the summary, and show the pitch,
+        // where the error and its retry live.
+        dom.formationChip.textContent = '—';
+        dom.formationChip.removeAttribute('title');
+        dom.squadSubtitle.textContent = 'The AI squad could not load for this Gameweek';
+        dom.tableBody.innerHTML = '';
+        dom.totalPoints.textContent = '—';
+        dom.captainName.textContent = '—';
+        dom.captainPoints.textContent = '— xPts';
+        dom.squadValue.textContent = '—';
+        dom.differentialCount.textContent = '—';
+        interactions.switchView('pitch');
     }
 };
 
@@ -713,7 +869,8 @@ const interactions = {
         }
         const status = utils.statusInfo(player.status, player.can_select !== false);
         const role = player.role === 'captain' ? 'Captain'
-            : player.role === 'vice' ? 'Vice captain' : 'Squad';
+            : player.role === 'vice' ? 'Vice captain'
+            : utils.isBench(player) ? 'Bench' : 'Squad';
 
         dom.dialogPositionBadge.textContent = utils.positionCode(player);
         dom.dialogPlayerName.textContent = player.web_name;
@@ -749,11 +906,23 @@ const interactions = {
         });
     },
 
+    // Retry from the error panel. If the season list itself never loaded there
+    // is no Gameweek to reload, so the app starts over.
+    retry() {
+        if (appState.isLoading || appState.isRatingLoading) return;
+        if (!appState.events.length) {
+            app.start();
+            return;
+        }
+        this.refresh();
+    },
+
     async refresh() {
         if (appState.isLoading || appState.isRatingLoading) return;
         dom.refreshButton.classList.add('refreshing');
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
+        appState.eventsCache = null;
         appState.referenceCache = null;
         try {
             await gameweekManager.load(appState.currentGameweek, true);
@@ -764,6 +933,14 @@ const interactions = {
     },
 
     init() {
+        if ('ResizeObserver' in window) {
+            new ResizeObserver(([entry]) => {
+                const width = Math.round(entry.contentRect.width);
+                if (width === appState.pitchWidth) return;
+                appState.pitchWidth = width;
+                dashboardRenderer.fitNames();
+            }).observe(dom.pitch);
+        }
         dom.gameweekSelect.addEventListener('change', utils.debounce(event => {
             const gameweek = Number(event.target.value);
             if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
@@ -795,6 +972,9 @@ const interactions = {
             const target = event.target.closest('[data-player]');
             if (target) this.showPlayer(target);
         });
+        dom.pitch.addEventListener('click', event => {
+            if (event.target.closest('[data-retry]')) this.retry();
+        });
         document.addEventListener('keydown', event => {
             const target = event.target.closest('.squad-row');
             if (target && (event.key === 'Enter' || event.key === ' ')) {
@@ -811,12 +991,15 @@ const interactions = {
 };
 
 const app = {
-    async init() {
+    init() {
         interactions.init();
+        this.start();
+    },
+
+    async start() {
         dashboardRenderer.loading('Checking the official FPL season…');
         try {
-            const reference = await dataLoader.loadReferenceData();
-            appState.events = reference.events;
+            appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = appState.events.find(event => event.is_current)
                 || appState.events.find(event => event.is_next)
