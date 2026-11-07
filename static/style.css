@@ -1,20 +1,5 @@
 /* OpenFPL Scout AI Team — 2026/27 matchday system */
 
-/* Anton (SIL OFL, static/fonts/Anton-OFL.txt) stands in for Impact, which
-   iOS, Android and Linux do not ship; without it the display type falls back
-   to a wide sans-serif and the hero headline outgrows a phone screen. It is
-   only downloaded where Impact is missing. Its one heavy weight covers the
-   whole range so browsers never synthesise a faux bold, and size-adjust
-   scales its 0.859em capitals to Impact's 0.790em, so the tight headline
-   leading and tracking tuned for Impact hold for both. */
-@font-face {
-    font-family: Anton;
-    font-style: normal;
-    font-weight: 100 900;
-    font-display: swap;
-    size-adjust: 92%;
-    src: url("/static/fonts/anton-latin-400.woff2") format("woff2");
-}
 * {
     box-sizing: border-box;
     margin: 0;
@@ -46,7 +31,7 @@
     --radius-lg: 30px;
     --shadow: 0 24px 70px rgba(4, 0, 10, 0.42);
     --font-body: Inter, Aptos, "Segoe UI", Helvetica, Arial, sans-serif;
-    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", Anton, sans-serif;
+    --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
     --ease: 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -222,7 +207,7 @@ select {
 .brand-copy small {
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.19em;
     text-transform: uppercase;
@@ -282,11 +267,10 @@ select {
     font-family: var(--font-display);
     font-size: clamp(4rem, 9vw, 7.8rem);
     font-weight: 900;
-    line-height: 0.82;
-    letter-spacing: -0.02em;
+    line-height: 0.79;
+    letter-spacing: -0.035em;
     text-transform: uppercase;
     text-wrap: balance;
-    overflow-wrap: break-word;
 }
 
 .hero-copy h1 span {
@@ -351,7 +335,7 @@ select {
     min-width: 36px;
     height: 28px;
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     font-weight: 900;
     letter-spacing: 0.08em;
     place-items: center;
@@ -412,7 +396,7 @@ select {
 }
 
 .gameweek-option > span {
-    font-size: 0.6875rem;
+    font-size: 0.52rem;
     font-weight: 900;
     letter-spacing: 0.06em;
 }
@@ -425,7 +409,7 @@ select {
 .gameweek-option > small {
     grid-column: 1 / -1;
     margin-top: 4px;
-    font-size: 0.6875rem;
+    font-size: 0.48rem;
     font-weight: 800;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -456,7 +440,7 @@ select {
     grid-column: 1 / -1;
     padding: 12px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.65rem;
     text-align: center;
 }
 
@@ -615,7 +599,7 @@ select {
     justify-content: center;
     padding: 0 7px;
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.63rem;
     font-weight: 900;
     letter-spacing: 0.08em;
     border: 1px solid rgba(200, 255, 50, 0.28);
@@ -658,7 +642,7 @@ select {
     z-index: 1;
     margin-top: 11px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     font-weight: 700;
 }
 
@@ -878,7 +862,7 @@ select {
     content: " xP";
     margin-left: 3px;
     color: var(--lime);
-    font-size: 0.5rem;
+    font-size: 0.45rem;
     letter-spacing: 0.04em;
 }
 
@@ -1072,7 +1056,7 @@ select {
 
 .dialog-details dt {
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1088,7 +1072,7 @@ select {
 .credits {
     padding: 23px 42px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     line-height: 1.5;
     text-align: center;
     border-top: 1px solid var(--line);
@@ -1145,7 +1129,7 @@ select {
     align-items: center;
     padding: 9px 12px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-decoration: none;
@@ -1211,7 +1195,7 @@ select {
     gap: 7px;
     padding: 7px 10px;
     color: #d9cfdf;
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     font-weight: 800;
     letter-spacing: 0.04em;
     border: 1px solid var(--line);
@@ -1236,17 +1220,6 @@ select {
         linear-gradient(145deg, rgba(200, 255, 50, 0.1), rgba(255, 255, 255, 0.035));
 }
 
-/* At 11px the deadline panel's two labels no longer share a line in its
-   narrow tablet column; each stays whole and the second drops below. */
-.panel-topline {
-    flex-wrap: wrap;
-    row-gap: 6px;
-}
-
-.panel-topline > span {
-    white-space: nowrap;
-}
-
 .panel-topline,
 .panel-foot,
 .stat-topline,
@@ -1260,7 +1233,7 @@ select {
 
 .source-state {
     color: var(--aqua);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 900;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1280,7 +1253,7 @@ select {
 
 .deadline-block span {
     display: block;
-    font-size: 0.6875rem;
+    font-size: 0.56rem;
     font-weight: 900;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1296,7 +1269,7 @@ select {
 .panel-foot {
     margin-top: 14px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 700;
 }
 
@@ -1377,7 +1350,7 @@ select {
 .pulse-label {
     display: block;
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.55rem;
     font-weight: 900;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -1397,8 +1370,7 @@ select {
     display: block;
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.6875rem;
-    line-height: 1.35;
+    font-size: 0.58rem;
 }
 
 .stats-section,
@@ -1421,7 +1393,7 @@ select {
 
 .stat-topline small {
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.55rem;
     font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1441,7 +1413,7 @@ select {
 .engine-grid span {
     padding: 6px 7px;
     color: var(--aqua);
-    font-size: 0.6875rem;
+    font-size: 0.56rem;
     font-weight: 900;
     text-align: center;
     border: 1px solid rgba(57, 241, 255, 0.19);
@@ -1455,7 +1427,7 @@ select {
 
 .fixture-source {
     color: var(--aqua);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 900;
     letter-spacing: 0.12em;
 }
@@ -1483,7 +1455,7 @@ select {
 .fixture-card-top {
     padding-bottom: 10px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.54rem;
     font-weight: 800;
     letter-spacing: 0.04em;
     border-bottom: 1px solid var(--line);
@@ -1514,7 +1486,7 @@ select {
     margin-top: 2px;
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.52rem;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1531,7 +1503,7 @@ select {
     flex: 0 0 auto;
     padding: 4px 6px;
     color: var(--paper);
-    font-size: 0.6875rem;
+    font-size: 0.48rem;
     font-weight: 900;
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.08);
@@ -1614,7 +1586,7 @@ select {
 .squad-mode-button small {
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1629,7 +1601,7 @@ select {
     width: 30px;
     height: 30px;
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 950;
     border: 1px solid rgba(200, 255, 50, 0.28);
     border-radius: 9px;
@@ -1670,7 +1642,7 @@ select {
 
 .team-rating-form label {
     color: var(--aqua);
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     font-weight: 900;
     letter-spacing: 0.11em;
     text-transform: uppercase;
@@ -1679,7 +1651,7 @@ select {
 .team-rating-form small {
     margin-top: 7px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     line-height: 1.35;
 }
 
@@ -1739,7 +1711,7 @@ select {
 .team-rating-note,
 .team-rating-error {
     padding: 11px 20px;
-    font-size: 0.6875rem;
+    font-size: 0.6rem;
     line-height: 1.5;
     border: 1px solid var(--line);
     border-top: 0;
@@ -1811,7 +1783,7 @@ select {
 .rating-score span {
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.53rem;
     font-weight: 900;
 }
 
@@ -1821,7 +1793,7 @@ select {
 
 .rating-kicker {
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 900;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1845,12 +1817,12 @@ select {
     display: block;
     margin-top: 5px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
 }
 
 .rating-team-copy small {
     color: var(--aqua);
-    font-size: 0.6875rem;
+    font-size: 0.55rem;
 }
 
 .rating-metrics {
@@ -1879,7 +1851,7 @@ select {
 .rating-metrics small {
     overflow: hidden;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.5rem;
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1908,7 +1880,7 @@ select {
 .insight-label {
     display: inline-flex;
     padding: 5px 8px;
-    font-size: 0.6875rem;
+    font-size: 0.5rem;
     font-weight: 950;
     letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -1931,7 +1903,7 @@ select {
     margin-top: 12px;
     padding-left: 16px;
     color: #d2c8da;
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     line-height: 1.45;
 }
 
@@ -1948,7 +1920,7 @@ select {
     padding: 7px 12px;
     cursor: pointer;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     font-weight: 900;
     border: 0;
     border-radius: 7px;
@@ -1999,7 +1971,7 @@ select {
     width: fit-content;
     margin: 0 auto 5px;
     color: var(--plum-600);
-    font-size: 0.55rem;
+    font-size: 0.47rem;
     font-weight: 950;
     letter-spacing: 0.1em;
 }
@@ -2009,7 +1981,7 @@ select {
     flex: 0 0 16px;
     height: 16px;
     color: white;
-    font-size: 0.52rem;
+    font-size: 0.47rem;
     border-radius: 5px;
     background: var(--plum-900);
     place-items: center;
@@ -2035,7 +2007,7 @@ select {
     min-width: 0;
     overflow: hidden;
     color: #635969;
-    font-size: 0.6rem;
+    font-size: 0.54rem;
     font-weight: 850;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2109,7 +2081,7 @@ select {
     }
 
     .card-price {
-        font-size: 0.56rem;
+        font-size: 0.48rem;
     }
 
     .expected-points {
@@ -2127,8 +2099,7 @@ select {
     .position-label {
         margin-bottom: 5px;
         padding: 3px 8px;
-        font-size: 0.55rem;
-        letter-spacing: 0.14em;
+        font-size: 0.48rem;
     }
 
     .formation-line {
@@ -2170,15 +2141,14 @@ select {
     }
 
     .player-name {
-        --name-size: clamp(0.6rem, 3.15cqi, 0.78rem);
+        --name-size: clamp(0.54rem, 2.5vw, 0.66rem);
         width: 100%;
         margin: 0 0 2px;
     }
 
     .team-name {
         width: 100%;
-        font-size: clamp(0.55rem, 2.5cqi, 0.62rem);
-        letter-spacing: 0.06em;
+        font-size: 0.48rem;
     }
 
     .fixture {
@@ -2186,8 +2156,7 @@ select {
         gap: 2px;
         margin: 3px 0 5px;
         color: #4f4657;
-        font-size: clamp(0.58rem, 2.7cqi, 0.68rem);
-        font-weight: 800;
+        font-size: 0.44rem;
     }
 
     .fixture .label-code {
@@ -2216,7 +2185,7 @@ select {
     .expected-points {
         min-width: 0;
         padding: 4px 2px;
-        font-size: clamp(0.6875rem, 3.25cqi, 0.82rem);
+        font-size: 0.62rem;
         border-radius: 7px;
     }
 
@@ -2229,7 +2198,7 @@ select {
         right: -4px;
         width: 19px;
         height: 19px;
-        font-size: 0.52rem;
+        font-size: 0.5rem;
         border-radius: 6px;
     }
 
@@ -2266,7 +2235,7 @@ select {
 
 .squad-table th {
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.56rem;
     font-weight: 900;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -2316,7 +2285,7 @@ select {
 .table-player small {
     margin-top: 3px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
 }
 
 .table-rank {
@@ -2324,7 +2293,7 @@ select {
     flex: 0 0 30px;
     height: 30px;
     color: var(--lime);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     font-weight: 900;
     border: 1px solid rgba(200, 255, 50, 0.2);
     border-radius: 8px;
@@ -2337,7 +2306,7 @@ select {
     display: inline-flex;
     align-items: center;
     width: fit-content;
-    font-size: 0.6875rem;
+    font-size: 0.52rem;
     font-weight: 900;
     border-radius: 6px;
 }
@@ -2461,7 +2430,7 @@ select {
     flex: 0 0 46px;
     height: 46px;
     color: var(--ink-950);
-    font-size: 0.6875rem;
+    font-size: 0.65rem;
     font-weight: 950;
     border-radius: 13px;
     background: var(--lime);
@@ -2476,7 +2445,7 @@ select {
     margin-top: 14px;
     padding: 11px 12px;
     color: #ffc4df;
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
     line-height: 1.45;
     border: 1px solid rgba(255, 79, 167, 0.25);
     border-radius: 10px;
@@ -2486,7 +2455,7 @@ select {
 .dialog-source {
     margin-top: 16px;
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.58rem;
     line-height: 1.45;
     text-align: center;
 }
@@ -2662,7 +2631,7 @@ select {
     .season-chip {
         gap: 6px;
         padding: 8px 9px;
-        font-size: 0.6875rem;
+        font-size: 0.55rem;
     }
 
     .topbar-actions > a {
@@ -2897,7 +2866,7 @@ select {
 
     .formation-chip {
         padding: 7px 9px;
-        font-size: 0.6875rem;
+        font-size: 0.56rem;
         white-space: nowrap;
     }
 
@@ -2949,11 +2918,6 @@ select {
 }
 
 @media (max-width: 370px) {
-    /* Keeps "Scout AI Team" on one line beside the season chip. */
-    .brand-copy small {
-        letter-spacing: 0.1em;
-    }
-
     .season-chip {
         max-width: 105px;
         line-height: 1.2;
@@ -3107,7 +3071,7 @@ select {
 
 .report-stats dt {
     color: var(--muted);
-    font-size: 0.6875rem;
+    font-size: 0.62rem;
     font-weight: 850;
     letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -3127,7 +3091,7 @@ select {
     color: var(--muted);
     font-weight: 400;
     font-variant-numeric: normal;
-    font-size: 0.6875rem;
+    font-size: 0.63rem;
     line-height: 1.4;
 }
 

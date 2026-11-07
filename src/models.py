@@ -8,7 +8,7 @@ class ResponseModel(BaseModel):
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
     strategy: str = "model-ensemble"
-    version: str = "6.1.1"
+    version: str = "6.2.0"
     source: str = "official-fpl"
     # True once the deadline has passed: the archived pre-deadline forecast.
     frozen: bool = False
@@ -16,9 +16,7 @@ class ResponseModel(BaseModel):
     # How a frozen forecast was frozen: "deadline" (captured before it) or
     # "after-deadline" (frozen on the gameweek's first recall after it).
     freeze_method: Optional[str] = None
-    credits: str = (
-        "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
-    )
+    credits: str = "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
 
 
 class TeamRatingModel(BaseModel):
@@ -39,7 +37,7 @@ class TeamRatingModel(BaseModel):
     risks: List[str] = Field(default_factory=list)
     squad: List[Dict[str, Any]] = Field(default_factory=list)
     strategy: str = "model-ensemble"
-    version: str = "6.1.1"
+    version: str = "6.2.0"
     source: str = "official-fpl"
     frozen: bool = False
 
