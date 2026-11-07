@@ -1103,6 +1103,7 @@ select {
     color: var(--lime);
     font-weight: 800;
     text-decoration: none;
+    text-underline-offset: 3px;
 }
 
 .credits-author:hover,
