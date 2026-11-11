@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import os
+import pathlib
 import re
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
@@ -147,7 +150,24 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # Python 3.9's built-in table lacks .woff2, so StaticFiles would serve the
 # display font as text/plain.
 mimetypes.add_type("font/woff2", ".woff2")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Sent with the page and every /static file. Without it, browsers guess how
+# long to reuse a file from its Last-Modified date, and a phone could keep a
+# previous deploy's CSS and JS for days beside the new page. A kept copy is
+# still reused, after a quick 304 check against its ETag.
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that browsers check with the server before reusing."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(NO_CACHE_HEADERS)
+        return response
+
+
+app.mount("/static", RevalidatingStaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 
@@ -193,12 +213,36 @@ def _api_catalog():
     return groups
 
 
+# The page links its stylesheet and script by content, so a deploy's page never
+# runs beside an older copy of either that a browser kept from before the
+# no-cache header existed.
+VERSIONED_ASSETS = ("/static/style.css", "/static/script.js")
+
+
+@lru_cache(maxsize=None)
+def _asset_version(path: str) -> str:
+    content = pathlib.Path(path.lstrip("/")).read_bytes()
+    return hashlib.sha256(content).hexdigest()[:12]
+
+
+def _with_asset_versions(page: str) -> str:
+    for path in VERSIONED_ASSETS:
+        try:
+            version = _asset_version(path)
+        except OSError:
+            logger.warning("Could not version %s; linking it unversioned", path)
+            continue
+        page = page.replace(f'"{path}"', f'"{path}?v={version}"')
+    return page
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def serve_index():
     """Serve the OpenFPL web application."""
     try:
         async with aiofiles.open("static/index.html", "r") as file:
-            return HTMLResponse(content=await file.read())
+            page = _with_asset_versions(await file.read())
+        return HTMLResponse(content=page, headers=NO_CACHE_HEADERS)
     except FileNotFoundError as error:
         raise HTTPException(
             status_code=404, detail="static/index.html not found"

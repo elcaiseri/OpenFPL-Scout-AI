@@ -132,6 +132,12 @@ errors and keeps each traceback in a single entry. Set
 `OPENFPL_LOG_FORMAT=text` or `OPENFPL_LOG_FORMAT=json` to choose explicitly;
 local runs default to text.
 
+The page and every `/static` file are sent with `Cache-Control: no-cache`, so
+browsers check for a newer copy (a quick 304 when nothing changed) instead of
+reusing an old deploy's files. The page links `style.css` and `script.js` with
+a content hash (`?v=…`), so a new deploy's page always loads its own stylesheet
+and script.
+
 ## API
 
 The web application and its supporting read endpoints are public. Administrative
