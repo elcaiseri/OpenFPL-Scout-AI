@@ -19,15 +19,67 @@ function deferred() {
     return { promise, resolve };
 }
 
+function abortError() {
+    const error = new Error('Request aborted');
+    error.name = 'AbortError';
+    return error;
+}
+
+// Resolves after `delayMs` unless the request is aborted first.
+function slowResponse(signal, payload, delayMs) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(response(payload)), delayMs);
+        signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(abortError());
+        }, { once: true });
+    });
+}
+
+async function until(predicate) {
+    while (!predicate()) await new Promise(resolve => setImmediate(resolve));
+}
+
+// Just enough DOM for the dashboard renderer to run.
+function fakeElement() {
+    return {
+        hidden: false, disabled: false, textContent: '', innerHTML: '', value: '', title: '',
+        dataset: {},
+        style: { setProperty() {}, removeProperty() {} },
+        classList: { add() {}, remove() {}, toggle() {} },
+        setAttribute() {}, removeAttribute() {}, addEventListener() {}, focus() {},
+        querySelectorAll: () => []
+    };
+}
+
+function fakeDocument() {
+    const elements = new Map();
+    return {
+        getElementById(id) {
+            if (!elements.has(id)) elements.set(id, fakeElement());
+            return elements.get(id);
+        },
+        querySelectorAll: () => [],
+        createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => ({ width: 0 }) }),
+        addEventListener() {}
+    };
+}
+
 function loadApp(fetch) {
+    const document = fakeDocument();
     const context = vm.createContext({
         fetch, AbortController, TypeError, setTimeout, clearTimeout,
+        // A real deadline countdown interval would keep the test process alive.
+        setInterval: () => 0,
+        clearInterval() {},
+        requestAnimationFrame: () => 0,
         console: { warn() {}, error() {} },
-        document: { addEventListener() {} },
+        document,
         window: {}
     });
     vm.runInContext(source, context);
     const app = context.window.FPLScoutApp;
+    app.document = document;
     app.CONFIG.retryDelayMs = 1;
     app.appState.events = events;
     app.appState.eventsCache = events;
@@ -193,4 +245,102 @@ test('a failed archive POST is not retried and does not reject the UI load', asy
 
     assert.equal(requests, 1);
     assert.equal(app.appState.resultsSyncPromise, null);
+});
+
+test('team rating waits for slow inference instead of timing out', async () => {
+    let requests = 0;
+    const app = loadApp(async (_url, { signal }) => {
+        requests++;
+        return slowResponse(signal, { rating: 70, gameweek: 1 }, 20);
+    });
+    app.CONFIG.requestTimeoutMs = 5;
+
+    // The same delay times out an ordinary read, so the timeout is active.
+    await assert.rejects(app.utils.fetchJson('/api/fpl/gameweeks'), /timed out/);
+    assert.equal(requests, 3);
+
+    requests = 0;
+    const rating = await app.dataLoader.loadTeamRating(1234567, 1);
+    assert.equal(rating.rating, 70);
+    assert.equal(requests, 1);
+});
+
+test('inference reads are not rerun after a server error or timeout', async () => {
+    for (const status of [500, 504]) {
+        let scoutRequests = 0;
+        let ratingRequests = 0;
+        const app = loadApp(async url => {
+            if (url.startsWith('/api/scout?')) {
+                scoutRequests++;
+                return response({ detail: `Scout failed (${status})` }, status);
+            }
+            if (url.startsWith('/api/scout/team-rating')) {
+                ratingRequests++;
+                return response({ detail: `Rating failed (${status})` }, status);
+            }
+            return response({ results: [] });
+        });
+
+        await assert.rejects(app.dataLoader.loadDashboard(1), new RegExp(`Scout failed \\(${status}\\)`));
+        await assert.rejects(app.dataLoader.loadTeamRating(1234567, 1), new RegExp(`Rating failed \\(${status}\\)`));
+        assert.equal(scoutRequests, 1);
+        assert.equal(ratingRequests, 1);
+    }
+});
+
+test('a squad read still recovers from a gateway failure', async () => {
+    let requests = 0;
+    const app = loadApp(async url => {
+        if (!url.startsWith('/api/scout?')) return response({ results: [] });
+        requests++;
+        return requests === 1 ? response({ detail: 'Bad gateway' }, 502) : response(squad);
+    });
+
+    const dashboard = await app.dataLoader.loadDashboard(1);
+
+    assert.equal(requests, 2);
+    assert.equal(dashboard.scout_team[0].id, 1);
+});
+
+test('gameweek controls unlock once the squad shows, and a slower load cannot overwrite a newer one', { timeout: 2000 }, async () => {
+    const firstPlayers = deferred();
+    const firstFixtures = deferred();
+    let playerRequests = 0;
+    const app = loadApp(async url => {
+        if (url.startsWith('/api/scout?')) {
+            const gameweek = Number(new URL(url, 'http://localhost').searchParams.get('gameweek'));
+            return response({ ...squad, gameweek });
+        }
+        if (url === app.CONFIG.endpoints.syncResults) return response({ status: 'throttled' });
+        if (url.startsWith('/api/fpl/players')) {
+            playerRequests++;
+            return playerRequests === 1 ? firstPlayers.promise : response({ results: [] });
+        }
+        if (url === app.CONFIG.endpoints.fixtures(1)) return firstFixtures.promise;
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    });
+    const select = app.document.getElementById('gameweek-select');
+
+    const first = app.gameweekManager.load(1);
+    assert.equal(select.disabled, true);
+
+    // GW1's squad is shown while its player metadata and fixtures still load.
+    await until(() => app.appState.currentData);
+    assert.equal(app.appState.currentData.fixturesLoading, true);
+    assert.equal(app.appState.isLoading, false);
+    assert.equal(select.disabled, false);
+
+    await app.gameweekManager.load(2);
+    assert.equal(app.appState.currentGameweek, 2);
+
+    firstPlayers.resolve(response({ results: [] }));
+    firstFixtures.resolve(response({ results: [] }));
+    await first;
+
+    assert.equal(app.appState.currentGameweek, 2);
+    assert.equal(app.appState.currentData.gameweek, 2);
+    assert.equal(app.appState.isLoading, false);
+    assert.equal(select.disabled, false);
+    assert.equal(app.appState.dashboardCache.get(1).gameweek, 1);
 });

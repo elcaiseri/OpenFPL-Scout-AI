@@ -6,6 +6,12 @@ const CONFIG = {
     requestRetries: 2,
     retryDelayMs: 500,
     requestTimeoutMs: 30000,
+    retryStatuses: [429, 500, 502, 503, 504],
+    // Squad and team-rating reads can run full model inference. They wait as
+    // long as the server takes, and only a gateway or cold-start failure
+    // (502/503) is retried: after a server error (500) or timeout (504) a
+    // retry would rerun the same slow inference.
+    inferenceRequest: { timeoutMs: 0, retryStatuses: [502, 503] },
     endpoints: {
         scout: '/api/scout',
         syncResults: '/api/scout/sync-results',
@@ -22,6 +28,8 @@ const appState = {
     visibleEvents: [],
     currentData: null,
     isLoading: false,
+    // Identifies the newest Gameweek load; an older one may still be finishing.
+    loadToken: 0,
     isRatingLoading: false,
     activeView: 'pitch',
     squadMode: 'scout',
@@ -188,7 +196,11 @@ const utils = {
         };
     },
 
-    async fetchJson(url, { method = 'GET', timeoutMs = CONFIG.requestTimeoutMs } = {}) {
+    async fetchJson(url, {
+        method = 'GET',
+        timeoutMs = CONFIG.requestTimeoutMs,
+        retryStatuses = CONFIG.retryStatuses
+    } = {}) {
         const retries = method === 'GET' ? CONFIG.requestRetries : 0;
         for (let attempt = 0; attempt <= retries; attempt++) {
             const controller = new AbortController();
@@ -213,7 +225,7 @@ const utils = {
                 return payload;
             } catch (error) {
                 const temporary = error instanceof TypeError || error.name === 'AbortError'
-                    || (response && [429, 500, 502, 503, 504].includes(response.status));
+                    || (response && retryStatuses.includes(response.status));
                 if (!temporary || attempt === retries) {
                     if (error.name === 'AbortError') {
                         throw new Error('The FPL request timed out. Please try again.');
@@ -331,7 +343,7 @@ const dataLoader = {
 
         let fixturesAvailable = true;
         const scoutRequest = utils.fetchJson(
-            `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, { timeoutMs: 0 }
+            `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, CONFIG.inferenceRequest
         );
         const detailsRequest = Promise.all([
             this.loadReferenceData(force),
@@ -410,7 +422,9 @@ const dataLoader = {
         if (appState.ratingCache.has(key) && !force) {
             return appState.ratingCache.get(key);
         }
-        const rating = await utils.fetchJson(CONFIG.endpoints.teamRating(entryId, gameweek));
+        const rating = await utils.fetchJson(
+            CONFIG.endpoints.teamRating(entryId, gameweek), CONFIG.inferenceRequest
+        );
         appState.ratingCache.set(key, rating);
         return rating;
     },
@@ -810,15 +824,23 @@ const gameweekManager = {
         });
     },
 
+    setLocked(locked) {
+        appState.isLoading = locked;
+        dom.gameweekSelect.disabled = locked;
+        document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = locked; });
+    },
+
     async load(gameweek, force = false) {
         if (appState.isLoading) return;
-        appState.isLoading = true;
-        dom.gameweekSelect.disabled = true;
-        document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = true; });
+        const token = ++appState.loadToken;
+        const isCurrent = () => token === appState.loadToken;
+        this.setLocked(true);
         dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             let resultsSyncStarted = false;
             const publish = data => {
+                // A newer load owns the screen; this one only fills the cache.
+                if (!isCurrent()) return;
                 appState.currentData = data;
                 appState.currentGameweek = Number(gameweek);
                 this.setActive(gameweek);
@@ -828,19 +850,23 @@ const gameweekManager = {
                     resultsSyncStarted = true;
                     dataLoader.syncResults();
                 }
+                // The squad is on screen. Player metadata and fixtures may
+                // still be loading, but the Gameweek can already be changed
+                // or refreshed.
+                this.setLocked(false);
             };
             const data = await dataLoader.loadDashboard(gameweek, force, publish);
+            if (!isCurrent()) return;
             publish(data);
             if (appState.squadMode === 'rating' && appState.ratingEntryId) {
                 await teamRating.rate(appState.ratingEntryId, force);
             }
         } catch (error) {
+            if (!isCurrent()) return;
             console.error('Dashboard load failed:', error);
             dashboardRenderer.error(error.message);
         } finally {
-            appState.isLoading = false;
-            dom.gameweekSelect.disabled = false;
-            document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
+            if (isCurrent()) this.setLocked(false);
         }
     }
 };
