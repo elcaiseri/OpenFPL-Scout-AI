@@ -344,3 +344,48 @@ test('gameweek controls unlock once the squad shows, and a slower load cannot ov
     assert.equal(select.disabled, false);
     assert.equal(app.appState.dashboardCache.get(1).gameweek, 1);
 });
+
+test('a failed Gameweek stays selected, so Try again reloads it instead of the previous squad', async () => {
+    const scoutRequests = [];
+    let secondAvailable = false;
+    const app = loadApp(async url => {
+        if (url.startsWith('/api/scout?')) {
+            const gameweek = Number(new URL(url, 'http://localhost').searchParams.get('gameweek'));
+            scoutRequests.push(gameweek);
+            if (gameweek === 2 && !secondAvailable) return response({ detail: 'No eligible squad' }, 422);
+            return response({ ...squad, gameweek });
+        }
+        if (url === app.CONFIG.endpoints.syncResults) return response({ status: 'throttled' });
+        return response({ results: [] });
+    });
+
+    await app.gameweekManager.load(1);
+    await app.gameweekManager.load(2);
+
+    assert.equal(app.appState.currentGameweek, 2);
+    assert.equal(app.appState.currentData, null);
+    assert.equal(app.document.getElementById('gameweek-select').value, '2');
+    assert.equal(app.document.getElementById('gameweek-info').textContent, 'Gameweek 2');
+
+    secondAvailable = true;
+    await app.interactions.retry();
+
+    assert.deepEqual([...scoutRequests], [1, 2, 2]);
+    assert.equal(app.appState.currentData.gameweek, 2);
+});
+
+test('club codes stay distinct before fixtures teach the official ones', () => {
+    const app = loadApp(async () => response({}));
+
+    assert.equal(app.utils.teamCode('Manchester City'), 'MCI');
+    assert.equal(app.utils.teamCode('Manchester United'), 'MUN');
+    assert.equal(app.utils.opponentCode('Man Utd (H) / Man City (A)'), 'MUN (H) / MCI (A)');
+    // A club the table does not know still gets a readable code.
+    assert.equal(app.utils.teamCode('Coventry'), 'COV');
+
+    app.dataLoader.learnTeamCodes(
+        [{ home_team: { id: 1, name: 'Man City', short_name: 'MC1' }, away_team: null }],
+        [{ team_id: 1, team_name: 'Manchester City' }]
+    );
+    assert.equal(app.utils.teamCode('Manchester City'), 'MC1');
+});

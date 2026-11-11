@@ -23,7 +23,20 @@ OFFICIAL_FPL_API = "https://fantasy.premierleague.com/api"
 
 
 class OfficialFPLAPIError(RuntimeError):
-    """Raised when official FPL data cannot be fetched or validated."""
+    """Raised when official FPL data cannot be fetched or validated.
+
+    ``str(error)`` is returned to API clients and shown in the web app.
+    ``cause`` names what finally failed (a 429, a timeout, invalid JSON) for
+    logs only, since it can repeat library internals.
+    """
+
+    def __init__(self, message: str, cause: Optional[str] = None):
+        super().__init__(message)
+        self.cause = cause
+
+    @property
+    def log_message(self) -> str:
+        return f"{self} ({self.cause})" if self.cause else str(self)
 
 
 class OfficialFPLNotFoundError(OfficialFPLAPIError):
@@ -115,10 +128,10 @@ class OfficialFPLClient:
                 f"/{cache_key}"
             ) from error
         except (requests.RequestException, ValueError) as error:
-            # Retries already ran; say what finally failed (429s, a timeout, a
-            # reset connection, invalid JSON) so the warning is actionable.
+            # Retries already ran; record what finally failed (429s, a timeout,
+            # a reset connection, invalid JSON) so the warning is actionable.
             raise OfficialFPLAPIError(
-                f"Official FPL request failed: {url} ({_failure_cause(error)})"
+                f"Official FPL request failed: {url}", cause=_failure_cause(error)
             ) from error
 
         with self._cache_lock:
@@ -806,7 +819,7 @@ class OfficialFPLClient:
                     logger.warning(
                         "Skipping official history for player %d: %s",
                         player_id,
-                        error,
+                        error.log_message,
                     )
 
         if not summaries:

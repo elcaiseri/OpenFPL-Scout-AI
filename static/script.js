@@ -22,6 +22,20 @@ const CONFIG = {
     }
 };
 
+// FPL's own three-letter codes by official and app club name, so a squad shown
+// before its fixtures load never labels both Manchester clubs "MAN". Codes
+// learned from fixtures win; a club missing here falls back to its letters.
+const CLUB_CODES = new Map(Object.entries({
+    arsenal: 'ARS', 'aston villa': 'AVL', bournemouth: 'BOU', brentford: 'BRE',
+    brighton: 'BHA', burnley: 'BUR', chelsea: 'CHE', 'crystal palace': 'CRY',
+    everton: 'EVE', fulham: 'FUL', ipswich: 'IPS', leeds: 'LEE', leicester: 'LEI',
+    liverpool: 'LIV', luton: 'LUT', 'man city': 'MCI', 'manchester city': 'MCI',
+    'man utd': 'MUN', 'manchester united': 'MUN', newcastle: 'NEW',
+    'newcastle united': 'NEW', "nott'm forest": 'NFO', 'nottingham forest': 'NFO',
+    'sheffield utd': 'SHU', southampton: 'SOU', spurs: 'TOT', tottenham: 'TOT',
+    sunderland: 'SUN', 'west ham': 'WHU', wolves: 'WOL', 'wolverhampton wanderers': 'WOL'
+}));
+
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
     events: [],
@@ -86,7 +100,8 @@ const utils = {
     teamCode(name) {
         const label = String(name ?? '').trim();
         if (!label) return '—';
-        return appState.teamCodes.get(label.toLowerCase())
+        const key = label.toLowerCase();
+        return appState.teamCodes.get(key) || CLUB_CODES.get(key)
             || label.replace(/[^a-z]/gi, '').slice(0, 3).toUpperCase() || '—';
     },
 
@@ -864,6 +879,16 @@ const gameweekManager = {
         } catch (error) {
             if (!isCurrent()) return;
             console.error('Dashboard load failed:', error);
+            // The requested Gameweek stays selected though its squad failed,
+            // so Try again and Refresh reload it, and the Gameweek shown
+            // before can be picked again.
+            appState.currentGameweek = Number(gameweek);
+            appState.currentData = null;
+            this.setActive(gameweek);
+            dashboardRenderer.header({
+                gameweek,
+                event: appState.events.find(event => Number(event.id) === Number(gameweek)) || null
+            });
             dashboardRenderer.error(error.message);
         } finally {
             if (isCurrent()) this.setLocked(false);
@@ -1029,11 +1054,8 @@ const interactions = {
     // is no Gameweek to reload, so the app starts over.
     retry() {
         if (appState.isLoading || appState.isRatingLoading) return;
-        if (!appState.events.length) {
-            app.start();
-            return;
-        }
-        this.refresh();
+        if (!appState.events.length) return app.start();
+        return this.refresh();
     },
 
     async refresh() {
@@ -1143,5 +1165,6 @@ window.FPLScoutApp = {
     dataLoader,
     gameweekManager,
     teamRating,
+    interactions,
     clearCache: utils.clearCache
 };

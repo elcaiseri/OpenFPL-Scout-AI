@@ -435,39 +435,61 @@ class OfficialFPLClientTests(unittest.TestCase):
         session.get = get
         with self.assertRaises(OfficialFPLAPIError) as raised:
             OfficialFPLClient(session=session).regions()
-        return str(raised.exception)
+        return raised.exception
 
-    def test_exhausted_retries_name_their_cause(self):
+    def test_exhausted_retries_name_their_cause_in_logs_only(self):
         def rate_limited(url, timeout):
             raise requests.exceptions.RetryError(
                 "Max retries exceeded with url: /api/regions/ "
                 "(Caused by ResponseError('too many 429 error responses'))"
             )
 
-        message = self.failure(rate_limited)
+        error = self.failure(rate_limited)
 
-        self.assertIn("https://fantasy.premierleague.com/api/regions/", message)
-        self.assertIn("RetryError", message)
-        self.assertIn("too many 429 error responses", message)
+        # API clients and the web app see only which request failed.
+        self.assertEqual(
+            str(error),
+            "Official FPL request failed: https://fantasy.premierleague.com/api/regions/",
+        )
+        self.assertIn("RetryError", error.log_message)
+        self.assertIn("too many 429 error responses", error.log_message)
 
     def test_invalid_json_names_its_cause(self):
         class InvalidJSON(FakeResponse):
             def json(self):
                 raise ValueError("Expecting value: line 1 column 1 (char 0)")
 
-        message = self.failure(lambda url, timeout: InvalidJSON(None))
+        error = self.failure(lambda url, timeout: InvalidJSON(None))
 
-        self.assertIn("ValueError: Expecting value", message)
+        self.assertIn("ValueError: Expecting value", error.cause)
+        self.assertNotIn("Expecting value", str(error))
 
     def test_a_long_cause_is_shortened_to_one_line(self):
         def reset(url, timeout):
             raise requests.ConnectionError("reset\n" + "x" * 1000)
 
-        message = self.failure(reset)
+        message = self.failure(reset).log_message
 
         self.assertNotIn("\n", message)
         self.assertLess(len(message), 400)
         self.assertTrue(message.endswith("...)"))
+
+    def test_skipped_player_history_warning_names_the_cause(self):
+        client = OfficialFPLClient(session=FakeSession({}))
+
+        def fail(path, ttl=None):
+            raise OfficialFPLAPIError(
+                f"Official FPL request failed: /{path}",
+                cause="ReadTimeout: read timed out",
+            )
+
+        client._get_json = fail
+        with self.assertLogs("src.official_fpl", "WARNING") as logs, self.assertRaises(
+            OfficialFPLAPIError
+        ):
+            client._fetch_player_summaries([{"id": 7}])
+
+        self.assertIn("ReadTimeout: read timed out", logs.output[0])
 
 
 if __name__ == "__main__":
