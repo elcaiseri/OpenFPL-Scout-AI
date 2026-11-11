@@ -18,3 +18,8 @@ jobs:
         run: uv sync --locked
       - name: Run tests
         run: uv run python -m unittest discover -s tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run frontend loading tests
+        run: node --test tests/frontend_loading.test.cjs

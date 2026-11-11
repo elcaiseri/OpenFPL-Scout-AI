@@ -1,15 +1,18 @@
-"""OpenFPL Scout API with official FPL data and guarded stat enrichment."""
+"""OpenFPL Scout AI Team API with official FPL data and guarded stat enrichment."""
 
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Mapping, Optional
 
 import aiofiles
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -126,7 +129,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OpenFPL API",
+    title="OpenFPL Scout AI Team API",
     description=(
         "AI-powered FPL Scout using official Fantasy Premier League data with "
         "guarded historical-stat enrichment"
@@ -137,6 +140,13 @@ app = FastAPI(
     **_documentation_config(IS_PRODUCTION),
 )
 
+# The app's ~800-player list is ~540KB of JSON and gzips to ~45KB; on a phone
+# that download used to hold up the squad prediction.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Python 3.9's built-in table lacks .woff2, so StaticFiles would serve the
+# display font as text/plain.
+mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
@@ -246,6 +256,38 @@ async def serve_sitemap() -> Response:
         media_type="application/xml",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+# Browsers, crawlers and iOS request these root paths whatever the page links,
+# so they get the site icon instead of a 404.
+FAVICON_PATH = "assets/favicon.ico"
+APPLE_TOUCH_ICON_PATH = "assets/apple-touch-icon-predictive-lion-frameless.png"
+ICON_CACHE_HEADERS = {"Cache-Control": "public, max-age=604800"}
+APPLE_TOUCH_ICON_VARIANT = re.compile(r"(\d+x\d+)?(-?precomposed)?")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon() -> FileResponse:
+    """Serve the 16-48 px site icon browsers request by default."""
+    return FileResponse(
+        FAVICON_PATH, media_type="image/x-icon", headers=ICON_CACHE_HEADERS
+    )
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def serve_apple_touch_icon() -> FileResponse:
+    """Serve the 180 px home-screen icon iOS requests by default."""
+    return FileResponse(
+        APPLE_TOUCH_ICON_PATH, media_type="image/png", headers=ICON_CACHE_HEADERS
+    )
+
+
+@app.get("/apple-touch-icon-{variant}.png", include_in_schema=False)
+async def serve_apple_touch_icon_variant(variant: str) -> FileResponse:
+    """Serve the same icon for the sized and precomposed names iOS also tries."""
+    if not APPLE_TOUCH_ICON_VARIANT.fullmatch(variant):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await serve_apple_touch_icon()
 
 
 @app.get(
@@ -834,7 +876,9 @@ async def _generate_scout_response(
     gameweek: Optional[int], public=False
 ) -> ResponseModel:
     try:
-        predictions = await run_in_threadpool(scout.get_official_predictions, gameweek)
+        predictions = await run_in_threadpool(
+            scout.get_official_predictions, gameweek, collect_results=not public
+        )
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
@@ -882,6 +926,24 @@ async def generate_public_scout_team(
     return await _generate_scout_response(gameweek, public=True)
 
 
+@app.post(
+    "/api/scout/sync-results",
+    tags=["Scout AI"],
+    summary="Collect official results after displaying a saved squad",
+    operation_id="sync_public_scout_results",
+)
+async def sync_public_scout_results() -> dict[str, str]:
+    """Keep archive work in an active request without delaying the squad.
+
+    Collection retains its archive cooldown. A separate request keeps CPU
+    available on request-billed Cloud Run without awaiting it in the web UI.
+    """
+    result = await run_in_threadpool(
+        scout.data_archive.collect_results, scout.official_client
+    )
+    return {"status": str(result["status"])}
+
+
 @app.get(
     "/api/scout/team-rating",
     response_model=TeamRatingModel,
@@ -912,7 +974,7 @@ async def rate_public_manager_team(
             picks_gameweek,
         )
         predictions = await run_in_threadpool(
-            scout.get_official_predictions, gameweek
+            scout.get_official_predictions, gameweek, collect_results=False
         )
         prediction_gameweek = int(predictions.attrs["gameweek"])
 

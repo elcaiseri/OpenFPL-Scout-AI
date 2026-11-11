@@ -7,8 +7,8 @@
     <meta name="theme-color" content="#12061a">
     <title>How OpenFPL Predicts FPL Points — Technical Report</title>
     <meta name="description"
-        content="How OpenFPL Scout AI forecasts Fantasy Premier League points: data sources, the four-model ensemble, out-of-sample validation on a full held-out season, and the measured limits of the system.">
-    <meta name="author" content="@elcaiseri">
+        content="How OpenFPL Scout AI Team forecasts Fantasy Premier League points: data sources, the four-model ensemble, out-of-sample validation on a full held-out season, and the measured limits of the system.">
+    <meta name="author" content="Islam Kassem">
     <meta name="keywords"
         content="FPL predictions, expected points, xPts, Fantasy Premier League model, machine learning, XGBoost, CatBoost, Ridge, MLP ensemble, backtest, Gameweek, squad selection, captaincy">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
@@ -17,17 +17,17 @@
 
     <meta property="og:title" content="OpenFPL Technical Report">
     <meta property="og:description"
-        content="Data, models, and measured accuracy behind OpenFPL Scout AI — validated on a full held-out Premier League season.">
+        content="Data, models, and measured accuracy behind OpenFPL Scout AI Team — validated on a full held-out Premier League season.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://openfpl.kassem.dev/static/report/index.html">
     <meta property="og:locale" content="en_GB">
-    <meta property="og:site_name" content="OpenFPL Scout">
+    <meta property="og:site_name" content="OpenFPL Scout AI Team">
     <meta property="og:image"
         content="https://openfpl.kassem.dev/assets/openfpl-predictive-lion-frameless-2026-512.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="How OpenFPL Predicts FPL Points — Technical Report">
     <meta name="twitter:description"
-        content="Data, models, and measured accuracy behind OpenFPL Scout AI — validated on a full held-out Premier League season.">
+        content="Data, models, and measured accuracy behind OpenFPL Scout AI Team — validated on a full held-out Premier League season.">
     <meta name="twitter:creator" content="@elcaiseri">
 
     <link rel="stylesheet" href="style.css">
@@ -36,10 +36,11 @@
 <body>
     <header class="masthead">
         <div class="wrap">
+            <a class="back-link" href="/">← Back to the app</a>
             <p class="eyebrow">Technical Report · Version 6.0.0</p>
             <h1>How OpenFPL<br>Picks a Squad</h1>
             <p class="lede">
-                OpenFPL Scout AI forecasts Fantasy Premier League points for every player and builds a legal
+                OpenFPL Scout AI Team forecasts Fantasy Premier League points for every player and builds a legal
                 15-player squad for the coming Gameweek. This report documents what the system is trained on,
                 how it is validated, exactly how accurate it proved to be on a season it was not trained on,
                 and the places where it is known to be weak.
@@ -237,7 +238,7 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Training corpus</h4>
+                    <h3>Training corpus</h3>
                     <ul>
                         <li><strong>2023/24</strong> — 29,725 rows</li>
                         <li><strong>2024/25</strong> — 27,605 rows</li>
@@ -247,7 +248,7 @@
                         <strong>29,747</strong> holdout rows.</p>
                 </div>
                 <div class="card">
-                    <h4>Feature construction</h4>
+                    <h3>Feature construction</h3>
                     <p>Every match statistic is replaced by that player's mean over their <strong>previous
                             five matches</strong>, shifted so the match being predicted never contributes to
                         its own inputs. Five categorical fields — position, player, club, opponent, and
@@ -604,7 +605,7 @@
                     <p class="fig-sub">Holdout players grouped into ten equal buckets by forecast, then plotted
                         against what they actually scored.</p>
                 </div>
-                <div class="chart-scroll" id="fig-calib"></div>
+                <div class="chart-scroll fixed-min" id="fig-calib"></div>
                 <figcaption>
                     <b>Reading this:</b> the relationship is monotonic — every decile scored more than the one
                     below it, which is precisely the property a ranking system needs. The curve tracks the
@@ -803,17 +804,17 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Starting XI — 80 points</h4>
+                    <h3>Starting XI — 80 points</h3>
                     <p>Your eleven starters' combined forecast, divided by the best legal XI the AI can build
                         from its own benchmark squad, capped at 1.0 and scaled to 80.</p>
                 </div>
                 <div class="card">
-                    <h4>Captaincy — 10 points</h4>
+                    <h3>Captaincy — 10 points</h3>
                     <p>Your captain's forecast divided by the AI benchmark captain's forecast, capped at 1.0
                         and scaled to 10.</p>
                 </div>
                 <div class="card">
-                    <h4>Availability — 10 points</h4>
+                    <h3>Availability — 10 points</h3>
                     <p>The share of your eleven starters currently flagged as available, scaled to 10. Injured
                         or suspended starters score zero here.</p>
                 </div>
@@ -928,38 +929,38 @@
 
             <div class="cols">
                 <div class="card">
-                    <h4>Individual scores carry real error</h4>
+                    <h3>Individual scores carry real error</h3>
                     <p>RMSE 1.92 against an actual standard deviation of 2.35 means roughly 33% of the variance
                         in FPL points is explained and two-thirds is not. A single goal is worth 4–6 points and
                         arrives largely at random. Use the ordering; do not read a 5.2 forecast as a prediction
                         of five points.</p>
                 </div>
                 <div class="card">
-                    <h4>Gameweek 1 is a heuristic</h4>
+                    <h3>Gameweek 1 is a heuristic</h3>
                     <p>With no current-season history the models are bypassed for an ownership-and-availability
                         ranking. That is a crowd-following prior, not a forecast, and it inherits whatever the
                         crowd gets wrong. The app is serving this path right now.</p>
                 </div>
                 <div class="card">
-                    <h4>No budget, transfers, or chips</h4>
+                    <h3>No budget, transfers, or chips</h3>
                     <p>Selection ignores price entirely and models no transfer cost, bench order, automatic
                         substitution, or chip strategy. The squad is a shortlist, not a directly playable team.</p>
                 </div>
                 <div class="card">
-                    <h4>Defenders are the weak spot</h4>
+                    <h3>Defenders are the weak spot</h3>
                     <p>Highest RMSE of any position at 2.11, and systematically under-forecast — a mean
                         prediction of 1.01 against 1.24 actual. Clean sheets are binary events the model reads
                         conservatively.</p>
                 </div>
                 <div class="card">
-                    <h4>New players have thin history</h4>
+                    <h3>New players have thin history</h3>
                     <p>Features are five-match rolling means. A summer signing, a promoted-club player, or
                         anyone returning from long injury has little or no usable history, and player identity
                         is itself a significant model input. Early-season forecasts for unfamiliar names are
                         the least trustworthy the system produces.</p>
                 </div>
                 <div class="card">
-                    <h4>Rotation and news are not modelled</h4>
+                    <h3>Rotation and news are not modelled</h3>
                     <p>Nothing ingests press conferences, manager comments, or rotation risk beyond official
                         availability flags and rolling minutes. A rested starter looks identical to a
                         guaranteed one until FPL flags them.</p>
@@ -1071,7 +1072,7 @@ uv run python -m scripts.collect_official_fpl --gameweek 39</code></pre>
     <footer>
         <div class="wrap">
             <p>
-                <strong style="color:var(--ink)">OpenFPL Scout AI</strong> · Technical report for version 6.0.0
+                <strong style="color:var(--ink)">OpenFPL Scout AI Team</strong> · Technical report for version 6.0.0
                 · Models trained 14 August 2026 · Report generated 16 August 2026.
             </p>
             <p>
@@ -1087,7 +1088,7 @@ uv run python -m scripts.collect_official_fpl --gameweek 39</code></pre>
             </p>
             <p>
                 <a href="/">Back to the app</a> · <a href="/api">API catalogue</a> · <a href="/redoc">API
-                    reference</a> · @elcaiseri, 2026
+                    reference</a> · <a href="https://kassem.dev/" rel="author">Islam Kassem</a>, 2026
             </p>
         </div>
     </footer>

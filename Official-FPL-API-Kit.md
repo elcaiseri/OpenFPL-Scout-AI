@@ -112,6 +112,7 @@ publishes them for the active season.
 | Method and route | Authentication | Options |
 |---|---|---|
 | `GET /api/scout` | Public | Optional `gameweek` |
+| `POST /api/scout/sync-results` | Public | Collect archived results after displaying a saved squad; throttled to once per five minutes |
 | `GET /api/scout/team-rating` | Public | Required `entry_id` and `gameweek` |
 | `POST /api/scout` | OpenFPL bearer token | Optional `gameweek` |
 | `GET /api/gw/scout` | OpenFPL bearer token | Required `gameweek` |

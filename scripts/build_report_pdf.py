@@ -44,7 +44,7 @@ PRINT_CSS = """
     margin: 16mm 14mm 18mm;
     background: var(--bg);
     @bottom-left {
-        content: "OpenFPL Scout AI — Technical Report v6.0.0";
+        content: "OpenFPL Scout AI Team — Technical Report v6.0.0";
         font-family: var(--font-body);
         font-size: 8pt;
         color: #7b6e88;
@@ -111,6 +111,7 @@ main section:first-of-type { border-top: 0; padding-top: 0; }
 h2.sec { font-size: 19pt; page-break-after: avoid; }
 h3 { font-size: 12pt; page-break-after: avoid; margin-top: 7mm; }
 h4 { font-size: 10pt; page-break-after: avoid; }
+.card h3 { font-size: 10pt; margin-top: 0; }
 p, li { max-width: none; }
 p.intro { font-size: 10.5pt; }
 

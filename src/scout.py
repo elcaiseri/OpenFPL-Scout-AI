@@ -733,7 +733,9 @@ class FPLScout:
         logger.info("Loaded %d records", len(data))
         return self.predict_players(data, gameweek=gameweek)
 
-    def get_official_predictions(self, gameweek: Optional[int] = None) -> pd.DataFrame:
+    def get_official_predictions(
+        self, gameweek: Optional[int] = None, *, collect_results: bool = True
+    ) -> pd.DataFrame:
         """Generate predictions from official history plus guarded enrichment.
 
         Once a gameweek's deadline has passed, the archived pre-deadline
@@ -752,10 +754,10 @@ class FPLScout:
                 resolved_gameweek,
                 frozen.attrs.get("forecast_captured_at"),
             )
-            # Inference is what normally archives results; keep collecting
-            # them (throttled), even after the final deadline. This runs in the
-            # request because Cloud Run throttles CPU between requests.
-            self.data_archive.collect_results(self.official_client)
+            # The web UI collects results in a separate request after rendering
+            # this forecast. Other callers retain synchronous collection.
+            if collect_results:
+                self.data_archive.collect_results(self.official_client)
             return frozen
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)

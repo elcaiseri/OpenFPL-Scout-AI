@@ -1,8 +1,8 @@
-# OpenFPL Scout API
+# OpenFPL Scout AI Team API
 
-Version: 6.0.0
+Version: 6.2.0
 
-OpenFPL Scout generates player projections and a positional 15-player squad.
+OpenFPL Scout AI Team generates player projections and a positional 15-player squad.
 The public official Fantasy Premier League API remains the authoritative
 runtime source. From GW2, missing match-stat inputs can be filled by guarded
 FPL Data enrichment when the exact configured season is available.
@@ -53,6 +53,13 @@ Authorization: Bearer <API_TOKEN>
 Set comma-separated server tokens in `VALID_API_KEYS`.
 For local development, `.env` is loaded automatically without overriding any
 variables already supplied by the process or deployment environment.
+
+The public `POST /api/scout/sync-results` collects official match results into
+the archive and returns a `status` (`saved`, `throttled`, `disabled`, or
+`failed`). The dashboard starts it after displaying a saved squad; its
+five-minute cooldown limits repeated collection. Public squad and team-rating
+reads do not wait for this collection. Live predictions still archive their
+inputs and forecasts before returning.
 
 ## API tags and endpoints
 
@@ -175,12 +182,12 @@ its venue (`"Chelsea (H) / Tottenham (A)"`).
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "6.0.0",
+  "version": "6.2.0",
   "source": "official-fpl+fpl-data",
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",
   "freeze_method": "deadline",
-  "credits": "OpenFPL Scout AI | Official FPL + FPL Data when available | @elcaiseri, 2026"
+  "credits": "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
 }
 ```
 

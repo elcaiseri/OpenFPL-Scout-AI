@@ -13,6 +13,8 @@ from main import (
     app,
     get_player_predictions,
     rate_public_manager_team,
+    generate_public_scout_team,
+    sync_public_scout_results,
 )
 from src.models import PlayerPointsModel
 
@@ -54,7 +56,7 @@ class FakeRatingScout:
     def __init__(self):
         self.official_client = FakeRatingOfficialClient()
 
-    def get_official_predictions(self, gameweek):
+    def get_official_predictions(self, gameweek, *, collect_results=True):
         positions = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 1, 2, 3, 4]
         predictions = pd.DataFrame(
             [
@@ -82,8 +84,10 @@ class FakeRatingScout:
 class DepartedPlayerRatingScout(FakeRatingScout):
     """Player 5 is no longer selectable, so the model has no projection."""
 
-    def get_official_predictions(self, gameweek):
-        predictions = super().get_official_predictions(gameweek)
+    def get_official_predictions(self, gameweek, *, collect_results=True):
+        predictions = super().get_official_predictions(
+            gameweek, collect_results=collect_results
+        )
         trimmed = predictions.loc[predictions["id"] != 5].reset_index(drop=True)
         trimmed.attrs = predictions.attrs
         return trimmed
@@ -96,8 +100,10 @@ class VenueScout(FakeRatingScout):
         super().__init__()
         self.data_archive = SimpleNamespace(capture_squad=lambda *args: None)
 
-    def get_official_predictions(self, gameweek):
-        predictions = super().get_official_predictions(gameweek)
+    def get_official_predictions(self, gameweek, *, collect_results=True):
+        predictions = super().get_official_predictions(
+            gameweek, collect_results=collect_results
+        )
         predictions["was_home"] = pd.Series(
             [True, False, None, None, *[True] * 11], dtype=object
         )
@@ -105,6 +111,27 @@ class VenueScout(FakeRatingScout):
 
 
 class APISchemaTests(unittest.TestCase):
+    def test_public_squad_does_not_wait_for_results_collection(self):
+        scout = VenueScout()
+        with patch("main.scout", scout, create=True), patch.object(
+            scout, "get_official_predictions", wraps=scout.get_official_predictions
+        ) as predictions:
+            result = asyncio.run(generate_public_scout_team(gameweek=1))
+
+        predictions.assert_called_once_with(1, collect_results=False)
+        self.assertEqual(len(result.scout_team), 15)
+
+    def test_results_sync_collects_inside_its_own_public_request(self):
+        scout = SimpleNamespace(official_client=object(), data_archive=object())
+        with patch("main.scout", scout, create=True), patch.object(
+            scout, "data_archive"
+        ) as archive:
+            archive.collect_results.return_value = {"status": "throttled"}
+            result = asyncio.run(sync_public_scout_results())
+
+        archive.collect_results.assert_called_once_with(scout.official_client)
+        self.assertEqual(result, {"status": "throttled"})
+
     def test_venue_filter_skips_players_without_a_single_venue(self):
         with patch("main.scout", VenueScout(), create=True):
             home, away = (
@@ -167,6 +194,7 @@ class APISchemaTests(unittest.TestCase):
             "/api/health",
             "/api/gameweeks",
             "/api/scout",
+            "/api/scout/sync-results",
             "/api/scout/team-rating",
             "/api/gw/scout",
             "/api/gw/playerpoints",
@@ -235,6 +263,7 @@ class APISchemaTests(unittest.TestCase):
                 ("GET", "/api/fpl/fixtures"),
                 ("GET", "/api/fpl/gameweeks/status"),
                 ("GET", "/api/scout"),
+                ("POST", "/api/scout/sync-results"),
                 ("GET", "/api/scout/team-rating"),
             },
         )

@@ -1,6 +1,6 @@
-# OpenFPL Scout AI
+# OpenFPL Scout AI Team
 
-<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI logo" width="160">
+<img src="assets/openfpl-predictive-lion-frameless-2026-512.png" alt="OpenFPL Scout AI Team logo" width="160">
 
 OpenFPL predicts Fantasy Premier League player points and selects a complete
 15-player squad for each Gameweek. It combines live official FPL data with a
@@ -52,6 +52,7 @@ Run the test suite with:
 
 ```bash
 uv run python -m unittest discover -s tests
+node --test tests/frontend_loading.test.cjs
 ```
 
 Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
@@ -125,6 +126,12 @@ Increase memory only if Cloud Monitoring reports pressure or out-of-memory
 restarts. Use a minimum instance only when lower cold-start latency is worth
 the idle charge.
 
+On Cloud Run (detected by `K_SERVICE`), application logs are one JSON object
+per line with a `severity` field, so Cloud Logging can filter warnings and
+errors and keeps each traceback in a single entry. Set
+`OPENFPL_LOG_FORMAT=text` or `OPENFPL_LOG_FORMAT=json` to choose explicitly;
+local runs default to text.
+
 ## API
 
 The web application and its supporting read endpoints are public. Administrative
@@ -133,6 +140,7 @@ and extended data routes require `Authorization: Bearer <token>`.
 ```bash
 curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
 curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek=1"
+curl -X POST "https://openfpl.kassem.dev/api/scout/sync-results"
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
@@ -149,6 +157,13 @@ curl -H "Authorization: Bearer <token>" \
 
 See [Docs.md](Docs.md) for authentication and response details, or the
 [Official FPL API Kit](Official-FPL-API-Kit.md) for the complete route map.
+
+The dashboard shows saved squads before collecting archived match results.
+After rendering a frozen squad it starts `POST /api/scout/sync-results`
+without waiting for it; collection retains the archive's five-minute cooldown
+and finishes inside that HTTP request, so request-based Cloud Run CPU remains
+available. Temporary read failures retry twice, and unavailable player metadata
+or fixtures do not hide an otherwise valid squad.
 
 ## Models and data
 
@@ -250,6 +265,10 @@ uv run python -m scripts.download_fpl_data \
 | `static/` | Responsive dashboard |
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |
+
+## Author
+
+Built by [Islam Kassem](https://kassem.dev/), Senior AI/ML Engineer in Riyadh ([GitHub](https://github.com/elcaiseri) · [LinkedIn](https://www.linkedin.com/in/elcaiseri) · [Kaggle](https://www.kaggle.com/elcaiseri)).
 
 ## License
 
