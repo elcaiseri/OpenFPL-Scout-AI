@@ -443,3 +443,17 @@ test('start-up requests the next deadline squad and keeps the finished Gameweek 
     assert.equal(app.appState.currentData.gameweek, 11);
     assert.deepEqual(app.appState.visibleEvents.map(event => event.id), [10, 11, 12]);
 });
+
+test('the hero buttons open the squad section in their own mode', () => {
+    const app = loadApp(async () => response({}));
+    const panel = app.document.getElementById('team-rating-panel');
+    assert.equal(app.appState.squadMode, 'scout');
+
+    app.interactions.openSquadMode('rating');
+    assert.equal(app.appState.squadMode, 'rating');
+    assert.equal(panel.hidden, false);
+
+    app.interactions.openSquadMode('scout');
+    assert.equal(app.appState.squadMode, 'scout');
+    assert.equal(panel.hidden, true);
+});

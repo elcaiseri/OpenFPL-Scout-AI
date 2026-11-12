@@ -1064,6 +1064,12 @@ const interactions = {
         });
     },
 
+    // A hero button opens the squad section in its mode: the AI squad, or the
+    // team-ID form (which takes focus). Already in that mode, nothing reloads.
+    openSquadMode(mode) {
+        if (appState.squadMode !== mode) teamRating.setMode(mode);
+    },
+
     // Retry from the error panel. If the season list itself never loaded there
     // is no Gameweek to reload, so the app starts over.
     retry() {
@@ -1112,6 +1118,10 @@ const interactions = {
         });
         document.querySelectorAll('.squad-mode-button').forEach(button => {
             button.addEventListener('click', () => teamRating.setMode(button.dataset.squadMode));
+        });
+        // The hero's two buttons pick the squad mode, then follow their #squad link.
+        document.querySelectorAll('[data-squad-mode-link]').forEach(link => {
+            link.addEventListener('click', () => this.openSquadMode(link.dataset.squadModeLink));
         });
         dom.teamRatingForm.addEventListener('submit', event => {
             event.preventDefault();
