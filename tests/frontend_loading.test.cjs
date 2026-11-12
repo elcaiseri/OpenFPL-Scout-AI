@@ -392,20 +392,20 @@ test('club codes stay distinct before fixtures teach the official ones', () => {
     assert.equal(app.utils.teamCode('Manchester City'), 'MC1');
 });
 
-test('the app opens on the next deadline, as the API default does', () => {
+test('the app opens on a live Gameweek, and on the next deadline once it finishes', () => {
     const app = loadApp(async () => response({}));
     const opening = list => app.gameweekManager.openingGameweek(list).id;
 
+    // Matches still in play: the live Gameweek.
+    assert.equal(opening([
+        { id: 10, is_current: true, finished: false },
+        { id: 11, is_next: true }
+    ]), 10);
     // International break: GW10 is current and finished, GW11's deadline is next.
     assert.equal(opening([
         { id: 10, is_current: true, finished: true },
         { id: 11, is_next: true },
         { id: 12 }
-    ]), 11);
-    // Matches still in play: the next deadline is the one a manager can act on.
-    assert.equal(opening([
-        { id: 10, is_current: true, finished: false },
-        { id: 11, is_next: true }
     ]), 11);
     // Pre-season and after the final deadline.
     assert.equal(opening([{ id: 1, is_next: true }, { id: 2 }]), 1);
