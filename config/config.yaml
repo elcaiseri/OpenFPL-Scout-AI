@@ -111,24 +111,24 @@ models:
     #weight: 0.15414759722009633
 
   xgboost:
-    version: "2026-10-08-tuned"
-    last_trained: "October 8, 2026"
+    version: "2026-11-12-refitted"
+    last_trained: "November 12, 2026"
     path: "models/xgboost_reg.pkl"
     year: 2026-2027
     #weight: 0.2621678786738037
 
   catboost:
-    version: "2026-10-08-tuned"
-    last_trained: "October 8, 2026"
+    version: "2026-11-12-refitted"
+    last_trained: "November 12, 2026"
     path: "models/catboost_reg.pkl"
     year: 2026-2027
     #weight: 0.31261567631493004
 
   mlp:
-    version: "2026-10-08-tuned"
-    last_trained: "October 8, 2026"
+    version: "2026-11-12-refitted"
+    last_trained: "November 12, 2026"
     path: "models/mlp_reg.pkl"
     year: 2026-2027
     #weight: 0.27106884779116996
 
-version: "6.2.0"
+version: "6.3.0"
