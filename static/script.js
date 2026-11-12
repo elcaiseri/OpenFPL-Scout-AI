@@ -796,6 +796,20 @@ const dashboardRenderer = {
 };
 
 const gameweekManager = {
+    // Open on the current Gameweek while its matches are still in play. Once
+    // FPL marks it finished, open on the next deadline, as the API's default
+    // squad does (OfficialFPLClient.next_gameweek), so a break between
+    // Gameweeks never opens on last week's squad. After the season's last
+    // deadline, the current Gameweek. A finished current Gameweek stays one
+    // step back in the planning window.
+    openingGameweek(events) {
+        return events.find(event => event.is_current && !event.finished)
+            || events.find(event => event.is_next)
+            || events.find(event => event.is_current)
+            || events.find(event => !event.finished)
+            || events.at(-1);
+    },
+
     planningWindow(events) {
         const anchor = events.find(event => event.is_current)
             || events.find(event => event.is_next)
@@ -1142,9 +1156,7 @@ const app = {
         try {
             appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
-            const active = appState.events.find(event => event.is_current)
-                || appState.events.find(event => event.is_next)
-                || appState.events[0];
+            const active = gameweekManager.openingGameweek(appState.events);
             appState.currentGameweek = Number(active.id);
             gameweekManager.populate(appState.events);
             await gameweekManager.load(appState.currentGameweek);

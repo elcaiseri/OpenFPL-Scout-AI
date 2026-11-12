@@ -236,7 +236,15 @@ def _with_asset_versions(page: str) -> str:
     return page
 
 
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+# Uptime monitors, link checkers and crawlers often send HEAD. FastAPI's
+# @app.get answers it with 405, unlike the /static and /assets mounts, so the
+# site's root pages accept it explicitly; uvicorn then sends headers only.
+PAGE_METHODS = ["GET", "HEAD"]
+
+
+@app.api_route(
+    "/", methods=PAGE_METHODS, response_class=HTMLResponse, include_in_schema=False
+)
 async def serve_index():
     """Serve the OpenFPL web application."""
     try:
@@ -269,8 +277,9 @@ Sitemap: {SITE_URL}/sitemap.xml
 SITEMAP_PATHS = ("/", "/static/report/index.html")
 
 
-@app.get(
+@app.api_route(
     "/robots.txt",
+    methods=PAGE_METHODS,
     response_class=PlainTextResponse,
     include_in_schema=False,
 )
@@ -281,7 +290,7 @@ async def serve_robots() -> PlainTextResponse:
     )
 
 
-@app.get("/sitemap.xml", include_in_schema=False)
+@app.api_route("/sitemap.xml", methods=PAGE_METHODS, include_in_schema=False)
 async def serve_sitemap() -> Response:
     """Serve a sitemap covering the app and the technical report."""
     entries = "".join(
@@ -310,7 +319,7 @@ ICON_CACHE_HEADERS = {"Cache-Control": "public, max-age=604800"}
 APPLE_TOUCH_ICON_VARIANT = re.compile(r"(\d+x\d+)?(-?precomposed)?")
 
 
-@app.get("/favicon.ico", include_in_schema=False)
+@app.api_route("/favicon.ico", methods=PAGE_METHODS, include_in_schema=False)
 async def serve_favicon() -> FileResponse:
     """Serve the 16-48 px site icon browsers request by default."""
     return FileResponse(
@@ -318,7 +327,7 @@ async def serve_favicon() -> FileResponse:
     )
 
 
-@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.api_route("/apple-touch-icon.png", methods=PAGE_METHODS, include_in_schema=False)
 async def serve_apple_touch_icon() -> FileResponse:
     """Serve the 180 px home-screen icon iOS requests by default."""
     return FileResponse(
@@ -326,7 +335,9 @@ async def serve_apple_touch_icon() -> FileResponse:
     )
 
 
-@app.get("/apple-touch-icon-{variant}.png", include_in_schema=False)
+@app.api_route(
+    "/apple-touch-icon-{variant}.png", methods=PAGE_METHODS, include_in_schema=False
+)
 async def serve_apple_touch_icon_variant(variant: str) -> FileResponse:
     """Serve the same icon for the sized and precomposed names iOS also tries."""
     if not APPLE_TOUCH_ICON_VARIANT.fullmatch(variant):

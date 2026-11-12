@@ -48,6 +48,7 @@ function fakeElement() {
         style: { setProperty() {}, removeProperty() {} },
         classList: { add() {}, remove() {}, toggle() {} },
         setAttribute() {}, removeAttribute() {}, addEventListener() {}, focus() {},
+        appendChild() {},
         querySelectorAll: () => []
     };
 }
@@ -60,6 +61,7 @@ function fakeDocument() {
             return elements.get(id);
         },
         querySelectorAll: () => [],
+        createElement: () => fakeElement(),
         createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => ({ width: 0 }) }),
         addEventListener() {}
     };
@@ -388,4 +390,56 @@ test('club codes stay distinct before fixtures teach the official ones', () => {
         [{ team_id: 1, team_name: 'Manchester City' }]
     );
     assert.equal(app.utils.teamCode('Manchester City'), 'MC1');
+});
+
+test('the app opens on a live Gameweek, and on the next deadline once it finishes', () => {
+    const app = loadApp(async () => response({}));
+    const opening = list => app.gameweekManager.openingGameweek(list).id;
+
+    // Matches still in play: the live Gameweek.
+    assert.equal(opening([
+        { id: 10, is_current: true, finished: false },
+        { id: 11, is_next: true }
+    ]), 10);
+    // International break: GW10 is current and finished, GW11's deadline is next.
+    assert.equal(opening([
+        { id: 10, is_current: true, finished: true },
+        { id: 11, is_next: true },
+        { id: 12 }
+    ]), 11);
+    // Pre-season and after the final deadline.
+    assert.equal(opening([{ id: 1, is_next: true }, { id: 2 }]), 1);
+    assert.equal(opening([{ id: 37, finished: true }, { id: 38, is_current: true, finished: true }]), 38);
+    // No flags at all: the first unfinished Gameweek, then the last one.
+    assert.equal(opening([{ id: 4, finished: true }, { id: 5 }]), 5);
+    assert.equal(opening([{ id: 4, finished: true }, { id: 5, finished: true }]), 5);
+});
+
+test('start-up requests the next deadline squad and keeps the finished Gameweek one click back', async () => {
+    const season = [
+        { id: 9, finished: true, deadline_time: '2026-10-31T11:00:00Z' },
+        { id: 10, is_current: true, finished: true, deadline_time: '2026-11-06T18:30:00Z' },
+        { id: 11, is_next: true, deadline_time: '2026-11-21T11:00:00Z' },
+        { id: 12, deadline_time: '2026-11-27T18:30:00Z' },
+        { id: 13, deadline_time: '2026-12-02T19:30:00Z' }
+    ];
+    const scoutRequests = [];
+    const app = loadApp(async url => {
+        if (url.startsWith('/api/scout?')) {
+            const gameweek = Number(new URL(url, 'http://localhost').searchParams.get('gameweek'));
+            scoutRequests.push(gameweek);
+            return response({ ...squad, gameweek, frozen: gameweek < 11 });
+        }
+        if (url === app.CONFIG.endpoints.syncResults) return response({ status: 'throttled' });
+        return response({ results: [] });
+    });
+    app.appState.events = season;
+    app.appState.eventsCache = season;
+
+    await app.app.start();
+
+    assert.deepEqual(scoutRequests, [11]);
+    assert.equal(app.appState.currentGameweek, 11);
+    assert.equal(app.appState.currentData.gameweek, 11);
+    assert.deepEqual(app.appState.visibleEvents.map(event => event.id), [10, 11, 12]);
 });
