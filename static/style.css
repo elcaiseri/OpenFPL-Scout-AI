@@ -1098,6 +1098,49 @@ select {
     text-decoration: underline;
 }
 
+/* The app's own social accounts: a row of 44px pills under the credit line. */
+.credits-social {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.credits-social a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    color: var(--paper);
+    font-weight: 800;
+    text-decoration: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    transition: color var(--ease), border-color var(--ease);
+}
+
+.credits-social a:hover,
+.credits-social a:focus-visible {
+    color: var(--lime);
+    border-color: rgba(200, 255, 50, 0.55);
+}
+
+.credits-social svg {
+    width: 15px;
+    height: 15px;
+    flex: none;
+    fill: currentColor;
+}
+
+.credits-social small {
+    color: var(--muted);
+    font-size: inherit;
+    font-weight: 600;
+}
+
 .fade-in {
     animation: fade-in 360ms ease both;
 }

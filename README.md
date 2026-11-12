@@ -9,7 +9,9 @@ responsive web dashboard and FastAPI service.
 
 [Live app](https://openfpl.kassem.dev) ·
 [API reference](https://openfpl.kassem.dev/redoc) ·
-[Route catalog](https://openfpl.kassem.dev/api)
+[Route catalog](https://openfpl.kassem.dev/api) ·
+[TikTok](https://www.tiktok.com/@openfpl.kassem.dev) ·
+[X](https://x.com/OpenFPLScoutAI)
 
 ## Highlights
 
