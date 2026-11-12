@@ -1225,8 +1225,9 @@ select {
 }
 
 /* The AI squad stays the lime, highlighted action; rating your own team sits
-   beside it as the quieter one. On a narrow phone the AI squad label wraps
-   rather than pushing its neighbour onto a second row. */
+   beside it as the quieter one. Both labels fit one line from 320px; with
+   larger text settings the AI squad label wraps rather than pushing its
+   neighbour onto a second row. */
 .hero-ctas {
     display: flex;
     align-items: stretch;
