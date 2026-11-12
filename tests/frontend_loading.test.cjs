@@ -67,7 +67,7 @@ function fakeDocument() {
     };
 }
 
-function loadApp(fetch) {
+function loadApp(fetch, globals = {}) {
     const document = fakeDocument();
     const context = vm.createContext({
         fetch, AbortController, TypeError, setTimeout, clearTimeout,
@@ -77,7 +77,8 @@ function loadApp(fetch) {
         requestAnimationFrame: () => 0,
         console: { warn() {}, error() {} },
         document,
-        window: {}
+        window: {},
+        ...globals
     });
     vm.runInContext(source, context);
     const app = context.window.FPLScoutApp;
@@ -456,4 +457,78 @@ test('the hero buttons open the squad section in their own mode', () => {
     app.interactions.openSquadMode('scout');
     assert.equal(app.appState.squadMode, 'scout');
     assert.equal(panel.hidden, true);
+});
+
+function memoryStorage() {
+    const items = new Map();
+    return {
+        items,
+        getItem: key => (items.has(key) ? items.get(key) : null),
+        setItem: (key, value) => { items.set(key, String(value)); }
+    };
+}
+
+test('rated team IDs are suggested newest first, once each, five at most', () => {
+    const localStorage = memoryStorage();
+    const app = loadApp(async () => response({}), { localStorage });
+    const suggestions = app.document.getElementById('team-id-suggestions');
+
+    app.recentTeams.remember({ entry_id: 1, team_name: 'Team <One>' });
+    app.recentTeams.remember({ entry_id: 2, team_name: 'Two' });
+    app.recentTeams.remember({ entry_id: 1, team_name: 'Team <One>' });
+    assert.deepEqual(Array.from(app.recentTeams.read(), item => item.id), [1, 2]);
+    // Team names are FPL users' own text, so the label is escaped.
+    assert.equal(
+        suggestions.innerHTML,
+        '<option value="1" label="Team &lt;One&gt;"></option><option value="2" label="Two"></option>'
+    );
+
+    for (let id = 3; id <= 8; id++) app.recentTeams.remember({ entry_id: id, team_name: `T${id}` });
+    assert.deepEqual(Array.from(app.recentTeams.read(), item => item.id), [8, 7, 6, 5, 4]);
+
+    app.recentTeams.remember({ entry_id: 'abc' });
+    app.recentTeams.remember({ entry_id: 0 });
+    assert.equal(app.recentTeams.read()[0].id, 8);
+
+    // A later visit reads the same list back.
+    const later = loadApp(async () => response({}), { localStorage });
+    later.recentTeams.render();
+    assert.match(later.document.getElementById('team-id-suggestions').innerHTML, /^<option value="8" label="T8">/);
+});
+
+test('suggestions survive blocked or missing storage for the current visit', () => {
+    const blocked = {
+        getItem() { throw new Error('SecurityError'); },
+        setItem() { throw new Error('QuotaExceededError'); }
+    };
+    for (const globals of [{ localStorage: blocked }, {}]) {
+        const app = loadApp(async () => response({}), globals);
+        assert.equal(app.recentTeams.read().length, 0);
+        app.recentTeams.remember({ entry_id: 4069384, team_name: 'Mine' });
+        assert.equal(
+            app.document.getElementById('team-id-suggestions').innerHTML,
+            '<option value="4069384" label="Mine"></option>'
+        );
+    }
+});
+
+test('only a successful rating is remembered', async () => {
+    const localStorage = memoryStorage();
+    const app = loadApp(async url => {
+        const entryId = Number(new URL(url, 'http://localhost').searchParams.get('entry_id'));
+        if (entryId === 999) return response({ detail: 'This FPL team ID was not found.' }, 404);
+        // A rating that comes back without players also counts as a failure.
+        if (entryId === 998) return response({ entry_id: entryId, team_name: 'Empty', gameweek: 1, squad: [] });
+        return response({
+            entry_id: entryId, team_name: 'Mine', gameweek: 1, picks_gameweek: 1,
+            squad: squad.scout_team.map(player => ({ ...player, pick_position: 1 }))
+        });
+    }, { localStorage });
+
+    await app.teamRating.rate(999);
+    await app.teamRating.rate(998);
+    assert.equal(app.recentTeams.read().length, 0);
+
+    await app.teamRating.rate(4069384);
+    assert.deepEqual(Array.from(app.recentTeams.read(), item => item.id), [4069384]);
 });
