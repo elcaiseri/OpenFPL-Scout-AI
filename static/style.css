@@ -1181,6 +1181,36 @@ select {
     transform: translateY(-2px);
 }
 
+/* The AI squad stays the lime, highlighted action; rating your own team sits
+   beside it as the quieter one. On a narrow phone the AI squad label wraps
+   rather than pushing its neighbour onto a second row. */
+.hero-ctas {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    margin-top: 22px;
+}
+
+.hero-ctas .hero-cta {
+    min-width: 0;
+    margin-top: 0;
+}
+
+.hero-cta.secondary {
+    flex: none;
+    color: var(--paper);
+    white-space: nowrap;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: none;
+}
+
+.hero-cta.secondary:hover,
+.hero-cta.secondary:focus-visible {
+    border-color: rgba(200, 255, 50, 0.55);
+    box-shadow: 0 0 0 3px rgba(248, 247, 251, 0.85);
+}
+
 .squad-section {
     scroll-margin-top: 12px;
 }

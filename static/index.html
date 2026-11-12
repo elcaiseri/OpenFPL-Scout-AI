@@ -180,7 +180,10 @@
                         OpenFPL Scout AI Team uses machine learning and live FPL data to predict player points, then
                         optimises a complete 15-man squad with captain and vice-captain for the next Gameweek.
                     </p>
-                    <a class="hero-cta" href="#squad">See this Gameweek's AI squad <span aria-hidden="true">↓</span></a>
+                    <div class="hero-ctas">
+                        <a class="hero-cta" href="#squad" data-squad-mode-link="scout">See this Gameweek's AI squad <span aria-hidden="true">↓</span></a>
+                        <a class="hero-cta secondary" href="#squad" data-squad-mode-link="rating">Rate my team</a>
+                    </div>
                     <div class="hero-proof" aria-label="How the FPL scout works">
                         <span><i aria-hidden="true"></i> Form &amp; minutes</span>
                         <span>Official FPL data</span>
@@ -357,8 +360,9 @@
                         </div>
                         <div class="team-id-control">
                             <input id="team-id-input" name="entry_id" type="text" inputmode="numeric" pattern="[0-9]+"
-                                autocomplete="off" placeholder="e.g. 1234567" required
+                                autocomplete="off" placeholder="e.g. 1234567" required list="team-id-suggestions"
                                 aria-describedby="team-rating-note team-rating-error">
+                            <datalist id="team-id-suggestions"></datalist>
                             <button id="rate-team-button" type="submit">Rate my team</button>
                         </div>
                     </form>

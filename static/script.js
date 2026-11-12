@@ -292,6 +292,7 @@ const dom = new Proxy({}, {
             pitchView: 'pitch-view', tableView: 'table-view', tableBody: 'squad-table-body',
             teamRatingPanel: 'team-rating-panel', teamRatingForm: 'team-rating-form',
             teamIdInput: 'team-id-input', rateTeamButton: 'rate-team-button',
+            teamIdSuggestions: 'team-id-suggestions',
             teamRatingError: 'team-rating-error', teamRatingResult: 'team-rating-result',
             ratingScoreRing: 'rating-score-ring', ratingScore: 'rating-score',
             ratingGrade: 'rating-grade', ratingTeamName: 'rating-team-name',
@@ -1000,6 +1001,7 @@ const teamRating = {
                 appState.ratingEntryId, appState.currentGameweek, force
             );
             this.render(data);
+            recentTeams.remember(data);
         } catch (error) {
             console.error('Team rating failed:', error);
             this.error(error.message);
@@ -1013,6 +1015,48 @@ const teamRating = {
                 document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
             }
         }
+    }
+};
+
+// Team IDs this browser has rated, newest first, offered as the ID field's
+// suggestions. Only a successful rating is remembered, so a mistyped ID never
+// is. Kept on this device alone; storage can be blocked or full.
+const recentTeams = {
+    storageKey: 'openfpl.recentTeams',
+    limit: 5,
+
+    read() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.storageKey) || '[]');
+            if (!Array.isArray(saved)) return [];
+            return saved
+                .filter(item => Number.isInteger(item?.id) && item.id > 0)
+                .slice(0, this.limit);
+        } catch (error) {
+            return [];
+        }
+    },
+
+    remember(rating) {
+        const id = Number(rating?.entry_id);
+        if (!Number.isInteger(id) || id < 1) return;
+        const teams = [
+            { id, team: String(rating.team_name || '') },
+            ...this.read().filter(item => item.id !== id)
+        ].slice(0, this.limit);
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify(teams));
+        } catch (error) {
+            // Private browsing or blocked storage: suggest it for this visit only.
+        }
+        this.render(teams);
+    },
+
+    render(teams = this.read()) {
+        dom.teamIdSuggestions.innerHTML = teams.map(item => {
+            const label = utils.escapeHtml(item.team || `FPL team ${item.id}`);
+            return `<option value="${item.id}" label="${label}"></option>`;
+        }).join('');
     }
 };
 
@@ -1064,6 +1108,12 @@ const interactions = {
         });
     },
 
+    // A hero button opens the squad section in its mode: the AI squad, or the
+    // team-ID form (which takes focus). Already in that mode, nothing reloads.
+    openSquadMode(mode) {
+        if (appState.squadMode !== mode) teamRating.setMode(mode);
+    },
+
     // Retry from the error panel. If the season list itself never loaded there
     // is no Gameweek to reload, so the app starts over.
     retry() {
@@ -1096,6 +1146,7 @@ const interactions = {
                 dashboardRenderer.fitNames();
             }).observe(dom.pitch);
         }
+        recentTeams.render();
         dom.gameweekSelect.addEventListener('change', utils.debounce(event => {
             const gameweek = Number(event.target.value);
             if (gameweek && gameweek !== appState.currentGameweek) gameweekManager.load(gameweek);
@@ -1112,6 +1163,10 @@ const interactions = {
         });
         document.querySelectorAll('.squad-mode-button').forEach(button => {
             button.addEventListener('click', () => teamRating.setMode(button.dataset.squadMode));
+        });
+        // The hero's two buttons pick the squad mode, then follow their #squad link.
+        document.querySelectorAll('[data-squad-mode-link]').forEach(link => {
+            link.addEventListener('click', () => this.openSquadMode(link.dataset.squadModeLink));
         });
         dom.teamRatingForm.addEventListener('submit', event => {
             event.preventDefault();
@@ -1177,6 +1232,7 @@ window.FPLScoutApp = {
     dataLoader,
     gameweekManager,
     teamRating,
+    recentTeams,
     interactions,
     clearCache: utils.clearCache
 };
