@@ -1224,10 +1224,11 @@ select {
     transform: translateY(-2px);
 }
 
-/* The AI squad stays the lime, highlighted action; rating your own team sits
-   beside it as the quieter one. Both labels fit one line from 375px; on a
-   320px phone, or with larger text settings, the AI squad label wraps
-   rather than pushing its neighbour onto a second row. */
+/* The AI picks stay the lime, highlighted action; rating your own team sits
+   beside it as the quieter one. Both labels are set in small, tracked
+   capitals (the markup keeps sentence case for screen readers). With larger
+   text settings the AI picks label wraps rather than pushing its neighbour
+   onto a second row. */
 .hero-ctas {
     display: flex;
     align-items: stretch;
@@ -1238,6 +1239,9 @@ select {
 .hero-ctas .hero-cta {
     min-width: 0;
     margin-top: 0;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 .hero-cta.secondary {
@@ -2997,6 +3001,13 @@ select {
     .season-chip {
         max-width: 105px;
         line-height: 1.2;
+    }
+
+    /* Keeps both hero labels on one line down to 320px. */
+    .hero-ctas .hero-cta {
+        padding-right: 12px;
+        padding-left: 12px;
+        letter-spacing: 0.06em;
     }
 
     .stats-grid {
