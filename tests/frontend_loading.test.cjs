@@ -553,3 +553,89 @@ test('only a successful rating is remembered', async () => {
     await app.teamRating.rate(4069384);
     assert.deepEqual(Array.from(app.recentTeams.read(), item => item.id), [4069384]);
 });
+
+function savedSquadEntry(overrides = {}) {
+    return JSON.stringify({
+        schema: 1,
+        savedAt: Date.now(),
+        data: {
+            ...squad,
+            scout_team: [{ ...squad.scout_team[0], web_name: 'Saved' }],
+            event: events[0],
+            fixtures: [],
+            fixturesAvailable: true,
+            syncedAt: new Date().toISOString()
+        },
+        ...overrides
+    });
+}
+
+function startUpFetch(scoutResponse) {
+    return async url => {
+        if (url.startsWith('/api/scout?')) return scoutResponse.promise;
+        if (url === '/api/scout/sync-results') return response({ status: 'throttled' });
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    };
+}
+
+test('a return visit shows the saved squad at once, then the current one, and saves it', async () => {
+    const localStorage = memoryStorage();
+    localStorage.setItem('openfpl.lastSquad', savedSquadEntry());
+    const scoutResponse = deferred();
+    const app = loadApp(startUpFetch(scoutResponse), { localStorage });
+    const pitch = app.document.getElementById('pitch');
+
+    const starting = app.app.start();
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Saved');
+    assert.equal(app.document.getElementById('signal-state').textContent, 'Refreshing');
+
+    // The saved squad stays on the pitch while the server predicts.
+    await until(() => app.appState.isLoading);
+    assert.match(pitch.innerHTML, /Saved/);
+
+    scoutResponse.resolve(response(squad));
+    await starting;
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+    assert.match(pitch.innerHTML, /Player/);
+    const saved = JSON.parse(localStorage.getItem('openfpl.lastSquad'));
+    assert.equal(saved.data.scout_team[0].web_name, 'Player');
+    assert.equal(saved.data.events, undefined);
+});
+
+test('an expired or older-format saved squad is not shown', async () => {
+    for (const entry of [
+        savedSquadEntry({ savedAt: Date.now() - 13 * 60 * 60 * 1000 }),
+        savedSquadEntry({ schema: 0 }),
+        '{not json'
+    ]) {
+        const localStorage = memoryStorage();
+        localStorage.setItem('openfpl.lastSquad', entry);
+        const scoutResponse = deferred();
+        const app = loadApp(startUpFetch(scoutResponse), { localStorage });
+
+        const starting = app.app.start();
+        assert.equal(app.appState.currentData, null);
+        await until(() => app.appState.isLoading);
+        assert.match(app.document.getElementById('pitch').innerHTML, /class="loading"/);
+
+        scoutResponse.resolve(response(squad));
+        await starting;
+        assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+    }
+});
+
+test('start-up works when storage is blocked', async () => {
+    const blocked = {
+        getItem() { throw new Error('SecurityError'); },
+        setItem() { throw new Error('QuotaExceededError'); }
+    };
+    const scoutResponse = deferred();
+    const app = loadApp(startUpFetch(scoutResponse), { localStorage: blocked });
+
+    const starting = app.app.start();
+    scoutResponse.resolve(response(squad));
+    await starting;
+
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+});

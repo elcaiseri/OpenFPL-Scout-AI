@@ -37,6 +37,8 @@ const CLUB_CODES = new Map(Object.entries({
 
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
+    // The Gameweek the app opens on; only its squad is saved for next visit.
+    openingGameweek: null,
     events: [],
     visibleEvents: [],
     currentData: null,
@@ -833,12 +835,14 @@ const gameweekManager = {
         document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = locked; });
     },
 
-    async load(gameweek, force = false) {
+    // keepSaved leaves a saved squad of this Gameweek on screen, instead of
+    // the loading state, until the current one replaces it.
+    async load(gameweek, force = false, { keepSaved = false } = {}) {
         if (appState.isLoading) return;
         const token = ++appState.loadToken;
         const isCurrent = () => token === appState.loadToken;
         this.setLocked(true);
-        dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
+        if (!keepSaved) dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             let resultsSyncStarted = false;
             const publish = data => {
@@ -861,6 +865,7 @@ const gameweekManager = {
             const data = await dataLoader.loadDashboard(gameweek, force, publish);
             if (!isCurrent()) return;
             publish(data);
+            if (Number(gameweek) === appState.openingGameweek) savedSquad.save(data);
             if (appState.squadMode === 'rating' && appState.ratingEntryId) {
                 await teamRating.rate(appState.ratingEntryId, force);
             }
@@ -987,6 +992,42 @@ const teamRating = {
                 dom.gameweekSelect.disabled = false;
                 document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
             }
+        }
+    }
+};
+
+// The opening Gameweek's last complete squad, kept on this device so a return
+// visit shows it at once, marked as refreshing, while the current squad loads
+// (a cold server can take many seconds). Storage can be blocked or full.
+const savedSquad = {
+    storageKey: 'openfpl.lastSquad',
+    schema: 1,
+    maxAgeMs: 12 * 60 * 60 * 1000,
+
+    read() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.storageKey) || 'null');
+            const fresh = saved?.schema === this.schema
+                && Date.now() - Number(saved.savedAt) < this.maxAgeMs;
+            const data = saved?.data;
+            if (!fresh || !Number.isInteger(data?.gameweek)) return null;
+            if (!Array.isArray(data.scout_team) || !data.scout_team.length) return null;
+            return data;
+        } catch (error) {
+            return null;
+        }
+    },
+
+    // Only a complete squad: its fixtures and season data loaded.
+    save(data) {
+        if (data.fixturesLoading || data.fixturesAvailable === false) return;
+        const { events, ...squad } = data;
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify({
+                schema: this.schema, savedAt: Date.now(), data: squad
+            }));
+        } catch (error) {
+            // Private browsing or blocked storage: the next visit loads as usual.
         }
     }
 };
@@ -1179,18 +1220,32 @@ const app = {
     },
 
     async start() {
-        dashboardRenderer.loading('Checking the official FPL season…');
+        const saved = savedSquad.read();
+        if (saved) this.showSaved(saved);
+        else dashboardRenderer.loading('Checking the official FPL season…');
         try {
             appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = gameweekManager.openingGameweek(appState.events);
+            appState.openingGameweek = Number(active.id);
             appState.currentGameweek = Number(active.id);
             gameweekManager.populate(appState.events);
-            await gameweekManager.load(appState.currentGameweek);
+            // A saved squad of another Gameweek gives way to the loading state.
+            await gameweekManager.load(appState.currentGameweek, false, {
+                keepSaved: Number(saved?.gameweek) === appState.currentGameweek
+            });
         } catch (error) {
             console.error('Application initialization failed:', error);
             dashboardRenderer.error(error.message);
         }
+    },
+
+    showSaved(data) {
+        appState.currentGameweek = Number(data.gameweek);
+        appState.currentData = data;
+        dashboardRenderer.render(data);
+        dom.signalState.textContent = 'Refreshing';
+        dom.sourceState.textContent = 'Saved squad';
     }
 };
 
@@ -1205,6 +1260,7 @@ window.FPLScoutApp = {
     gameweekManager,
     teamRating,
     recentTeams,
+    savedSquad,
     interactions,
     clearCache: utils.clearCache
 };
