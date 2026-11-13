@@ -1,4 +1,4 @@
-"""The app's TikTok and X accounts are linked from the page and its metadata."""
+"""The app's TikTok, X and YouTube accounts are linked from the page and its metadata."""
 
 import json
 import re
@@ -9,6 +9,7 @@ PAGE = Path(__file__).resolve().parent.parent / "static" / "index.html"
 PROFILES = (
     "https://www.tiktok.com/@openfpl.kassem.dev",
     "https://x.com/OpenFPLScoutAI",
+    "https://youtube.com/@openfplscoutai",
 )
 
 
