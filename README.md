@@ -151,6 +151,7 @@ and extended data routes require `Authorization: Bearer <token>`.
 curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
 curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek=1"
 curl -X POST "https://openfpl.kassem.dev/api/scout/sync-results"
+curl -X POST "https://openfpl.kassem.dev/api/scout/refresh?gameweek=1"
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
@@ -172,8 +173,11 @@ The dashboard shows saved squads before collecting archived match results.
 After rendering a frozen squad it starts `POST /api/scout/sync-results`
 without waiting for it; collection retains the archive's five-minute cooldown
 and finishes inside that HTTP request, so request-based Cloud Run CPU remains
-available. Temporary read failures retry twice, and unavailable player metadata
-or fixtures do not hide an otherwise valid squad.
+available. A squad answered from an older cached forecast carries
+`refresh_due: true`; the page then starts `POST /api/scout/refresh` the same
+way, so the new prediction runs inside a request too. The server never
+predicts outside a request. Temporary read failures retry twice, and
+unavailable player metadata or fixtures do not hide an otherwise valid squad.
 
 ## Models and data
 
