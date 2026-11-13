@@ -110,6 +110,19 @@ class StaticCachingTests(unittest.TestCase):
                 for icon in re.findall(r'<link rel="icon"[^>]*href="([^"]+)"', html):
                     self.assertLess(len(get(icon)[2]), 20_000, icon)
 
+    def test_every_referenced_asset_exists(self):
+        sources = ("main.py", "README.md", "static/index.html", "static/report/index.html")
+        referenced = {
+            name
+            for source in sources
+            for name in re.findall(r"assets/([\w.-]+\.\w+)", Path(source).read_text())
+        }
+
+        self.assertTrue(referenced)
+        for name in sorted(referenced):
+            with self.subTest(asset=name):
+                self.assertTrue((Path("assets") / name).is_file())
+
     def test_report_page_files_are_revalidated_too(self):
         for path in ("/static/report/index.html", "/static/report/charts.js"):
             with self.subTest(path=path):
