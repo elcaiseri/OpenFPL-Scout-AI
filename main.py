@@ -129,6 +129,7 @@ async def lifespan(app: FastAPI):
     logger.info("FPLScout initialized and ready")
     yield
     logger.info("Shutting down application")
+    scout.close()
 
 
 app = FastAPI(

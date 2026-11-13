@@ -61,6 +61,13 @@ inference:
   fixture_cache_ttl_seconds: 300
   clip_min: 0.0
   max_players_per_team: 3
+  # An open gameweek's live prediction is reused for this long (0 disables).
+  prediction_cache_ttl_seconds: 300
+  # An older one is still served, while a new one is predicted, up to this age.
+  prediction_stale_seconds: 900
+  # After a cold start, the open gameweek's archived forecast is served while
+  # the new instance predicts, if it is at most this old (0 disables).
+  prediction_restore_max_age_seconds: 3600
   cold_start:
     enabled: true
 
