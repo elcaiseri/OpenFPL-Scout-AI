@@ -920,3 +920,67 @@ test('loading shows placeholder cards in formation under its status', () => {
     assert.equal((pitch.match(/player-card placeholder/g) || []).length, 15);
     assert.equal((pitch.match(/aria-hidden="true"><span class="player-card/g) || []).length, 4);
 });
+
+test('transfer suggestions close when the deadline passes on an open page, and a saved rating is fetched again', async () => {
+    const deadline = Date.parse('2026-11-21T11:00:00Z');
+    const gameweeks = [
+        { id: 10, is_current: true, finished: true, deadline_time: '2026-11-07T11:00:00Z' },
+        { id: 11, is_next: true, deadline_time: '2026-11-21T11:00:00Z' },
+        { id: 12, deadline_time: '2026-11-28T11:00:00Z' }
+    ];
+    const transfer = {
+        out: { web_name: 'Gonzalo', team_name: 'Fulham', price: 5.9, expected_points: 2.75 },
+        in: { web_name: 'Evanilson', team_name: 'Bournemouth', price: 6.5, expected_points: 6.84 },
+        gain: 4.04
+    };
+    let open = true;
+    let tick = null;
+    const ratingRequests = [];
+    const app = loadApp(async url => {
+        const params = new URL(url, 'http://localhost').searchParams;
+        if (url.startsWith('/api/scout/team-rating')) {
+            ratingRequests.push(url);
+            // The server decides from the real deadline on every request.
+            return response({
+                entry_id: 123, team_name: 'Mine', gameweek: 11, picks_gameweek: 10, rating: 80,
+                squad: squad.scout_team.map(player => ({ ...player, pick_position: 1 })),
+                bank: 0.5, transfers_open: open, transfers: open ? [transfer] : []
+            });
+        }
+        if (url.startsWith('/api/scout?')) return response({ ...squad, gameweek: Number(params.get('gameweek')) });
+        if (url === '/api/scout/sync-results') return response({ status: 'throttled' });
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    }, { setInterval: callback => { tick = callback; return 1; } });
+    app.appState.events = gameweeks;
+    app.appState.eventsCache = gameweeks;
+    let now = deadline - 60000;
+    app.utils.now = () => now;
+    const panel = app.document.getElementById('rating-transfers');
+
+    await app.app.start();
+    app.teamRating.setMode('rating');
+    await app.teamRating.rate(123);
+    assert.equal(panel.hidden, false);
+    // Before the deadline the saved rating is reused.
+    await app.teamRating.rate(123);
+    assert.equal(ratingRequests.length, 1);
+
+    // A minute after the deadline, the next countdown tick closes the panel.
+    now = deadline + 60000;
+    open = false;
+    tick();
+    assert.equal(app.document.getElementById('deadline-countdown').textContent, 'Deadline passed');
+    assert.equal(panel.hidden, true);
+
+    // Showing the saved rating again keeps it closed.
+    app.teamRating.setMode('scout');
+    app.teamRating.setMode('rating');
+    assert.equal(panel.hidden, true);
+
+    // Rating the same team asks the server again instead of reusing it.
+    await app.teamRating.rate(123);
+    assert.equal(ratingRequests.length, 2);
+    assert.equal(app.appState.ratingData.transfers_open, false);
+    assert.equal(panel.hidden, true);
+});

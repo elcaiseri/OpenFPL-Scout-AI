@@ -195,9 +195,21 @@ const utils = {
         });
     },
 
+    // The time deadline decisions use; tests move it.
+    now() {
+        return Date.now();
+    },
+
+    // Whether a Gameweek's official deadline is known and has passed.
+    deadlinePassed(gameweek) {
+        const event = appState.events.find(item => Number(item.id) === Number(gameweek));
+        const deadline = new Date(event?.deadline_time).getTime();
+        return Number.isFinite(deadline) && this.now() >= deadline;
+    },
+
     countdown(value) {
         if (!value) return 'Deadline TBC';
-        const distance = new Date(value).getTime() - Date.now();
+        const distance = new Date(value).getTime() - this.now();
         if (!Number.isFinite(distance)) return 'Deadline TBC';
         if (distance <= 0) return 'Deadline passed';
 
@@ -440,9 +452,11 @@ const dataLoader = {
 
     async loadTeamRating(entryId, gameweek, force = false) {
         const key = `${entryId}:${gameweek}`;
-        if (appState.ratingCache.has(key) && !force) {
-            return appState.ratingCache.get(key);
-        }
+        const saved = appState.ratingCache.get(key);
+        // Saved before the deadline with transfers open, a rating is out of
+        // date once it passes: the server now answers with them closed.
+        const expired = saved?.transfers_open && utils.deadlinePassed(gameweek);
+        if (saved && !force && !expired) return saved;
         const rating = await utils.fetchJson(
             CONFIG.endpoints.teamRating(entryId, gameweek), CONFIG.inferenceRequest
         );
@@ -607,7 +621,14 @@ const dashboardRenderer = {
 
     startCountdown(deadline) {
         clearInterval(appState.countdownTimer);
-        const update = () => { dom.deadlineCountdown.textContent = utils.countdown(deadline); };
+        const update = () => {
+            dom.deadlineCountdown.textContent = utils.countdown(deadline);
+            // Suggestions on screen close once their deadline passes.
+            const rating = appState.ratingData;
+            if (rating && !dom.ratingTransfers.hidden && utils.deadlinePassed(rating.gameweek)) {
+                dom.ratingTransfers.hidden = true;
+            }
+        };
         update();
         appState.countdownTimer = setInterval(update, 30000);
     },
@@ -1074,8 +1095,10 @@ const teamRating = {
     transfers(data) {
         // Number(null) is 0, so a missing bank must not read as £0.0m.
         const bank = data.bank === null || data.bank === undefined ? null : utils.number(data.bank);
-        // transfers_open comes from the gameweek's official deadline.
-        dom.ratingTransfers.hidden = !data.transfers_open || bank === null;
+        // transfers_open is the server's answer when the rating loaded; the
+        // deadline is checked again here, as a page can stay open past it.
+        dom.ratingTransfers.hidden = !data.transfers_open || bank === null
+            || utils.deadlinePassed(data.gameweek);
         if (dom.ratingTransfers.hidden) return;
         dom.ratingBank.textContent = `${utils.money(bank)} in the bank at the last deadline`;
         // A real-life transfer can leave more than three players from a club;
