@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, Mapping, Optional
 
@@ -33,6 +34,7 @@ from src.models import (
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
 from src.scout import FPLScout, InferenceError
 from src.team_rating import rate_manager_team
+from src.transfers import clubs_over_limit, suggest_transfers
 from src.utils import load_config
 
 logger = get_logger(__name__)
@@ -988,6 +990,35 @@ def _with_official_details(players: list[dict[str, Any]]) -> list[dict[str, Any]
     return detailed
 
 
+def _before_deadline(gameweek: int) -> bool:
+    """Whether the gameweek's official deadline is known and still ahead.
+
+    Transfers for a gameweek can be made only before its deadline. This is
+    read from official FPL, not from the forecast's frozen flag: with the
+    archive off, or a freeze that failed, a closed gameweek is not frozen.
+    """
+    bootstrap = getattr(scout.official_client, "bootstrap", None)
+    if not callable(bootstrap):
+        return False
+    try:
+        events = bootstrap().get("events", [])
+    except Exception as error:
+        logger.warning("Could not read the GW%d deadline: %s", gameweek, error)
+        return False
+    event = next(
+        (item for item in events if int(item.get("id") or 0) == int(gameweek)), None
+    )
+    try:
+        deadline = datetime.fromisoformat(
+            str((event or {}).get("deadline_time")).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) < deadline
+
+
 async def _generate_scout_response(
     gameweek: Optional[int], public=False
 ) -> ResponseModel:
@@ -1172,6 +1203,22 @@ async def rate_public_manager_team(
         benchmark = await run_in_threadpool(scout.select_optimal_team, predictions)
         benchmark_records = json.loads(benchmark.to_json(orient="records"))
         rating = rate_manager_team(squad, benchmark_records)
+        frozen = bool(predictions.attrs.get("frozen", False))
+        bank = manager.get("last_deadline_bank")
+        transfers_open = not frozen and await run_in_threadpool(
+            _before_deadline, prediction_gameweek
+        )
+        transfers = (
+            []
+            if not transfers_open
+            else await run_in_threadpool(
+                lambda: suggest_transfers(
+                    squad,
+                    _with_official_details(prediction_records),
+                    None if bank is None else float(bank),
+                )
+            )
+        )
         manager_name = " ".join(
             str(manager.get(field) or "").strip()
             for field in ("player_first_name", "player_last_name")
@@ -1190,7 +1237,11 @@ async def rate_public_manager_team(
             ),
             version=config.get("version", "1.0.0"),
             source=str(predictions.attrs.get("source", "official-fpl")),
-            frozen=bool(predictions.attrs.get("frozen", False)),
+            frozen=frozen,
+            bank=bank,
+            transfers_open=transfers_open,
+            transfers=transfers,
+            clubs_over_limit=clubs_over_limit(squad),
             **rating,
         )
     except HTTPException as error:

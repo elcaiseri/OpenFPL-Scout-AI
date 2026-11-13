@@ -165,6 +165,20 @@ availability. A picked player FPL no longer lets managers select (for example,
 after leaving the league) is scored with zero points and zero availability and
 is marked `projection_missing`.
 
+A rating also returns `bank` (the manager's bank at the last deadline, in £m)
+and `transfers_open`, which is true while the Gameweek's official deadline is
+ahead, whether or not its forecast is frozen. While it is, `transfers` lists
+up to three single transfers, best first. Each swaps one player for a player
+in the same position whom current official data lets a manager buy to play
+(selectable, not injured, suspended or departed, chance of playing above
+zero), costs at most the bank plus the outgoing player's current price, and
+leaves every club at three players or fewer; FPL does not publish selling
+prices, so affordability is approximate. `gain` is the change in the squad's
+best XI plus captain, and `cost` the price difference. `clubs_over_limit`
+names clubs with more than three of the squad's players, which a real-life
+transfer can cause: FPL then requires the next transfer out to come from that
+club, so only those sales are suggested.
+
 Projections are made per fixture: double-gameweek players receive the sum of
 both matches, and players whose club has no fixture receive zero. Model points
 are multiplied by `availability_factor`, the player's current official chance

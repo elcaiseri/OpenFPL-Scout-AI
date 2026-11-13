@@ -389,6 +389,7 @@
                                 <h3 id="rating-team-name">Your team</h3>
                                 <p id="rating-manager-name">FPL manager</p>
                                 <small id="rating-picks-label">Latest published squad</small>
+                                <button class="share-button" id="share-rating" type="button">Share this rating</button>
                             </div>
                             <div class="rating-metrics">
                                 <span><small>Your xPts</small><strong id="rating-projection">—</strong></span>
@@ -405,6 +406,26 @@
                                 <span class="insight-label risk">Watch list</span>
                                 <ul id="rating-risks"></ul>
                             </article>
+                        </div>
+                        <div class="rating-transfers-area">
+                            <div class="transfers-toggle-row">
+                                <button class="transfers-toggle" id="transfers-toggle" type="button"
+                                    aria-expanded="false" aria-controls="rating-transfers" disabled>Show suggested transfers</button>
+                                <small class="transfers-toggle-note" id="transfers-toggle-note"></small>
+                            </div>
+                        <div class="rating-transfers" id="rating-transfers" hidden>
+                            <div class="rating-transfers-head">
+                                <span class="insight-label transfer">Suggested transfers</span>
+                                <small id="rating-bank"></small>
+                            </div>
+                            <p class="transfer-limit" id="rating-club-limit" role="note" hidden></p>
+                            <ol class="transfer-list" id="rating-transfer-list"></ol>
+                            <p class="transfer-note">
+                                Each transfer is scored on its own against your best XI and captain. FPL does not
+                                publish selling prices, so the budget uses current prices and can be slightly
+                                generous. Transfers beyond your free ones cost 4 points each.
+                            </p>
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -426,13 +447,13 @@
                                     availability</caption>
                                 <thead>
                                     <tr>
-                                        <th scope="col">Rank / player</th>
-                                        <th scope="col">Pos</th>
+                                        <th scope="col" aria-sort="none"><button class="sort-button" type="button" data-sort="player">Rank / player</button></th>
+                                        <th scope="col" aria-sort="none"><button class="sort-button" type="button" data-sort="position">Pos</button></th>
                                         <th scope="col">Opponent</th>
-                                        <th scope="col">Price</th>
-                                        <th scope="col">TSB %</th>
+                                        <th scope="col" aria-sort="none"><button class="sort-button" type="button" data-sort="price">Price</button></th>
+                                        <th scope="col" aria-sort="none"><button class="sort-button" type="button" data-sort="ownership">TSB %</button></th>
                                         <th scope="col">Availability</th>
-                                        <th scope="col">xPts</th>
+                                        <th scope="col" aria-sort="descending"><button class="sort-button" type="button" data-sort="xpts">xPts</button></th>
                                     </tr>
                                 </thead>
                                 <tbody id="squad-table-body"></tbody>

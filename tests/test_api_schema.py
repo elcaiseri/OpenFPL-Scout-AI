@@ -100,6 +100,61 @@ class DepartedPlayerRatingScout(FakeRatingScout):
         return trimmed
 
 
+class TransferScout(FakeRatingScout):
+    """Player 16, a forward not in the squad, projects 9 xPts for 5.5m.
+
+    ``official`` overrides player 16's current official details, and
+    ``clubs`` moves squad players to other clubs, by player id.
+    """
+
+    def __init__(
+        self, frozen=False, deadline="2099-01-01T10:00:00Z", official=None, clubs=None
+    ):
+        super().__init__()
+        self.frozen = frozen
+        self.clubs = clubs or {}
+        client = self.official_client
+        manager = client.mapped_manager
+        client.mapped_manager = lambda entry_id: {
+            **manager(entry_id),
+            "last_deadline_bank": 0.5,
+        }
+        client.mapped_players = lambda: [
+            {
+                "id": index,
+                "price": 5.5 if index == 16 else 5.0,
+                "status": "a",
+                "can_select": True,
+                **(official if index == 16 and official else {}),
+            }
+            for index in range(1, 17)
+        ]
+        client.bootstrap = lambda: {"events": [{"id": 1, "deadline_time": deadline}]}
+
+    def get_official_predictions(self, gameweek, *, collect_results=True):
+        predictions = super().get_official_predictions(
+            gameweek, collect_results=collect_results
+        )
+        extra = pd.DataFrame(
+            [
+                {
+                    "id": 16,
+                    "web_name": "Player 16",
+                    "team_name": "Club 5",
+                    "element_type": 4,
+                    "expected_points": 9.0,
+                    "availability_factor": 1.0,
+                    "selected_by_percent": 2.0,
+                }
+            ]
+        )
+        combined = pd.concat([predictions, extra], ignore_index=True)
+        for player_id, club in self.clubs.items():
+            combined.loc[combined["id"] == player_id, "team_name"] = club
+        combined.attrs = {**predictions.attrs, "frozen": self.frozen}
+        return combined
+
+
 class VenueScout(FakeRatingScout):
     """Player 1 plays at home, 2 away, 3 once at each venue, and 4 blanks."""
 
@@ -233,6 +288,67 @@ class APISchemaTests(unittest.TestCase):
         self.assertEqual(result.rating, 100)
         self.assertEqual(result.grade, "A+")
         self.assertEqual(len(result.squad), 15)
+
+    def test_team_rating_suggests_affordable_transfers_before_the_deadline(self):
+        with patch("main.scout", TransferScout(), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertEqual(result.bank, 0.5)
+        self.assertTrue(result.transfers_open)
+        self.assertEqual(result.clubs_over_limit, {})
+        self.assertEqual(len(result.transfers), 1)
+        [suggestion] = result.transfers
+        self.assertEqual(suggestion["in"]["id"], 16)
+        self.assertEqual(suggestion["out"]["position"], 4)
+        self.assertEqual(suggestion["cost"], 0.5)
+        self.assertGreater(suggestion["gain"], 0)
+
+    def test_a_frozen_gameweek_suggests_no_transfers(self):
+        with patch("main.scout", TransferScout(frozen=True), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertTrue(result.frozen)
+        self.assertFalse(result.transfers_open)
+        self.assertEqual(result.transfers, [])
+
+    def test_a_closed_gameweek_suggests_no_transfers_even_when_not_frozen(self):
+        # With the archive off, or a freeze that failed, a gameweek past its
+        # deadline is not frozen; the deadline itself closes transfers.
+        scout = TransferScout(deadline="2000-01-01T10:00:00Z")
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertFalse(result.frozen)
+        self.assertFalse(result.transfers_open)
+        self.assertEqual(result.transfers, [])
+
+    def test_a_player_now_unavailable_is_not_suggested_despite_the_forecast(self):
+        # The forecast still gives player 16 availability_factor 1.0.
+        for official in (
+            {"can_select": False},
+            {"status": "i"},
+            {"status": "s"},
+            {"chance_of_playing_next_round": 0},
+        ):
+            with self.subTest(official=official):
+                with patch("main.scout", TransferScout(official=official), create=True):
+                    result = asyncio.run(
+                        rate_public_manager_team(entry_id=123, gameweek=1)
+                    )
+
+                self.assertTrue(result.transfers_open)
+                self.assertEqual(result.transfers, [])
+
+    def test_a_squad_over_the_club_limit_is_flagged_and_not_offered_other_sales(self):
+        # Players 1, 7 and 13 are Club 1; moving player 4 there makes four.
+        scout = TransferScout(clubs={4: "Club 1"})
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertEqual(result.clubs_over_limit, {"Club 1": 4})
+        # Player 16 is a forward and no Club 1 player is, so no transfer
+        # FPL would accept raises the projection.
+        self.assertEqual(result.transfers, [])
 
     def test_team_rating_scores_squads_holding_unprojectable_players(self):
         with patch("main.scout", DepartedPlayerRatingScout(), create=True):
