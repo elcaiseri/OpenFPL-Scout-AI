@@ -33,7 +33,10 @@ responsive web dashboard and FastAPI service.
 - The dashboard includes Gameweek planning, deadline status, fixture context,
   pitch and table views, detailed player cards, and a manager team-rating mode.
 - A public FPL team ID can be scored from 0–100 against the same AI benchmark,
-  with separate starting-XI, captaincy, and availability signals.
+  with separate starting-XI, captaincy, and availability signals, plus up to
+  three affordable transfers that raise its projection.
+- The Gameweek and a rated team ID stay in the address bar (`?gw=`,
+  `?team=`), so any view can be bookmarked or shared.
 - Optional FPL Data enrichment can fill missing historical statistics from GW2
   without replacing official values.
 
