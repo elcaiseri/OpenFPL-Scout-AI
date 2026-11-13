@@ -8,7 +8,7 @@ class ResponseModel(BaseModel):
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
     strategy: str = "model-ensemble"
-    version: str = "6.2.0"
+    version: str = "6.4.0"
     source: str = "official-fpl"
     # True once the deadline has passed: the archived pre-deadline forecast.
     frozen: bool = False
@@ -40,7 +40,7 @@ class TeamRatingModel(BaseModel):
     risks: List[str] = Field(default_factory=list)
     squad: List[Dict[str, Any]] = Field(default_factory=list)
     strategy: str = "model-ensemble"
-    version: str = "6.2.0"
+    version: str = "6.4.0"
     source: str = "official-fpl"
     frozen: bool = False
     # The manager's bank at the last deadline, in £m, when FPL publishes it.
