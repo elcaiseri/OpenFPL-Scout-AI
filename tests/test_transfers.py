@@ -1,6 +1,6 @@
 import unittest
 
-from src.transfers import lineup_value, suggest_transfers
+from src.transfers import clubs_over_limit, lineup_value, suggest_transfers
 
 POSITIONS = [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]
 
@@ -128,6 +128,65 @@ class TransferSuggestionTests(unittest.TestCase):
         pool = [candidate(100, 1, 5.0, 5.0)]
 
         self.assertEqual(suggest_transfers(players, pool, bank=0.0), [])
+
+    def test_current_official_data_overrides_the_forecasts_availability(self):
+        players = squad(p13={"expected_points": 1.0})
+        # Each forecast says available (factor 1.0); official data has moved on.
+        pool = [
+            candidate(100, 4, 9.0, 5.0, can_select=False),
+            candidate(101, 4, 9.0, 5.0, status="i"),
+            candidate(102, 4, 9.0, 5.0, status="u"),
+            candidate(103, 4, 9.0, 5.0, chance_of_playing_next_round=0),
+            candidate(104, 4, 8.0, 5.0, status="d", chance_of_playing_next_round=75),
+        ]
+
+        suggestions = suggest_transfers(players, pool, bank=0.0)
+
+        # Only the doubtful player is still buyable.
+        self.assertEqual([item["in"]["id"] for item in suggestions], [104])
+
+    def test_an_over_limit_squad_is_only_offered_sales_from_that_club(self):
+        # The review's case: four Arsenal players after a real-life transfer.
+        players = squad(
+            p3={"team_name": "Arsenal"},
+            p4={"team_name": "Arsenal"},
+            p5={"team_name": "Arsenal"},
+            p8={"team_name": "Arsenal"},
+            p13={"expected_points": 1.0},
+        )
+        pool = [
+            candidate(100, 4, 9.0, 5.0, club="Everton"),
+            candidate(101, 2, 9.0, 5.0, club="Everton"),
+        ]
+
+        suggestions = suggest_transfers(players, pool, bank=0.0)
+
+        self.assertEqual(clubs_over_limit(players), {"Arsenal": 4})
+        self.assertEqual(
+            [(item["out"]["id"], item["in"]["id"]) for item in suggestions], [(3, 101)]
+        )
+        for item in suggestions:
+            after = [
+                player["team_name"]
+                for player in players
+                if player["id"] != item["out"]["id"]
+            ] + [item["in"]["team_name"]]
+            self.assertLessEqual(max(after.count(club) for club in set(after)), 3)
+
+    def test_a_swap_may_not_push_another_club_over_the_limit(self):
+        players = squad(
+            p13={"expected_points": 1.0},
+            p1={"team_name": "Everton"},
+            p3={"team_name": "Everton"},
+            p8={"team_name": "Everton"},
+        )
+
+        self.assertEqual(
+            suggest_transfers(
+                players, [candidate(100, 4, 9.0, 5.0, club="Everton")], bank=0.0
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":

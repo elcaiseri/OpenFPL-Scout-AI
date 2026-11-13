@@ -684,6 +684,7 @@ test('a fresh squad sends no refresh, and a failed refresh does not disturb the 
         assert.equal(app.appState.isLoading, false);
     }
 });
+
 // A browser address bar the app reads and rewrites.
 function addressBar(href) {
     const location = new URL(href);
@@ -707,7 +708,7 @@ function ratingResponse(entryId, gameweek, extra = {}) {
     });
 }
 
-function plannerApp(href, requests = []) {
+function plannerApp(href, requests = [], globals = {}) {
     const { location, history } = addressBar(href);
     const app = loadApp(async url => {
         requests.push(url);
@@ -719,7 +720,7 @@ function plannerApp(href, requests = []) {
         if (url === '/api/scout/sync-results') return response({ status: 'throttled' });
         if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
         throw new Error('Unexpected endpoint: ' + url);
-    }, { window: { location, history }, URL, URLSearchParams });
+    }, { window: { location, history }, URL, URLSearchParams, ...globals });
     app.appState.events = planner;
     app.appState.eventsCache = planner;
     return { app, location };
@@ -775,7 +776,7 @@ test('a shared Gameweek the planner no longer offers, or a malformed one, opens 
     }
 });
 
-test('suggested transfers are listed safely, explained when there are none, and hidden once frozen', () => {
+test('suggested transfers are listed safely, explained when there are none, and hidden once transfers close', () => {
     const app = loadApp(async () => response({}));
     const panel = app.document.getElementById('rating-transfers');
     const list = app.document.getElementById('rating-transfer-list');
@@ -785,20 +786,63 @@ test('suggested transfers are listed safely, explained when there are none, and 
         gain: 2.1349
     };
 
-    app.teamRating.transfers({ bank: 0.5, transfers: [transfer] });
+    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [transfer] });
     assert.equal(panel.hidden, false);
     assert.match(list.innerHTML, /&lt;img src=x&gt;/);
     assert.match(list.innerHTML, /ARS · £5\.9m/);
     assert.match(list.innerHTML, /\+2\.13 xPts/);
     assert.equal(app.document.getElementById('rating-bank').textContent, '£0.5m in the bank at the last deadline');
 
-    app.teamRating.transfers({ bank: 0.5, transfers: [] });
+    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [] });
     assert.match(list.innerHTML, /No affordable single transfer/);
 
-    app.teamRating.transfers({ bank: 0.5, transfers: [transfer], frozen: true });
+    // Past the deadline the panel goes, frozen forecast or not.
+    app.teamRating.transfers({ bank: 0.5, transfers_open: false, frozen: false, transfers: [transfer] });
     assert.equal(panel.hidden, true);
-    app.teamRating.transfers({ bank: null, transfers: [transfer] });
+    app.teamRating.transfers({ bank: 0.5, transfers_open: false, frozen: true, transfers: [transfer] });
     assert.equal(panel.hidden, true);
+    app.teamRating.transfers({ bank: null, transfers_open: true, transfers: [transfer] });
+    assert.equal(panel.hidden, true);
+});
+
+test('a squad over the club limit is told why only those sales are suggested', () => {
+    const app = loadApp(async () => response({}));
+    const note = app.document.getElementById('rating-club-limit');
+    const list = app.document.getElementById('rating-transfer-list');
+
+    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [], clubs_over_limit: { Arsenal: 4 } });
+    assert.equal(note.hidden, false);
+    assert.equal(note.textContent, 'Your squad has 4 Arsenal players. '
+        + 'FPL requires your next transfer to sell one of them, so only those sales are suggested.');
+    assert.match(list.innerHTML, /No affordable sale of one of those players/);
+
+    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [], clubs_over_limit: {} });
+    assert.equal(note.hidden, true);
+});
+
+test('a rating shown again after the AI squad keeps its team in the address bar and in the shared link', async () => {
+    let shared = null;
+    const navigator = { clipboard: { writeText: async url => { shared = url; } } };
+    const { app, location } = plannerApp('https://openfpl.kassem.dev/', [], { navigator });
+    // Keep the Share button's click handler, which the fake DOM would drop.
+    const shareButton = app.document.getElementById('share-rating');
+    shareButton.addEventListener = (type, handler) => { shareButton[`on${type}`] = handler; };
+    app.interactions.init();
+    await app.app.start();
+    await app.gameweekManager.load(3);
+
+    app.teamRating.setMode('rating');
+    await app.teamRating.rate(123);
+    app.teamRating.setMode('scout');
+    assert.equal(location.search, '?gw=3');
+    app.teamRating.setMode('rating');
+    assert.equal(location.search, '?gw=3&team=123');
+
+    // The Share button links the rating on screen, whatever the address bar says.
+    location.href = 'https://openfpl.kassem.dev/';
+    shareButton.onclick();
+    await until(() => shared);
+    assert.equal(shared, 'https://openfpl.kassem.dev/?team=123&gw=3');
 });
 
 function listPlayers() {
@@ -851,8 +895,19 @@ test('cards carry a short key, and the briefing opens the player it names', () =
     // A key from an earlier squad no longer opens anything.
     app.dashboardRenderer.squad(listPlayers().slice(0, 1));
     app.document.getElementById('dialog-player-name').textContent = '';
-    app.interactions.showPlayer({ dataset: { player: '5' } });
+    app.interactions.showPlayer({ dataset: { player: '3' } });
     assert.equal(app.document.getElementById('dialog-player-name').textContent, '');
+});
+
+test('sorting the list never adds player entries beyond the squad on screen', () => {
+    const app = loadApp(async () => response({}));
+    app.dashboardRenderer.squad(listPlayers());
+    assert.equal(app.appState.shownPlayers.size, 3);
+
+    for (let sort = 0; sort < 100; sort++) app.tableSorting.sortBy(sort % 2 ? 'price' : 'player');
+
+    assert.equal(app.appState.shownPlayers.size, 3);
+    assert.deepEqual(Array.from(app.appState.shownPlayers.keys()).sort(), ['1', '2', '3']);
 });
 
 test('loading shows placeholder cards in formation under its status', () => {

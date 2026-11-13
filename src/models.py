@@ -45,9 +45,15 @@ class TeamRatingModel(BaseModel):
     frozen: bool = False
     # The manager's bank at the last deadline, in £m, when FPL publishes it.
     bank: Optional[float] = None
+    # Whether transfers can still be made: the gameweek's official deadline
+    # is ahead (independent of forecast freezing).
+    transfers_open: bool = False
     # Single transfers that raise the squad's projection within the bank, best
-    # first; empty once the gameweek is frozen (see src/transfers.py).
+    # first; empty unless transfers_open (see src/transfers.py).
     transfers: List[Dict[str, Any]] = Field(default_factory=list)
+    # Clubs with more than three of the squad's players, e.g. after a
+    # real-life transfer; FPL's next transfer out must come from one.
+    clubs_over_limit: Dict[str, int] = Field(default_factory=dict)
 
 
 class OfficialFPLCollectionModel(BaseModel):

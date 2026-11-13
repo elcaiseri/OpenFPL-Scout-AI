@@ -2096,6 +2096,17 @@ select {
     background: rgba(57, 241, 255, 0.08);
 }
 
+.transfer-limit {
+    margin-top: 12px;
+    padding: 10px 12px;
+    color: #ffd2e8;
+    font-size: 0.66rem;
+    line-height: 1.45;
+    border: 1px solid rgba(255, 79, 167, 0.3);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 79, 167, 0.07);
+}
+
 .transfer-list {
     display: grid;
     gap: 8px;

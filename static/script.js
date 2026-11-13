@@ -306,6 +306,7 @@ const dom = new Proxy({}, {
             ratingGap: 'rating-gap', ratingStrengths: 'rating-strengths',
             ratingRisks: 'rating-risks', ratingTransfers: 'rating-transfers',
             ratingTransferList: 'rating-transfer-list', ratingBank: 'rating-bank',
+            ratingClubLimit: 'rating-club-limit',
             shareRating: 'share-rating',
             credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
             dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
@@ -494,12 +495,15 @@ const playerRenderer = {
         };
     },
 
-    // Cards and rows carry a short key; the player itself stays in memory,
-    // instead of ~2KB of JSON per card in the page.
+    // Cards and rows carry the player's FPL id; the player itself stays in
+    // memory, instead of ~2KB of JSON per card in the page. A card and its
+    // list row share one entry, so sorting the list adds none.
     dataAttribute(player) {
-        const key = String(appState.shownPlayers.size);
+        const key = player.id !== null && player.id !== undefined
+            ? String(player.id)
+            : `name:${player.web_name}|${player.team_name}`;
         appState.shownPlayers.set(key, this.format(player));
-        return key;
+        return utils.escapeHtml(key);
     },
 
     roleBadge(player) {
@@ -1055,6 +1059,9 @@ const teamRating = {
         dom.ratingRisks.innerHTML = (data.risks || [])
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
         this.transfers(data);
+        // Also when a rating already loaded is shown again (AI squad → Rate
+        // your team): the address bar names the team on screen.
+        shareLink.write();
         dom.teamRatingResult.hidden = false;
         dom.squadDisplay.hidden = false;
         dom.squadTools.hidden = false;
@@ -1067,12 +1074,23 @@ const teamRating = {
     transfers(data) {
         // Number(null) is 0, so a missing bank must not read as £0.0m.
         const bank = data.bank === null || data.bank === undefined ? null : utils.number(data.bank);
-        dom.ratingTransfers.hidden = Boolean(data.frozen) || bank === null;
+        // transfers_open comes from the gameweek's official deadline.
+        dom.ratingTransfers.hidden = !data.transfers_open || bank === null;
         if (dom.ratingTransfers.hidden) return;
         dom.ratingBank.textContent = `${utils.money(bank)} in the bank at the last deadline`;
+        // A real-life transfer can leave more than three players from a club;
+        // FPL then only accepts a transfer that sells one of them.
+        const overLimit = Object.entries(data.clubs_over_limit || {});
+        dom.ratingClubLimit.hidden = !overLimit.length;
+        dom.ratingClubLimit.textContent = overLimit.length
+            ? `Your squad has ${overLimit.map(([club, count]) => `${count} ${club}`).join(' and ')} players. `
+                + 'FPL requires your next transfer to sell one of them, so only those sales are suggested.'
+            : '';
         const transfers = Array.isArray(data.transfers) ? data.transfers : [];
         if (!transfers.length) {
-            dom.ratingTransferList.innerHTML = '<li class="transfer-empty">No affordable single transfer raises this squad\'s projection.</li>';
+            dom.ratingTransferList.innerHTML = overLimit.length
+                ? '<li class="transfer-empty">No affordable sale of one of those players raises this squad\'s projection.</li>'
+                : '<li class="transfer-empty">No affordable single transfer raises this squad\'s projection.</li>';
             return;
         }
         const player = (item, direction) => `
@@ -1161,9 +1179,22 @@ const shareLink = {
         }
     },
 
+    // The link to a rating as shown: its team and, unless it is the opening
+    // one, its Gameweek, whatever the address bar says.
+    ratingUrl(rating) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('team', String(Number(rating.entry_id)));
+        const gameweek = Number(rating.gameweek);
+        if (appState.openingGameweek && gameweek !== appState.openingGameweek) {
+            url.searchParams.set('gw', String(gameweek));
+        } else {
+            url.searchParams.delete('gw');
+        }
+        return url.href;
+    },
+
     // The phone's share sheet where there is one, otherwise the clipboard.
-    async share(button, text) {
-        const url = window.location.href;
+    async share(button, text, url = window.location.href) {
         const label = button.textContent;
         try {
             if (navigator.share) {
@@ -1374,7 +1405,8 @@ const interactions = {
             if (!rating) return;
             shareLink.share(dom.shareRating,
                 `${rating.team_name || 'My FPL team'} scores ${Math.round(utils.number(rating.rating, 0))}/100 `
-                + `for Gameweek ${rating.gameweek} on OpenFPL Scout AI`);
+                + `for Gameweek ${rating.gameweek} on OpenFPL Scout AI`,
+                shareLink.ratingUrl(rating));
         });
         dom.teamRatingForm.addEventListener('submit', event => {
             event.preventDefault();

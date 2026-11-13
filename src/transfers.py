@@ -15,6 +15,9 @@ from src.team_rating import (
 
 # Below this gain a transfer is noise in the projections, not advice.
 MINIMUM_GAIN = 0.1
+# Official statuses of players who cannot be bought to play: injured,
+# suspended, unavailable (left the league) and not in the squad.
+UNAVAILABLE_STATUSES = {"i", "s", "u", "n"}
 
 
 def lineup_value(players: Sequence[Mapping[str, Any]]) -> float:
@@ -25,6 +28,50 @@ def lineup_value(players: Sequence[Mapping[str, Any]]) -> float:
     """
     lineup, total = _best_benchmark_lineup(players)
     return total + max(_expected_points(player) for player in lineup)
+
+
+def currently_available(player: Mapping[str, Any]) -> bool:
+    """Whether current official data lets a manager buy this player to play.
+
+    A forecast's ``availability_factor`` can predate official news, so the
+    current selectability, status and chance of playing decide first; the
+    factor only matters for a player they all allow.
+    """
+    if player.get("can_select") is False:
+        return False
+    if str(player.get("status") or "a").casefold() in UNAVAILABLE_STATUSES:
+        return False
+    chance = _number(player.get("chance_of_playing_next_round"), None)
+    if chance is not None and chance <= 0:
+        return False
+    return _availability(player) > 0
+
+
+def clubs_over_limit(
+    squad: Sequence[Mapping[str, Any]], max_per_club: int = 3
+) -> Dict[str, int]:
+    """Clubs with more than ``max_per_club`` players in the squad.
+
+    A real-life transfer between Premier League clubs can leave a published
+    squad above the limit; FPL then requires the next transfer out to come
+    from that club.
+    """
+    clubs = Counter(player.get("team_name") for player in squad)
+    return {
+        str(club): count
+        for club, count in sorted(clubs.items(), key=lambda item: str(item[0]))
+        if club is not None and count > max_per_club
+    }
+
+
+def _within_club_limit(
+    clubs: Counter, outgoing: Mapping[str, Any], incoming: Mapping[str, Any], limit: int
+) -> bool:
+    """Whether every club is within the limit once this swap is made."""
+    after = clubs.copy()
+    after[outgoing.get("team_name")] -= 1
+    after[incoming.get("team_name")] += 1
+    return all(count <= limit for count in after.values())
 
 
 def _summary(player: Mapping[str, Any]) -> Dict[str, Any]:
@@ -48,13 +95,16 @@ def suggest_transfers(
 ) -> List[Dict[str, Any]]:
     """Return the best single transfers, largest projected gain first.
 
-    Each suggestion swaps one squad player for an available player in the
-    same position whose current price is at most ``bank`` plus the outgoing
-    player's current price, and keeps every club at ``max_per_club`` players
-    or fewer. FPL does not publish selling prices, which can be lower than
-    current prices, so affordability is approximate. Each outgoing and
-    incoming player appears in at most one suggestion. Without a bank, or
-    without a price for a player, nothing is suggested for that player.
+    Each suggestion swaps one squad player for a player in the same position
+    whom current official data lets a manager buy to play
+    (``currently_available``), whose current price is at most ``bank`` plus
+    the outgoing player's current price, and after which every club has
+    ``max_per_club`` players or fewer. So a squad already over the limit is
+    only offered sales from that club, as FPL requires. FPL does not publish
+    selling prices, which can be lower than current prices, so affordability
+    is approximate. Each outgoing and incoming player appears in at most one
+    suggestion. Without a bank, or without a price for a player, nothing is
+    suggested for that player.
     """
     if bank is None or len(squad) != 15:
         return []
@@ -65,7 +115,7 @@ def suggest_transfers(
             player
             for player in candidates
             if int(player["id"]) not in squad_ids
-            and _availability(player) > 0
+            and currently_available(player)
             and _number(player.get("price"), None) is not None
         ),
         key=_expected_points,
@@ -88,11 +138,7 @@ def suggest_transfers(
             for player in eligible
             if _position(player) == position
             and _number(player.get("price")) <= budget + 1e-9
-            and (
-                clubs[player.get("team_name")]
-                - (player.get("team_name") == outgoing.get("team_name"))
-                < max_per_club
-            )
+            and _within_club_limit(clubs, outgoing, player, max_per_club)
         ][:limit]
         for incoming in replacements:
             changed = [incoming if player is outgoing else player for player in squad]
