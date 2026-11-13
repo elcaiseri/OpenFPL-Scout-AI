@@ -16,6 +16,9 @@ class ResponseModel(BaseModel):
     # How a frozen forecast was frozen: "deadline" (captured before it) or
     # "after-deadline" (frozen on the gameweek's first recall after it).
     freeze_method: Optional[str] = None
+    # True when an older forecast was served so the page did not wait; the
+    # page then calls POST /api/scout/refresh, where the prediction runs.
+    refresh_due: bool = False
     credits: str = "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
 
 

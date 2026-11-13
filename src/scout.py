@@ -6,7 +6,7 @@ import copy
 import os
 import re
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -139,8 +139,8 @@ class _LiveForecast:
     """An open gameweek's live predictions and how long they may be served.
 
     Until ``fresh_until`` they are served as they are. Until ``stale_until``
-    they are still served, while a newer forecast is predicted in the
-    background. Both are ``FPLScout.clock`` times.
+    they may still be served to a caller that will request a refresh (see
+    ``FPLScout.refresh_predictions``). Both are ``FPLScout.clock`` times.
     """
 
     predictions: pd.DataFrame
@@ -210,8 +210,10 @@ class FPLScout:
         # Live predictions of an open gameweek only change when official data
         # does, and the official client caches that for minutes, so repeat
         # requests reuse one prediction instead of rerunning the ensemble.
-        # A forecast older than the TTL is still served, up to the stale
-        # limit, while a new one is predicted in the background. 0 disables.
+        # A forecast older than the TTL may still be served, up to the stale
+        # limit, to a caller that then asks for a refresh in its own request
+        # (see refresh_predictions). Nothing runs outside a request: under
+        # Cloud Run's request-based billing it would have no CPU. 0 disables.
         self.prediction_cache_ttl = float(
             inference_config.get(
                 "prediction_cache_ttl_seconds",
@@ -223,8 +225,8 @@ class FPLScout:
                 "prediction_stale_seconds", 3 * self.prediction_cache_ttl
             )
         )
-        # After a cold start, the open gameweek's last archived forecast is
-        # served while the new instance predicts, if it is at most this old.
+        # After a cold start, the open gameweek's last archived forecast may be
+        # served the same way, if it is at most this old.
         self.prediction_restore_max_age = float(
             inference_config.get("prediction_restore_max_age_seconds", 3600)
         )
@@ -236,11 +238,13 @@ class FPLScout:
                 "inference.prediction_cache_ttl_seconds"
             )
         self._live_forecasts: Dict[int, _LiveForecast] = {}
+        # A prediction under way, which other requests for its gameweek wait
+        # for. It always runs in the thread of the request that started it.
         self._pending_forecasts: Dict[int, Future] = {}
+        # The official data each cached forecast's availability was last
+        # checked against, so the check reruns only when that data changes.
+        self._availability_checked: Dict[int, Tuple[_LiveForecast, Any]] = {}
         self._forecast_lock = RLock()
-        self._forecast_executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="openfpl-forecast"
-        )
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
         cold_start_config = inference_config.get("cold_start", {})
@@ -792,7 +796,11 @@ class FPLScout:
         return self.predict_players(data, gameweek=gameweek)
 
     def get_official_predictions(
-        self, gameweek: Optional[int] = None, *, collect_results: bool = True
+        self,
+        gameweek: Optional[int] = None,
+        *,
+        collect_results: bool = True,
+        allow_stale: bool = False,
     ) -> pd.DataFrame:
         """Generate predictions from official history plus guarded enrichment.
 
@@ -801,7 +809,9 @@ class FPLScout:
         old gameweek never re-predicts it with newer data. A closed gameweek
         with no frozen forecast is frozen on its first recall. Open gameweeks
         are predicted live, and the prediction is reused for a few minutes
-        (see ``_live_predictions``).
+        (see ``_live_predictions``). With ``allow_stale``, an older forecast
+        may be returned with ``attrs["refresh_due"]`` set; the caller then
+        asks for ``refresh_predictions`` in a request of its own.
         """
         resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
         frozen = self.data_archive.frozen_forecast(
@@ -818,78 +828,189 @@ class FPLScout:
             if collect_results:
                 self.data_archive.collect_results(self.official_client)
             return frozen
-        return self._live_predictions(resolved_gameweek)
+        return self._live_predictions(resolved_gameweek, allow_stale=allow_stale)
 
-    def _live_predictions(self, gameweek: int) -> pd.DataFrame:
+    def refresh_predictions(self, gameweek: Optional[int] = None) -> str:
+        """Predict an open gameweek again if its cached forecast is not fresh.
+
+        Called in its own request after a caller was served a stale or
+        restored forecast, so the prediction has the request's CPU. Joins a
+        prediction already under way. Returns "fresh" when nothing was due,
+        "refreshed" after predicting, or "not-cached" for a gameweek this
+        cache does not hold (closed, or caching disabled).
+        """
+        resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        if not self._caches(resolved_gameweek):
+            return "not-cached"
+        cached = self._usable_forecast(resolved_gameweek)
+        if cached is not None and self.clock() < cached.fresh_until:
+            return "fresh"
+        self._predict_once(resolved_gameweek)
+        return "refreshed"
+
+    def _caches(self, gameweek: int) -> bool:
+        """Whether this gameweek's live forecast is cached: it must be open.
+
+        Once its deadline passes, requests read the frozen forecast, or
+        predict again so the gameweek can be frozen (see
+        ``DataArchive.freeze_after_deadline``), exactly as without the cache.
+        """
+        return self.prediction_cache_ttl > 0 and self.data_archive.gameweek_is_open(
+            self.official_client, gameweek
+        )
+
+    def _live_predictions(self, gameweek: int, *, allow_stale: bool) -> pd.DataFrame:
         """Return a live forecast, predicting at most once at a time.
 
-        Only an open gameweek's forecast is reused. Once its deadline passes,
-        requests read the frozen forecast, or predict again so the gameweek
-        can be frozen (see ``DataArchive.freeze_after_deadline``), exactly as
-        without this cache. Requests for a gameweek that is already being
-        predicted wait for that prediction rather than starting another,
-        which on one CPU would slow both.
+        A fresh forecast is reused. With ``allow_stale``, one past its TTL
+        (within the stale limit), or after a cold start the archived one, is
+        returned marked ``refresh_due``. Otherwise the request predicts,
+        or waits for the prediction another request has under way.
         """
-        if self.prediction_cache_ttl <= 0 or not self.data_archive.gameweek_is_open(
-            self.official_client, gameweek
-        ):
+        if not self._caches(gameweek):
             return self._predict_live(gameweek)
+        cached = self._usable_forecast(gameweek)
+        if cached is not None:
+            fresh = self.clock() < cached.fresh_until
+            if fresh or allow_stale:
+                return self._served(cached.predictions, refresh_due=not fresh)
+        elif allow_stale:
+            restored = self._restored_forecast(gameweek)
+            if restored is not None:
+                return self._served(restored, refresh_due=True)
+        return self._served(self._predict_once(gameweek), refresh_due=False)
+
+    @staticmethod
+    def _served(predictions: pd.DataFrame, *, refresh_due: bool) -> pd.DataFrame:
+        served = _copy_predictions(predictions)
+        served.attrs["refresh_due"] = refresh_due
+        return served
+
+    def _usable_forecast(self, gameweek: int) -> Optional[_LiveForecast]:
+        """The cached forecast, unless it is past the stale limit or official
+        availability has changed since it was made.
+
+        Availability (injuries, suspensions, departures) moves projections,
+        so a forecast made before such news is dropped and predicted again,
+        however recent: news is never older than the official data cache.
+        """
         with self._forecast_lock:
             cached = self._live_forecasts.get(gameweek)
-            now = self.clock()
-            if cached is not None and now < cached.stale_until:
-                if now >= cached.fresh_until:
-                    self._start_forecast(gameweek)
-                return _copy_predictions(cached.predictions)
-            pending = self._pending_forecasts.get(gameweek)
-        # Only an instance that has not predicted this gameweek yet (just
-        # started) falls back to the archive; otherwise the stale limit holds.
-        if pending is None and cached is None:
-            restored = self.data_archive.recent_open_forecast(
-                self.official_client,
-                gameweek,
-                timedelta(seconds=self.prediction_restore_max_age),
-                model_versions=self._model_versions(),
-            )
-            if restored is not None:
+            checked = self._availability_checked.get(gameweek)
+        if cached is None or self.clock() >= cached.stale_until:
+            return None
+        # The official client returns the same object until it fetches new
+        # data, and a check against unchanged data cannot find news.
+        official = self._current_bootstrap()
+        if (
+            official is not None
+            and checked is not None
+            and checked[0] is cached
+            and checked[1] is official
+        ):
+            return cached
+        if not self._availability_changed(cached.predictions):
+            if official is not None:
                 with self._forecast_lock:
-                    now = self.clock()
-                    # Already stale, so the first request predicts again.
-                    self._live_forecasts.setdefault(
-                        gameweek,
-                        _LiveForecast(
-                            restored, now, now + self.prediction_stale_ttl
-                        ),
-                    )
-                    self._start_forecast(gameweek)
-                return _copy_predictions(restored)
+                    self._availability_checked[gameweek] = (cached, official)
+            return cached
+        logger.info("Official availability changed; predicting GW%d again", gameweek)
         with self._forecast_lock:
-            pending = self._start_forecast(gameweek)
-        return _copy_predictions(pending.result())
+            if self._live_forecasts.get(gameweek) is cached:
+                del self._live_forecasts[gameweek]
+        return None
 
-    def _start_forecast(self, gameweek: int) -> Future:
-        """Predict a gameweek in the background unless that is under way.
+    def _current_bootstrap(self) -> Any:
+        """The official client's current data, or None if it is unavailable."""
+        bootstrap = getattr(self.official_client, "bootstrap", None)
+        if not callable(bootstrap):
+            return None
+        try:
+            return bootstrap()
+        except Exception:
+            return None
 
-        Called with ``_forecast_lock`` held.
+    def _availability_changed(self, predictions: pd.DataFrame) -> bool:
+        """Whether any player's current official availability factor differs
+        from the one the forecast was made with.
+
+        Both come from ``_attach_availability``, so they match exactly while
+        official status, chance of playing and selectability are unchanged.
+        If current availability cannot be read, the forecast is kept: the
+        prediction it would trigger needs the same official data.
         """
-        pending = self._pending_forecasts.get(gameweek)
-        if pending is None:
-            pending = self._forecast_executor.submit(self._refresh_forecast, gameweek)
-            self._pending_forecasts[gameweek] = pending
-        return pending
+        if not {"id", "availability_factor"} <= set(predictions.columns):
+            return False
+        try:
+            current = self._official_availability()
+        except Exception as error:
+            logger.warning("Could not check official availability: %s", error)
+            return False
+        if current is None:
+            return False
+        forecast = predictions[["id", "availability_factor"]].drop_duplicates("id")
+        now = self._attach_availability(forecast[["id"]], current)
+        made = pd.to_numeric(forecast["availability_factor"], errors="coerce")
+        return not np.allclose(
+            made.to_numpy(dtype=float),
+            now["availability_factor"].to_numpy(dtype=float),
+            equal_nan=True,
+        )
 
-    def _refresh_forecast(self, gameweek: int) -> pd.DataFrame:
+    def _restored_forecast(self, gameweek: int) -> Optional[pd.DataFrame]:
+        """The archived forecast, for an instance that has not predicted this
+        gameweek yet (just started), if it is recent, was made by the running
+        models, and official availability has not changed since."""
+        with self._forecast_lock:
+            if gameweek in self._pending_forecasts or gameweek in self._live_forecasts:
+                return None
+        restored = self.data_archive.recent_open_forecast(
+            self.official_client,
+            gameweek,
+            timedelta(seconds=self.prediction_restore_max_age),
+            model_versions=self._model_versions(),
+        )
+        if restored is None or self._availability_changed(restored):
+            return None
+        with self._forecast_lock:
+            # The archive read ran unlocked: another request may have predicted
+            # or started predicting meanwhile, and its forecast wins.
+            if gameweek in self._live_forecasts or gameweek in self._pending_forecasts:
+                return None
+            now = self.clock()
+            # Already past its TTL, so the next refresh predicts again.
+            self._live_forecasts[gameweek] = _LiveForecast(
+                restored, now, now + self.prediction_stale_ttl
+            )
+        return restored
+
+    def _predict_once(self, gameweek: int) -> pd.DataFrame:
+        """Predict in this request, or wait for the request already doing so.
+
+        The cache is checked again under the lock, so a request that reaches
+        this after unlocked work (an archive read) reuses a forecast another
+        request has just made instead of predicting it twice.
+        """
+        with self._forecast_lock:
+            cached = self._live_forecasts.get(gameweek)
+            if cached is not None and self.clock() < cached.fresh_until:
+                return cached.predictions
+            pending = self._pending_forecasts.get(gameweek)
+            owner = pending is None
+            if owner:
+                pending = Future()
+                self._pending_forecasts[gameweek] = pending
+        if not owner:
+            return pending.result()
         try:
             predictions = self._predict_live(gameweek)
-        except Exception as error:
-            # A waiting request re-raises and logs this; a background refresh
-            # keeps serving the previous forecast until it is too stale.
-            logger.warning("Could not predict GW%d: %s", gameweek, error)
+        except BaseException as error:
             with self._forecast_lock:
                 self._pending_forecasts.pop(gameweek, None)
+            pending.set_exception(error)
             raise
-        # The result is stored as the prediction stops being pending, so no
-        # request in between starts the same prediction again.
+        # Stored as it stops being pending, so no request in between starts
+        # the same prediction again.
         with self._forecast_lock:
             self._pending_forecasts.pop(gameweek, None)
             if predictions.attrs.get("frozen"):
@@ -903,6 +1024,7 @@ class FPLScout:
                     now + self.prediction_cache_ttl,
                     now + self.prediction_stale_ttl,
                 )
+        pending.set_result(predictions)
         return predictions
 
     def _model_versions(self) -> Dict[str, Dict[str, Any]]:
@@ -916,10 +1038,6 @@ class FPLScout:
             for name, metadata in self.config.get("models", {}).items()
             if isinstance(metadata, Mapping)
         }
-
-    def close(self, wait: bool = False) -> None:
-        """Stop background predictions; one under way is left to finish."""
-        self._forecast_executor.shutdown(wait=wait)
 
     def _predict_live(self, gameweek: int) -> pd.DataFrame:
         """Predict a gameweek from current official history, then archive it."""

@@ -15,6 +15,7 @@ const CONFIG = {
     endpoints: {
         scout: '/api/scout',
         syncResults: '/api/scout/sync-results',
+        refresh: gameweek => `/api/scout/refresh?gameweek=${gameweek}`,
         teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
         fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
@@ -55,6 +56,8 @@ const appState = {
     eventsCache: null,
     eventsTimestamp: 0,
     resultsSyncPromise: null,
+    // Refresh requests in flight, one per Gameweek.
+    refreshPromises: new Map(),
     teamCodes: new Map(),
     pitchWidth: 0,
     // Players on the pitch and in the list, by their cards' data-player key.
@@ -397,10 +400,29 @@ const dataLoader = {
             fixturesAvailable,
             syncedAt: new Date()
         };
-        if (season.available && fixturesAvailable) {
+        // A stale squad is not kept: the next view of its Gameweek asks again
+        // and gets the refreshed forecast.
+        if (season.available && fixturesAvailable && !scout.refresh_due) {
             appState.dashboardCache.set(gameweek, dashboard);
         }
         return dashboard;
+    },
+
+    // The server answered with an older forecast so the page did not wait
+    // (refresh_due). The new prediction runs in this request of its own,
+    // which is when request-billed Cloud Run gives the server CPU.
+    refreshPredictions(gameweek) {
+        const key = Number(gameweek);
+        if (appState.refreshPromises.has(key)) return appState.refreshPromises.get(key);
+        const request = utils.fetchJson(CONFIG.endpoints.refresh(key), {
+            method: 'POST', timeoutMs: 0
+        }).catch(error => {
+            console.warn('Squad refresh unavailable:', error);
+        }).finally(() => {
+            appState.refreshPromises.delete(key);
+        });
+        appState.refreshPromises.set(key, request);
+        return request;
     },
 
     syncResults() {
@@ -914,6 +936,7 @@ const gameweekManager = {
         if (!keepSaved) dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             let resultsSyncStarted = false;
+            let refreshStarted = false;
             const publish = data => {
                 // A newer load owns the screen; this one only fills the cache.
                 if (!isCurrent()) return;
@@ -926,6 +949,10 @@ const gameweekManager = {
                 if (data.frozen && !resultsSyncStarted) {
                     resultsSyncStarted = true;
                     dataLoader.syncResults();
+                }
+                if (data.refresh_due && !refreshStarted) {
+                    refreshStarted = true;
+                    dataLoader.refreshPredictions(gameweek);
                 }
                 // The squad is on screen. Player metadata and fixtures may
                 // still be loading, but the Gameweek can already be changed

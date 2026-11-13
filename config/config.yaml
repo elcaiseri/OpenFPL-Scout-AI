@@ -61,12 +61,15 @@ inference:
   fixture_cache_ttl_seconds: 300
   clip_min: 0.0
   max_players_per_team: 3
-  # An open gameweek's live prediction is reused for this long (0 disables).
+  # An open gameweek's live prediction is reused for this long (0 disables),
+  # unless official availability (injuries, suspensions) changes sooner.
   prediction_cache_ttl_seconds: 300
-  # An older one is still served, while a new one is predicted, up to this age.
+  # Up to this age, the web page may get an older one at once; it then asks
+  # for POST /api/scout/refresh, where the new prediction runs. Other callers
+  # predict first.
   prediction_stale_seconds: 900
-  # After a cold start, the open gameweek's archived forecast is served while
-  # the new instance predicts, if it is at most this old (0 disables).
+  # After a cold start, the web page may get the open gameweek's archived
+  # forecast the same way, if it is at most this old (0 disables).
   prediction_restore_max_age_seconds: 3600
   cold_start:
     enabled: true
