@@ -62,6 +62,8 @@ const appState = {
     pitchWidth: 0,
     // Players on the pitch and in the list, by their cards' data-player key.
     shownPlayers: new Map(),
+    // Whether the rating's transfer suggestions were opened with their button.
+    transfersShown: false,
     // The List view's order: a column and a direction.
     tableSort: { key: 'xpts', direction: 'desc' },
     tableRows: [],
@@ -319,6 +321,7 @@ const dom = new Proxy({}, {
             ratingRisks: 'rating-risks', ratingTransfers: 'rating-transfers',
             ratingTransferList: 'rating-transfer-list', ratingBank: 'rating-bank',
             ratingClubLimit: 'rating-club-limit',
+            transfersToggle: 'transfers-toggle', transfersToggleNote: 'transfers-toggle-note',
             shareRating: 'share-rating',
             credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
             dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
@@ -623,10 +626,11 @@ const dashboardRenderer = {
         clearInterval(appState.countdownTimer);
         const update = () => {
             dom.deadlineCountdown.textContent = utils.countdown(deadline);
-            // Suggestions on screen close once their deadline passes.
+            // At the deadline the transfers button disables itself and any
+            // suggestions on screen close.
             const rating = appState.ratingData;
-            if (rating && !dom.ratingTransfers.hidden && utils.deadlinePassed(rating.gameweek)) {
-                dom.ratingTransfers.hidden = true;
+            if (rating && !dom.transfersToggle.disabled && utils.deadlinePassed(rating.gameweek)) {
+                teamRating.transfers(rating);
             }
         };
         update();
@@ -1062,6 +1066,9 @@ const teamRating = {
     },
 
     render(data) {
+        // A new rating starts with its suggestions closed; showing the same
+        // one again keeps them as they were.
+        if (appState.ratingData !== data) appState.transfersShown = false;
         appState.ratingData = data;
         const score = utils.number(data.rating, 0);
         dom.ratingScore.textContent = String(Math.round(score));
@@ -1092,14 +1099,51 @@ const teamRating = {
     },
 
     // Suggestions exist only before the deadline and with a published bank.
-    transfers(data) {
+    // Whether transfers can still be suggested for this rating, and if not,
+    // why. transfers_open is the server's answer when the rating loaded; the
+    // deadline is checked again here, as a page can stay open past it.
+    transferWindow(data) {
         // Number(null) is 0, so a missing bank must not read as £0.0m.
         const bank = data.bank === null || data.bank === undefined ? null : utils.number(data.bank);
-        // transfers_open is the server's answer when the rating loaded; the
-        // deadline is checked again here, as a page can stay open past it.
-        dom.ratingTransfers.hidden = !data.transfers_open || bank === null
-            || utils.deadlinePassed(data.gameweek);
-        if (dom.ratingTransfers.hidden) return;
+        const gameweek = Number(data.gameweek);
+        if (!data.transfers_open || utils.deadlinePassed(gameweek)) {
+            return {
+                open: false,
+                reason: Number.isFinite(gameweek)
+                    ? `Transfers are closed: the Gameweek ${gameweek} deadline has passed.`
+                    : 'Transfers are closed for this Gameweek.'
+            };
+        }
+        if (bank === null) {
+            return { open: false, reason: 'FPL has not published this team\'s bank, so transfers cannot be costed.' };
+        }
+        return {
+            open: true,
+            bank,
+            reason: Number.isFinite(gameweek) ? `Available until the Gameweek ${gameweek} deadline.` : ''
+        };
+    },
+
+    // The suggestions open from their button, which works only while the
+    // Gameweek's deadline is ahead.
+    toggleTransfers() {
+        const data = appState.ratingData;
+        if (!data || !this.transferWindow(data).open) return;
+        appState.transfersShown = !appState.transfersShown;
+        this.transfers(data);
+    },
+
+    transfers(data) {
+        const access = this.transferWindow(data);
+        const shown = access.open && appState.transfersShown;
+        dom.transfersToggle.disabled = !access.open;
+        dom.transfersToggle.textContent = !access.open ? 'Suggested transfers closed'
+            : shown ? 'Hide suggested transfers' : 'Show suggested transfers';
+        dom.transfersToggle.setAttribute('aria-expanded', String(shown));
+        dom.transfersToggleNote.textContent = access.reason;
+        dom.ratingTransfers.hidden = !shown;
+        if (!shown) return;
+        const bank = access.bank;
         dom.ratingBank.textContent = `${utils.money(bank)} in the bank at the last deadline`;
         // A real-life transfer can leave more than three players from a club;
         // FPL then only accepts a transfer that sells one of them.
@@ -1423,6 +1467,7 @@ const interactions = {
         document.querySelectorAll('[data-squad-mode-link]').forEach(link => {
             link.addEventListener('click', () => this.openSquadMode(link.dataset.squadModeLink));
         });
+        dom.transfersToggle.addEventListener('click', () => teamRating.toggleTransfers());
         dom.shareRating.addEventListener('click', () => {
             const rating = appState.ratingData;
             if (!rating) return;

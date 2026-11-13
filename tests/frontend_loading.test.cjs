@@ -776,32 +776,81 @@ test('a shared Gameweek the planner no longer offers, or a malformed one, opens 
     }
 });
 
-test('suggested transfers are listed safely, explained when there are none, and hidden once transfers close', () => {
+test('suggested transfers open from their button, are listed safely, and the button closes with transfers', () => {
     const app = loadApp(async () => response({}));
     const panel = app.document.getElementById('rating-transfers');
     const list = app.document.getElementById('rating-transfer-list');
+    const toggle = app.document.getElementById('transfers-toggle');
+    const note = app.document.getElementById('transfers-toggle-note');
     const transfer = {
         out: { web_name: '<img src=x>', team_name: 'Arsenal', price: 5.9, expected_points: 2.1 },
         in: { web_name: 'Pickford', team_name: 'Everton', price: 5.4, expected_points: 4.2 },
         gain: 2.1349
     };
+    const show = data => {
+        app.appState.ratingData = data;
+        app.teamRating.transfers(data);
+    };
 
-    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [transfer] });
+    // Open: the button works, and the suggestions wait for it.
+    show({ gameweek: 11, bank: 0.5, transfers_open: true, transfers: [transfer] });
+    assert.equal(toggle.disabled, false);
+    assert.equal(toggle.textContent, 'Show suggested transfers');
+    assert.equal(note.textContent, 'Available until the Gameweek 11 deadline.');
+    assert.equal(panel.hidden, true);
+
+    app.teamRating.toggleTransfers();
     assert.equal(panel.hidden, false);
+    assert.equal(toggle.textContent, 'Hide suggested transfers');
     assert.match(list.innerHTML, /&lt;img src=x&gt;/);
     assert.match(list.innerHTML, /ARS · £5\.9m/);
     assert.match(list.innerHTML, /\+2\.13 xPts/);
     assert.equal(app.document.getElementById('rating-bank').textContent, '£0.5m in the bank at the last deadline');
 
-    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [] });
+    app.teamRating.toggleTransfers();
+    assert.equal(panel.hidden, true);
+    app.teamRating.toggleTransfers();
+    show({ gameweek: 11, bank: 0.5, transfers_open: true, transfers: [] });
     assert.match(list.innerHTML, /No affordable single transfer/);
 
-    // Past the deadline the panel goes, frozen forecast or not.
-    app.teamRating.transfers({ bank: 0.5, transfers_open: false, frozen: false, transfers: [transfer] });
+    // Closed: the button cannot be used, says why, and the suggestions go.
+    for (const closed of [
+        { gameweek: 11, bank: 0.5, transfers_open: false, frozen: false, transfers: [transfer] },
+        { gameweek: 11, bank: 0.5, transfers_open: false, frozen: true, transfers: [transfer] }
+    ]) {
+        show(closed);
+        assert.equal(toggle.disabled, true);
+        assert.equal(toggle.textContent, 'Suggested transfers closed');
+        assert.equal(note.textContent, 'Transfers are closed: the Gameweek 11 deadline has passed.');
+        assert.equal(panel.hidden, true);
+        app.teamRating.toggleTransfers();
+        assert.equal(panel.hidden, true);
+    }
+
+    show({ gameweek: 11, bank: null, transfers_open: true, transfers: [transfer] });
+    assert.equal(toggle.disabled, true);
+    assert.match(note.textContent, /has not published this team's bank/);
     assert.equal(panel.hidden, true);
-    app.teamRating.transfers({ bank: 0.5, transfers_open: false, frozen: true, transfers: [transfer] });
-    assert.equal(panel.hidden, true);
-    app.teamRating.transfers({ bank: null, transfers_open: true, transfers: [transfer] });
+});
+
+test('a new rating starts with its suggestions closed, and showing the same one again keeps them open', () => {
+    const app = loadApp(async () => response({}));
+    const panel = app.document.getElementById('rating-transfers');
+    const rating = entryId => ({
+        entry_id: entryId, team_name: 'Mine', gameweek: 11, picks_gameweek: 10, rating: 80,
+        squad: squad.scout_team.map(player => ({ ...player, pick_position: 1 })),
+        bank: 0.5, transfers_open: true, transfers: []
+    });
+    const first = rating(1);
+
+    app.teamRating.render(first);
+    app.teamRating.toggleTransfers();
+    assert.equal(panel.hidden, false);
+
+    app.teamRating.render(first);
+    assert.equal(panel.hidden, false);
+
+    app.teamRating.render(rating(2));
     assert.equal(panel.hidden, true);
 });
 
@@ -810,7 +859,9 @@ test('a squad over the club limit is told why only those sales are suggested', (
     const note = app.document.getElementById('rating-club-limit');
     const list = app.document.getElementById('rating-transfer-list');
 
-    app.teamRating.transfers({ bank: 0.5, transfers_open: true, transfers: [], clubs_over_limit: { Arsenal: 4 } });
+    const overLimit = { bank: 0.5, transfers_open: true, transfers: [], clubs_over_limit: { Arsenal: 4 } };
+    app.appState.ratingData = overLimit;
+    app.teamRating.toggleTransfers();
     assert.equal(note.hidden, false);
     assert.equal(note.textContent, 'Your squad has 4 Arsenal players. '
         + 'FPL requires your next transfer to sell one of them, so only those sales are suggested.');
@@ -958,9 +1009,14 @@ test('transfer suggestions close when the deadline passes on an open page, and a
     app.utils.now = () => now;
     const panel = app.document.getElementById('rating-transfers');
 
+    const toggle = app.document.getElementById('transfers-toggle');
+
     await app.app.start();
     app.teamRating.setMode('rating');
     await app.teamRating.rate(123);
+    assert.equal(toggle.disabled, false);
+    assert.equal(panel.hidden, true);
+    app.teamRating.toggleTransfers();
     assert.equal(panel.hidden, false);
     // Before the deadline the saved rating is reused.
     await app.teamRating.rate(123);
@@ -972,11 +1028,17 @@ test('transfer suggestions close when the deadline passes on an open page, and a
     tick();
     assert.equal(app.document.getElementById('deadline-countdown').textContent, 'Deadline passed');
     assert.equal(panel.hidden, true);
+    assert.equal(toggle.disabled, true);
+    assert.equal(toggle.textContent, 'Suggested transfers closed');
+    // The disabled button cannot reopen them.
+    app.teamRating.toggleTransfers();
+    assert.equal(panel.hidden, true);
 
     // Showing the saved rating again keeps it closed.
     app.teamRating.setMode('scout');
     app.teamRating.setMode('rating');
     assert.equal(panel.hidden, true);
+    assert.equal(toggle.disabled, true);
 
     // Rating the same team asks the server again instead of reusing it.
     await app.teamRating.rate(123);
