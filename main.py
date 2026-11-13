@@ -928,6 +928,52 @@ async def get_official_fpl_phase_winners(
     return _official_item(f"/winners/phase/{phase_id}/", result)
 
 
+# Current official details the web app shows for each squad player. They come
+# with the squad, so a browser need not download all ~670 players for them.
+SQUAD_OFFICIAL_FIELDS = (
+    "team_id",
+    "position",
+    "price",
+    "selected_by_percent",
+    "status",
+    "can_select",
+    "news",
+    "chance_of_playing_next_round",
+    "total_points",
+)
+
+
+def _with_official_details(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add each squad player's current official details to its prediction.
+
+    Predicted values win where both have a field. The details come from the
+    official client's cached bootstrap; if it cannot be read, the squad is
+    returned as predicted rather than failing the request.
+    """
+    mapped_players = getattr(scout.official_client, "mapped_players", None)
+    if not callable(mapped_players):
+        return players
+    try:
+        official = {int(player["id"]): player for player in mapped_players()}
+    except Exception as error:
+        logger.warning("Serving the squad without official details: %s", error)
+        return players
+    detailed = []
+    for player in players:
+        details = official.get(int(player.get("id") or 0), {})
+        detailed.append(
+            {
+                **{
+                    field: details[field]
+                    for field in SQUAD_OFFICIAL_FIELDS
+                    if field in details
+                },
+                **player,
+            }
+        )
+    return detailed
+
+
 async def _generate_scout_response(
     gameweek: Optional[int], public=False
 ) -> ResponseModel:
@@ -938,13 +984,16 @@ async def _generate_scout_response(
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
         prediction_gameweek = int(predictions.attrs["gameweek"])
+        scout_team = await run_in_threadpool(
+            _with_official_details, json.loads(team.to_json(orient="records"))
+        )
         logger.info(
             "Generated %s scout team for gameweek %d",
             "public" if public else "authenticated",
             prediction_gameweek,
         )
         return ResponseModel(
-            scout_team=json.loads(team.to_json(orient="records")),
+            scout_team=scout_team,
             player_points=[]
             if public
             else json.loads(predictions.to_json(orient="records")),

@@ -17,6 +17,7 @@ from main import (
     sync_public_scout_results,
 )
 from src.models import PlayerPointsModel
+from src.official_fpl import OfficialFPLAPIError
 
 
 class FakeRatingOfficialClient:
@@ -120,6 +121,42 @@ class APISchemaTests(unittest.TestCase):
 
         predictions.assert_called_once_with(1, collect_results=False)
         self.assertEqual(len(result.scout_team), 15)
+
+    def test_public_squad_carries_current_official_details(self):
+        scout = VenueScout()
+        scout.official_client.mapped_players = lambda: [
+            {
+                "id": 1,
+                "price": 7.5,
+                "status": "d",
+                "news": "Knock",
+                "selected_by_percent": 1.0,
+                "code": 99,
+            },
+        ]
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(generate_public_scout_team(gameweek=1))
+
+        first = next(player for player in result.scout_team if player["id"] == 1)
+        self.assertEqual(first["price"], 7.5)
+        self.assertEqual(first["status"], "d")
+        self.assertEqual(first["news"], "Knock")
+        # Only the fields the app shows are added, and predictions win.
+        self.assertNotIn("code", first)
+        self.assertEqual(first["selected_by_percent"], 20.0)
+
+    def test_public_squad_is_served_when_official_details_fail(self):
+        scout = VenueScout()
+
+        def unavailable():
+            raise OfficialFPLAPIError("FPL is updating")
+
+        scout.official_client.mapped_players = unavailable
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(generate_public_scout_team(gameweek=1))
+
+        self.assertEqual(len(result.scout_team), 15)
+        self.assertNotIn("status", result.scout_team[0])
 
     def test_results_sync_collects_inside_its_own_public_request(self):
         scout = SimpleNamespace(official_client=object(), data_archive=object())

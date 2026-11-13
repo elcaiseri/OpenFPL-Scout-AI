@@ -17,7 +17,6 @@ const CONFIG = {
         syncResults: '/api/scout/sync-results',
         teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
-        players: '/api/fpl/players?limit=1000',
         fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
     }
 };
@@ -53,8 +52,6 @@ const appState = {
     ratingCache: new Map(),
     eventsCache: null,
     eventsTimestamp: 0,
-    referenceCache: null,
-    referenceTimestamp: 0,
     resultsSyncPromise: null,
     teamCodes: new Map(),
     pitchWidth: 0,
@@ -268,8 +265,6 @@ const utils = {
         appState.ratingCache.clear();
         appState.eventsCache = null;
         appState.eventsTimestamp = 0;
-        appState.referenceCache = null;
-        appState.referenceTimestamp = 0;
     }
 };
 
@@ -314,8 +309,9 @@ const dom = new Proxy({}, {
 
 const dataLoader = {
     // The season's gameweeks are small and decide which squad to ask for, so
-    // start-up waits for them alone; the ~800-player list then downloads
-    // alongside the squad prediction instead of ahead of it.
+    // start-up waits for them alone. Squad players arrive with their current
+    // official details (price, ownership, status, news), so no player list
+    // is downloaded.
     async loadEvents(force = false) {
         const fresh = appState.eventsCache
             && Date.now() - appState.eventsTimestamp < CONFIG.cacheExpiry;
@@ -326,30 +322,15 @@ const dataLoader = {
         return appState.eventsCache;
     },
 
-    async loadReferenceData(force = false) {
-        const fresh = appState.referenceCache
-            && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
-        if (fresh && !force) return appState.referenceCache;
-
-        const results = await Promise.allSettled([
-            this.loadEvents(force),
-            utils.fetchJson(CONFIG.endpoints.players)
-        ]);
-        results.filter(result => result.status === 'rejected').forEach(result => {
-            console.warn('Supporting FPL data unavailable:', result.reason);
-        });
-        const reference = {
-            events: results[0].status === 'fulfilled'
-                ? results[0].value : appState.events,
-            players: results[1].status === 'fulfilled'
-                ? results[1].value.results || [] : appState.referenceCache?.players || [],
-            available: results.every(result => result.status === 'fulfilled')
-        };
-        if (reference.available) {
-            appState.referenceCache = reference;
-            appState.referenceTimestamp = Date.now();
+    // A failed refresh keeps the gameweeks already loaded, marked unavailable
+    // so the dashboard built from them is not cached.
+    async loadSeason(force = false) {
+        try {
+            return { events: await this.loadEvents(force), available: true };
+        } catch (error) {
+            console.warn('Supporting FPL data unavailable:', error);
+            return { events: appState.events, available: false };
         }
-        return reference;
     },
 
     async loadDashboard(gameweek, force = false, onScoutReady = null) {
@@ -362,7 +343,7 @@ const dataLoader = {
             `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, CONFIG.inferenceRequest
         );
         const detailsRequest = Promise.all([
-            this.loadReferenceData(force),
+            this.loadSeason(force),
             utils.fetchJson(CONFIG.endpoints.fixtures(gameweek)).catch(error => {
                 console.warn('Fixtures unavailable:', error);
                 fixturesAvailable = false;
@@ -371,8 +352,8 @@ const dataLoader = {
         ]);
         const scout = await scoutRequest;
         if (onScoutReady) {
-            // Predictions already contain the squad's names, positions and
-            // prices. Show them while optional current metadata catches up.
+            // The squad already carries names, positions, prices and status.
+            // Show it while the fixtures catch up.
             onScoutReady({
                 ...scout,
                 event: appState.events.find(event => Number(event.id) === Number(gameweek)) || null,
@@ -383,23 +364,15 @@ const dataLoader = {
                 syncedAt: new Date()
             });
         }
-        const [reference, fixturePayload] = await detailsRequest;
-
-        const byId = new Map(reference.players.map(player => [Number(player.id), player]));
-        const byIdentity = new Map(reference.players.map(player => [
-            `${player.web_name}|${player.team_name}`.toLowerCase(), player
-        ]));
-        this.learnTeamCodes(fixturePayload.results || [], reference.players);
+        const [season, fixturePayload] = await detailsRequest;
+        const fixtures = fixturePayload.results || [];
+        this.learnTeamCodes(fixtures, scout.scout_team || []);
 
         const players = (scout.scout_team || []).map(player => {
-            const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
-            const official = byId.get(Number(player.id)) || byIdentity.get(identity) || {};
-            const fixture = this.playerFixture(official, fixturePayload.results || []);
+            const fixture = this.playerFixture(player, fixtures);
             return {
-                ...official,
                 ...player,
-                position: official.position || player.element_type,
-                official_element_type: official.element_type,
+                position: player.position || player.element_type,
                 fixture_id: fixture?.id || null,
                 difficulty: fixture?.difficulty || null,
                 kickoff_time: fixture?.kickoff_time || null
@@ -409,13 +382,13 @@ const dataLoader = {
         const dashboard = {
             ...scout,
             scout_team: players,
-            event: reference.events.find(event => Number(event.id) === Number(gameweek)) || null,
-            events: reference.events,
-            fixtures: fixturePayload.results || [],
+            event: season.events.find(event => Number(event.id) === Number(gameweek)) || null,
+            events: season.events,
+            fixtures,
             fixturesAvailable,
             syncedAt: new Date()
         };
-        if (reference.available && fixturesAvailable) {
+        if (season.available && fixturesAvailable) {
             appState.dashboardCache.set(gameweek, dashboard);
         }
         return dashboard;
@@ -1128,7 +1101,6 @@ const interactions = {
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
         appState.eventsCache = null;
-        appState.referenceCache = null;
         try {
             await gameweekManager.load(appState.currentGameweek, true);
         } finally {

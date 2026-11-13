@@ -11,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from main import _generate_scout_response
+from main import SQUAD_OFFICIAL_FIELDS, _generate_scout_response
 from src.data_archive import DataArchive
 from src.features import MODEL_FEATURES
 from src.official_fpl import OfficialFPLClient
@@ -174,6 +174,14 @@ def records(frame):
     return json.loads(frame.to_json(orient="records"))
 
 
+def predicted(scout_team):
+    """A response squad without the current official details added to it."""
+    return [
+        {key: value for key, value in player.items() if key not in SQUAD_OFFICIAL_FIELDS}
+        for player in scout_team
+    ]
+
+
 class FrozenForecastTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -277,7 +285,7 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertEqual(records(squad_again), records(squad_first))
         self.assertTrue(response.frozen)
         self.assertEqual(response.freeze_method, "after-deadline")
-        self.assertEqual(response.scout_team, records(squad_first))
+        self.assertEqual(predicted(response.scout_team), records(squad_first))
 
     def test_frozen_squad_does_not_depend_on_the_archived_squad_file(self):
         _, squad_before = self.request()
@@ -425,8 +433,14 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertTrue(after.frozen)
         self.assertEqual(after.freeze_method, "deadline")
         self.assertIsNotNone(after.forecast_captured_at)
-        self.assertEqual(after.scout_team, before.scout_team)
+        self.assertEqual(predicted(after.scout_team), predicted(before.scout_team))
         self.assertEqual(after.player_points, before.player_points)
+        # Official details are current: the captain injured after the
+        # deadline keeps his frozen projection but shows his new status.
+        captain = self.captain_id(squad_before)
+        status = {player["id"]: player["status"] for player in after.scout_team}
+        self.assertEqual(status[captain], "i")
+        self.assertEqual(before.scout_team[0]["price"], 5.0)
 
     async def respond(self):
         with patch("main.scout", self.scout, create=True):

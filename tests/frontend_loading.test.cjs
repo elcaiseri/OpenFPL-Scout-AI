@@ -171,13 +171,11 @@ test('a timeout while reading the response body also retries', async () => {
     assert.equal(result.results[0].id, 1);
 });
 
-test('the saved squad is published before slow player metadata or fixtures', { timeout: 2000 }, async () => {
-    const players = deferred();
+test('the saved squad is published before slow fixtures', { timeout: 2000 }, async () => {
     const fixtures = deferred();
     const published = deferred();
     const app = loadApp(async url => {
         if (url.startsWith('/api/scout?')) return response(squad);
-        if (url.startsWith('/api/fpl/players')) return players.promise;
         if (url.startsWith('/api/fpl/fixtures')) return fixtures.promise;
         throw new Error('Unexpected endpoint: ' + url);
     });
@@ -187,12 +185,45 @@ test('the saved squad is published before slow player metadata or fixtures', { t
     assert.equal(initial.scout_team[0].expected_points, 6);
     assert.equal(initial.fixturesLoading, true);
 
-    players.resolve(response({ results: [{ id: 1, position: 3 }] }));
     fixtures.resolve(response({ results: [] }));
     const complete = await loading;
-    assert.equal(complete.scout_team[0].position, 3);
+    assert.equal(complete.scout_team[0].position, 'Midfielder');
     assert.equal(complete.fixturesAvailable, true);
     assert.equal(app.appState.dashboardCache.get(1), complete);
+});
+
+test('squad players keep the official details the squad arrives with, without a player list', async () => {
+    const requested = [];
+    const app = loadApp(async url => {
+        requested.push(url);
+        if (url.startsWith('/api/scout?')) {
+            return response({
+                ...squad,
+                scout_team: [{
+                    ...squad.scout_team[0], team_id: 1, position: 'Midfielder',
+                    price: 7.5, selected_by_percent: 12.3, status: 'd', news: 'Knock'
+                }]
+            });
+        }
+        if (url.startsWith('/api/fpl/fixtures')) {
+            return response({ results: [{
+                id: 9, kickoff_time: '2026-11-21T15:00:00Z',
+                home_team: { id: 1, name: 'Arsenal', short_name: 'ARS', difficulty: 3 },
+                away_team: { id: 2, name: 'Chelsea', short_name: 'CHE', difficulty: 4 }
+            }] });
+        }
+        throw new Error('Unexpected endpoint: ' + url);
+    });
+
+    const dashboard = await app.dataLoader.loadDashboard(1);
+
+    const [player] = dashboard.scout_team;
+    assert.equal(player.price, 7.5);
+    assert.equal(player.status, 'd');
+    assert.equal(player.news, 'Knock');
+    assert.equal(player.fixture_id, 9);
+    assert.equal(player.difficulty, 3);
+    assert.equal(requested.some(url => url.startsWith('/api/fpl/players')), false);
 });
 
 test('failed metadata and fixtures do not hide a squad or poison its cache', async () => {
@@ -209,14 +240,11 @@ test('failed metadata and fixtures do not hide a squad or poison its cache', asy
     assert.equal(partial.scout_team[0].id, 1);
     assert.equal(partial.fixturesAvailable, false);
     assert.equal(app.appState.dashboardCache.has(1), false);
-    assert.equal(app.appState.referenceCache, null);
-    assert.equal(calls.get(app.CONFIG.endpoints.players), 3);
 
     available = true;
     const complete = await app.dataLoader.loadDashboard(1);
     assert.equal(complete.fixturesAvailable, true);
     assert.equal(app.appState.dashboardCache.get(1), complete);
-    assert.equal(calls.get(app.CONFIG.endpoints.players), 4);
 });
 
 test('archive collection uses one independent POST while already in flight', async () => {
@@ -306,19 +334,13 @@ test('a squad read still recovers from a gateway failure', async () => {
 });
 
 test('gameweek controls unlock once the squad shows, and a slower load cannot overwrite a newer one', { timeout: 2000 }, async () => {
-    const firstPlayers = deferred();
     const firstFixtures = deferred();
-    let playerRequests = 0;
     const app = loadApp(async url => {
         if (url.startsWith('/api/scout?')) {
             const gameweek = Number(new URL(url, 'http://localhost').searchParams.get('gameweek'));
             return response({ ...squad, gameweek });
         }
         if (url === app.CONFIG.endpoints.syncResults) return response({ status: 'throttled' });
-        if (url.startsWith('/api/fpl/players')) {
-            playerRequests++;
-            return playerRequests === 1 ? firstPlayers.promise : response({ results: [] });
-        }
         if (url === app.CONFIG.endpoints.fixtures(1)) return firstFixtures.promise;
         if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
         throw new Error('Unexpected endpoint: ' + url);
@@ -328,7 +350,7 @@ test('gameweek controls unlock once the squad shows, and a slower load cannot ov
     const first = app.gameweekManager.load(1);
     assert.equal(select.disabled, true);
 
-    // GW1's squad is shown while its player metadata and fixtures still load.
+    // GW1's squad is shown while its fixtures still load.
     await until(() => app.appState.currentData);
     assert.equal(app.appState.currentData.fixturesLoading, true);
     assert.equal(app.appState.isLoading, false);
@@ -337,7 +359,6 @@ test('gameweek controls unlock once the squad shows, and a slower load cannot ov
     await app.gameweekManager.load(2);
     assert.equal(app.appState.currentGameweek, 2);
 
-    firstPlayers.resolve(response({ results: [] }));
     firstFixtures.resolve(response({ results: [] }));
     await first;
 
