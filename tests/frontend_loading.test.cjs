@@ -171,13 +171,11 @@ test('a timeout while reading the response body also retries', async () => {
     assert.equal(result.results[0].id, 1);
 });
 
-test('the saved squad is published before slow player metadata or fixtures', { timeout: 2000 }, async () => {
-    const players = deferred();
+test('the saved squad is published before slow fixtures', { timeout: 2000 }, async () => {
     const fixtures = deferred();
     const published = deferred();
     const app = loadApp(async url => {
         if (url.startsWith('/api/scout?')) return response(squad);
-        if (url.startsWith('/api/fpl/players')) return players.promise;
         if (url.startsWith('/api/fpl/fixtures')) return fixtures.promise;
         throw new Error('Unexpected endpoint: ' + url);
     });
@@ -187,12 +185,45 @@ test('the saved squad is published before slow player metadata or fixtures', { t
     assert.equal(initial.scout_team[0].expected_points, 6);
     assert.equal(initial.fixturesLoading, true);
 
-    players.resolve(response({ results: [{ id: 1, position: 3 }] }));
     fixtures.resolve(response({ results: [] }));
     const complete = await loading;
-    assert.equal(complete.scout_team[0].position, 3);
+    assert.equal(complete.scout_team[0].position, 'Midfielder');
     assert.equal(complete.fixturesAvailable, true);
     assert.equal(app.appState.dashboardCache.get(1), complete);
+});
+
+test('squad players keep the official details the squad arrives with, without a player list', async () => {
+    const requested = [];
+    const app = loadApp(async url => {
+        requested.push(url);
+        if (url.startsWith('/api/scout?')) {
+            return response({
+                ...squad,
+                scout_team: [{
+                    ...squad.scout_team[0], team_id: 1, position: 'Midfielder',
+                    price: 7.5, selected_by_percent: 12.3, status: 'd', news: 'Knock'
+                }]
+            });
+        }
+        if (url.startsWith('/api/fpl/fixtures')) {
+            return response({ results: [{
+                id: 9, kickoff_time: '2026-11-21T15:00:00Z',
+                home_team: { id: 1, name: 'Arsenal', short_name: 'ARS', difficulty: 3 },
+                away_team: { id: 2, name: 'Chelsea', short_name: 'CHE', difficulty: 4 }
+            }] });
+        }
+        throw new Error('Unexpected endpoint: ' + url);
+    });
+
+    const dashboard = await app.dataLoader.loadDashboard(1);
+
+    const [player] = dashboard.scout_team;
+    assert.equal(player.price, 7.5);
+    assert.equal(player.status, 'd');
+    assert.equal(player.news, 'Knock');
+    assert.equal(player.fixture_id, 9);
+    assert.equal(player.difficulty, 3);
+    assert.equal(requested.some(url => url.startsWith('/api/fpl/players')), false);
 });
 
 test('failed metadata and fixtures do not hide a squad or poison its cache', async () => {
@@ -209,14 +240,11 @@ test('failed metadata and fixtures do not hide a squad or poison its cache', asy
     assert.equal(partial.scout_team[0].id, 1);
     assert.equal(partial.fixturesAvailable, false);
     assert.equal(app.appState.dashboardCache.has(1), false);
-    assert.equal(app.appState.referenceCache, null);
-    assert.equal(calls.get(app.CONFIG.endpoints.players), 3);
 
     available = true;
     const complete = await app.dataLoader.loadDashboard(1);
     assert.equal(complete.fixturesAvailable, true);
     assert.equal(app.appState.dashboardCache.get(1), complete);
-    assert.equal(calls.get(app.CONFIG.endpoints.players), 4);
 });
 
 test('archive collection uses one independent POST while already in flight', async () => {
@@ -306,19 +334,13 @@ test('a squad read still recovers from a gateway failure', async () => {
 });
 
 test('gameweek controls unlock once the squad shows, and a slower load cannot overwrite a newer one', { timeout: 2000 }, async () => {
-    const firstPlayers = deferred();
     const firstFixtures = deferred();
-    let playerRequests = 0;
     const app = loadApp(async url => {
         if (url.startsWith('/api/scout?')) {
             const gameweek = Number(new URL(url, 'http://localhost').searchParams.get('gameweek'));
             return response({ ...squad, gameweek });
         }
         if (url === app.CONFIG.endpoints.syncResults) return response({ status: 'throttled' });
-        if (url.startsWith('/api/fpl/players')) {
-            playerRequests++;
-            return playerRequests === 1 ? firstPlayers.promise : response({ results: [] });
-        }
         if (url === app.CONFIG.endpoints.fixtures(1)) return firstFixtures.promise;
         if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
         throw new Error('Unexpected endpoint: ' + url);
@@ -328,7 +350,7 @@ test('gameweek controls unlock once the squad shows, and a slower load cannot ov
     const first = app.gameweekManager.load(1);
     assert.equal(select.disabled, true);
 
-    // GW1's squad is shown while its player metadata and fixtures still load.
+    // GW1's squad is shown while its fixtures still load.
     await until(() => app.appState.currentData);
     assert.equal(app.appState.currentData.fixturesLoading, true);
     assert.equal(app.appState.isLoading, false);
@@ -337,7 +359,6 @@ test('gameweek controls unlock once the squad shows, and a slower load cannot ov
     await app.gameweekManager.load(2);
     assert.equal(app.appState.currentGameweek, 2);
 
-    firstPlayers.resolve(response({ results: [] }));
     firstFixtures.resolve(response({ results: [] }));
     await first;
 
@@ -531,4 +552,135 @@ test('only a successful rating is remembered', async () => {
 
     await app.teamRating.rate(4069384);
     assert.deepEqual(Array.from(app.recentTeams.read(), item => item.id), [4069384]);
+});
+
+function savedSquadEntry(overrides = {}) {
+    return JSON.stringify({
+        schema: 1,
+        savedAt: Date.now(),
+        data: {
+            ...squad,
+            scout_team: [{ ...squad.scout_team[0], web_name: 'Saved' }],
+            event: events[0],
+            fixtures: [],
+            fixturesAvailable: true,
+            syncedAt: new Date().toISOString()
+        },
+        ...overrides
+    });
+}
+
+function startUpFetch(scoutResponse) {
+    return async url => {
+        if (url.startsWith('/api/scout?')) return scoutResponse.promise;
+        if (url === '/api/scout/sync-results') return response({ status: 'throttled' });
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    };
+}
+
+test('a return visit shows the saved squad at once, then the current one, and saves it', async () => {
+    const localStorage = memoryStorage();
+    localStorage.setItem('openfpl.lastSquad', savedSquadEntry());
+    const scoutResponse = deferred();
+    const app = loadApp(startUpFetch(scoutResponse), { localStorage });
+    const pitch = app.document.getElementById('pitch');
+
+    const starting = app.app.start();
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Saved');
+    assert.equal(app.document.getElementById('signal-state').textContent, 'Refreshing');
+
+    // The saved squad stays on the pitch while the server predicts.
+    await until(() => app.appState.isLoading);
+    assert.match(pitch.innerHTML, /Saved/);
+
+    scoutResponse.resolve(response(squad));
+    await starting;
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+    assert.match(pitch.innerHTML, /Player/);
+    const saved = JSON.parse(localStorage.getItem('openfpl.lastSquad'));
+    assert.equal(saved.data.scout_team[0].web_name, 'Player');
+    assert.equal(saved.data.events, undefined);
+});
+
+test('an expired or older-format saved squad is not shown', async () => {
+    for (const entry of [
+        savedSquadEntry({ savedAt: Date.now() - 13 * 60 * 60 * 1000 }),
+        savedSquadEntry({ schema: 0 }),
+        '{not json'
+    ]) {
+        const localStorage = memoryStorage();
+        localStorage.setItem('openfpl.lastSquad', entry);
+        const scoutResponse = deferred();
+        const app = loadApp(startUpFetch(scoutResponse), { localStorage });
+
+        const starting = app.app.start();
+        assert.equal(app.appState.currentData, null);
+        await until(() => app.appState.isLoading);
+        assert.match(app.document.getElementById('pitch').innerHTML, /class="loading"/);
+
+        scoutResponse.resolve(response(squad));
+        await starting;
+        assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+    }
+});
+
+test('start-up works when storage is blocked', async () => {
+    const blocked = {
+        getItem() { throw new Error('SecurityError'); },
+        setItem() { throw new Error('QuotaExceededError'); }
+    };
+    const scoutResponse = deferred();
+    const app = loadApp(startUpFetch(scoutResponse), { localStorage: blocked });
+
+    const starting = app.app.start();
+    scoutResponse.resolve(response(squad));
+    await starting;
+
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+});
+
+test('a stale squad asks for one refresh in its own request and is not kept', async () => {
+    const refresh = deferred();
+    const requests = [];
+    const app = loadApp(async (url, options) => {
+        requests.push([options.method || 'GET', url]);
+        if (url.startsWith('/api/scout?')) return response({ ...squad, frozen: false, refresh_due: true });
+        if (url === '/api/scout/refresh?gameweek=1') return refresh.promise;
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    });
+
+    await app.gameweekManager.load(1);
+    // Loading the same Gameweek again does not send a second refresh.
+    await app.gameweekManager.load(1);
+
+    const refreshes = requests.filter(([, url]) => url.startsWith('/api/scout/refresh'));
+    assert.deepEqual(refreshes, [['POST', '/api/scout/refresh?gameweek=1']]);
+    assert.equal(app.appState.dashboardCache.has(1), false);
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+
+    refresh.resolve(response({ status: 'refreshed' }));
+    await app.appState.refreshPromises.get(1);
+    assert.equal(app.appState.refreshPromises.size, 0);
+});
+
+test('a fresh squad sends no refresh, and a failed refresh does not disturb the page', async () => {
+    for (const refreshDue of [false, true]) {
+        const requests = [];
+        const app = loadApp(async (url, options) => {
+            requests.push(url);
+            if (url.startsWith('/api/scout?')) return response({ ...squad, frozen: false, refresh_due: refreshDue });
+            if (url.startsWith('/api/scout/refresh')) return response({ detail: 'FPL is updating' }, 502);
+            if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+            throw new Error('Unexpected endpoint: ' + url);
+        });
+
+        await app.gameweekManager.load(1);
+        await Promise.all(app.appState.refreshPromises.values());
+
+        assert.equal(requests.filter(url => url.startsWith('/api/scout/refresh')).length, refreshDue ? 1 : 0);
+        assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+        assert.equal(app.appState.isLoading, false);
+    }
 });

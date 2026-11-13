@@ -15,9 +15,9 @@ const CONFIG = {
     endpoints: {
         scout: '/api/scout',
         syncResults: '/api/scout/sync-results',
+        refresh: gameweek => `/api/scout/refresh?gameweek=${gameweek}`,
         teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
-        players: '/api/fpl/players?limit=1000',
         fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
     }
 };
@@ -38,6 +38,8 @@ const CLUB_CODES = new Map(Object.entries({
 
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
+    // The Gameweek the app opens on; only its squad is saved for next visit.
+    openingGameweek: null,
     events: [],
     visibleEvents: [],
     currentData: null,
@@ -53,9 +55,9 @@ const appState = {
     ratingCache: new Map(),
     eventsCache: null,
     eventsTimestamp: 0,
-    referenceCache: null,
-    referenceTimestamp: 0,
     resultsSyncPromise: null,
+    // Refresh requests in flight, one per Gameweek.
+    refreshPromises: new Map(),
     teamCodes: new Map(),
     pitchWidth: 0,
     countdownTimer: null
@@ -268,8 +270,6 @@ const utils = {
         appState.ratingCache.clear();
         appState.eventsCache = null;
         appState.eventsTimestamp = 0;
-        appState.referenceCache = null;
-        appState.referenceTimestamp = 0;
     }
 };
 
@@ -314,8 +314,9 @@ const dom = new Proxy({}, {
 
 const dataLoader = {
     // The season's gameweeks are small and decide which squad to ask for, so
-    // start-up waits for them alone; the ~800-player list then downloads
-    // alongside the squad prediction instead of ahead of it.
+    // start-up waits for them alone. Squad players arrive with their current
+    // official details (price, ownership, status, news), so no player list
+    // is downloaded.
     async loadEvents(force = false) {
         const fresh = appState.eventsCache
             && Date.now() - appState.eventsTimestamp < CONFIG.cacheExpiry;
@@ -326,30 +327,15 @@ const dataLoader = {
         return appState.eventsCache;
     },
 
-    async loadReferenceData(force = false) {
-        const fresh = appState.referenceCache
-            && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
-        if (fresh && !force) return appState.referenceCache;
-
-        const results = await Promise.allSettled([
-            this.loadEvents(force),
-            utils.fetchJson(CONFIG.endpoints.players)
-        ]);
-        results.filter(result => result.status === 'rejected').forEach(result => {
-            console.warn('Supporting FPL data unavailable:', result.reason);
-        });
-        const reference = {
-            events: results[0].status === 'fulfilled'
-                ? results[0].value : appState.events,
-            players: results[1].status === 'fulfilled'
-                ? results[1].value.results || [] : appState.referenceCache?.players || [],
-            available: results.every(result => result.status === 'fulfilled')
-        };
-        if (reference.available) {
-            appState.referenceCache = reference;
-            appState.referenceTimestamp = Date.now();
+    // A failed refresh keeps the gameweeks already loaded, marked unavailable
+    // so the dashboard built from them is not cached.
+    async loadSeason(force = false) {
+        try {
+            return { events: await this.loadEvents(force), available: true };
+        } catch (error) {
+            console.warn('Supporting FPL data unavailable:', error);
+            return { events: appState.events, available: false };
         }
-        return reference;
     },
 
     async loadDashboard(gameweek, force = false, onScoutReady = null) {
@@ -362,7 +348,7 @@ const dataLoader = {
             `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, CONFIG.inferenceRequest
         );
         const detailsRequest = Promise.all([
-            this.loadReferenceData(force),
+            this.loadSeason(force),
             utils.fetchJson(CONFIG.endpoints.fixtures(gameweek)).catch(error => {
                 console.warn('Fixtures unavailable:', error);
                 fixturesAvailable = false;
@@ -371,8 +357,8 @@ const dataLoader = {
         ]);
         const scout = await scoutRequest;
         if (onScoutReady) {
-            // Predictions already contain the squad's names, positions and
-            // prices. Show them while optional current metadata catches up.
+            // The squad already carries names, positions, prices and status.
+            // Show it while the fixtures catch up.
             onScoutReady({
                 ...scout,
                 event: appState.events.find(event => Number(event.id) === Number(gameweek)) || null,
@@ -383,23 +369,15 @@ const dataLoader = {
                 syncedAt: new Date()
             });
         }
-        const [reference, fixturePayload] = await detailsRequest;
-
-        const byId = new Map(reference.players.map(player => [Number(player.id), player]));
-        const byIdentity = new Map(reference.players.map(player => [
-            `${player.web_name}|${player.team_name}`.toLowerCase(), player
-        ]));
-        this.learnTeamCodes(fixturePayload.results || [], reference.players);
+        const [season, fixturePayload] = await detailsRequest;
+        const fixtures = fixturePayload.results || [];
+        this.learnTeamCodes(fixtures, scout.scout_team || []);
 
         const players = (scout.scout_team || []).map(player => {
-            const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
-            const official = byId.get(Number(player.id)) || byIdentity.get(identity) || {};
-            const fixture = this.playerFixture(official, fixturePayload.results || []);
+            const fixture = this.playerFixture(player, fixtures);
             return {
-                ...official,
                 ...player,
-                position: official.position || player.element_type,
-                official_element_type: official.element_type,
+                position: player.position || player.element_type,
                 fixture_id: fixture?.id || null,
                 difficulty: fixture?.difficulty || null,
                 kickoff_time: fixture?.kickoff_time || null
@@ -409,16 +387,35 @@ const dataLoader = {
         const dashboard = {
             ...scout,
             scout_team: players,
-            event: reference.events.find(event => Number(event.id) === Number(gameweek)) || null,
-            events: reference.events,
-            fixtures: fixturePayload.results || [],
+            event: season.events.find(event => Number(event.id) === Number(gameweek)) || null,
+            events: season.events,
+            fixtures,
             fixturesAvailable,
             syncedAt: new Date()
         };
-        if (reference.available && fixturesAvailable) {
+        // A stale squad is not kept: the next view of its Gameweek asks again
+        // and gets the refreshed forecast.
+        if (season.available && fixturesAvailable && !scout.refresh_due) {
             appState.dashboardCache.set(gameweek, dashboard);
         }
         return dashboard;
+    },
+
+    // The server answered with an older forecast so the page did not wait
+    // (refresh_due). The new prediction runs in this request of its own,
+    // which is when request-billed Cloud Run gives the server CPU.
+    refreshPredictions(gameweek) {
+        const key = Number(gameweek);
+        if (appState.refreshPromises.has(key)) return appState.refreshPromises.get(key);
+        const request = utils.fetchJson(CONFIG.endpoints.refresh(key), {
+            method: 'POST', timeoutMs: 0
+        }).catch(error => {
+            console.warn('Squad refresh unavailable:', error);
+        }).finally(() => {
+            appState.refreshPromises.delete(key);
+        });
+        appState.refreshPromises.set(key, request);
+        return request;
     },
 
     syncResults() {
@@ -860,14 +857,17 @@ const gameweekManager = {
         document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = locked; });
     },
 
-    async load(gameweek, force = false) {
+    // keepSaved leaves a saved squad of this Gameweek on screen, instead of
+    // the loading state, until the current one replaces it.
+    async load(gameweek, force = false, { keepSaved = false } = {}) {
         if (appState.isLoading) return;
         const token = ++appState.loadToken;
         const isCurrent = () => token === appState.loadToken;
         this.setLocked(true);
-        dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
+        if (!keepSaved) dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             let resultsSyncStarted = false;
+            let refreshStarted = false;
             const publish = data => {
                 // A newer load owns the screen; this one only fills the cache.
                 if (!isCurrent()) return;
@@ -880,6 +880,10 @@ const gameweekManager = {
                     resultsSyncStarted = true;
                     dataLoader.syncResults();
                 }
+                if (data.refresh_due && !refreshStarted) {
+                    refreshStarted = true;
+                    dataLoader.refreshPredictions(gameweek);
+                }
                 // The squad is on screen. Player metadata and fixtures may
                 // still be loading, but the Gameweek can already be changed
                 // or refreshed.
@@ -888,6 +892,7 @@ const gameweekManager = {
             const data = await dataLoader.loadDashboard(gameweek, force, publish);
             if (!isCurrent()) return;
             publish(data);
+            if (Number(gameweek) === appState.openingGameweek) savedSquad.save(data);
             if (appState.squadMode === 'rating' && appState.ratingEntryId) {
                 await teamRating.rate(appState.ratingEntryId, force);
             }
@@ -1018,6 +1023,42 @@ const teamRating = {
     }
 };
 
+// The opening Gameweek's last complete squad, kept on this device so a return
+// visit shows it at once, marked as refreshing, while the current squad loads
+// (a cold server can take many seconds). Storage can be blocked or full.
+const savedSquad = {
+    storageKey: 'openfpl.lastSquad',
+    schema: 1,
+    maxAgeMs: 12 * 60 * 60 * 1000,
+
+    read() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.storageKey) || 'null');
+            const fresh = saved?.schema === this.schema
+                && Date.now() - Number(saved.savedAt) < this.maxAgeMs;
+            const data = saved?.data;
+            if (!fresh || !Number.isInteger(data?.gameweek)) return null;
+            if (!Array.isArray(data.scout_team) || !data.scout_team.length) return null;
+            return data;
+        } catch (error) {
+            return null;
+        }
+    },
+
+    // Only a complete squad: its fixtures and season data loaded.
+    save(data) {
+        if (data.fixturesLoading || data.fixturesAvailable === false) return;
+        const { events, ...squad } = data;
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify({
+                schema: this.schema, savedAt: Date.now(), data: squad
+            }));
+        } catch (error) {
+            // Private browsing or blocked storage: the next visit loads as usual.
+        }
+    }
+};
+
 // Team IDs this browser has rated, newest first, offered as the ID field's
 // suggestions. Only a successful rating is remembered, so a mistyped ID never
 // is. Kept on this device alone; storage can be blocked or full.
@@ -1128,7 +1169,6 @@ const interactions = {
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
         appState.eventsCache = null;
-        appState.referenceCache = null;
         try {
             await gameweekManager.load(appState.currentGameweek, true);
         } finally {
@@ -1207,18 +1247,32 @@ const app = {
     },
 
     async start() {
-        dashboardRenderer.loading('Checking the official FPL season…');
+        const saved = savedSquad.read();
+        if (saved) this.showSaved(saved);
+        else dashboardRenderer.loading('Checking the official FPL season…');
         try {
             appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = gameweekManager.openingGameweek(appState.events);
+            appState.openingGameweek = Number(active.id);
             appState.currentGameweek = Number(active.id);
             gameweekManager.populate(appState.events);
-            await gameweekManager.load(appState.currentGameweek);
+            // A saved squad of another Gameweek gives way to the loading state.
+            await gameweekManager.load(appState.currentGameweek, false, {
+                keepSaved: Number(saved?.gameweek) === appState.currentGameweek
+            });
         } catch (error) {
             console.error('Application initialization failed:', error);
             dashboardRenderer.error(error.message);
         }
+    },
+
+    showSaved(data) {
+        appState.currentGameweek = Number(data.gameweek);
+        appState.currentData = data;
+        dashboardRenderer.render(data);
+        dom.signalState.textContent = 'Refreshing';
+        dom.sourceState.textContent = 'Saved squad';
     }
 };
 
@@ -1233,6 +1287,7 @@ window.FPLScoutApp = {
     gameweekManager,
     teamRating,
     recentTeams,
+    savedSquad,
     interactions,
     clearCache: utils.clearCache
 };

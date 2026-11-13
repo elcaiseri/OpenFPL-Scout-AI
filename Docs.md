@@ -200,9 +200,25 @@ forecasts shipped) and was frozen on its first recall. That freeze keeps an
 older version's forecast when its archive proves it predates the deadline, and
 otherwise the prediction made on that recall. Open Gameweeks are predicted live
 and report `frozen: false`, as do closed ones when the archive is disabled.
-Player status shown alongside a frozen squad (for example on the dashboard) is
-current, but the picks and expected points are the ones made before the
-deadline.
+
+Each `scout_team` player also carries its current official `team_id`,
+`position`, `price`, `selected_by_percent`, `status`, `can_select`, `news`,
+`chance_of_playing_next_round` and `total_points`; predicted values win where
+both have a field. On a frozen squad these details are current, but the picks
+and expected points are the ones made before the deadline.
+
+An open Gameweek's live prediction is reused for five minutes
+(`inference.prediction_cache_ttl_seconds`), so requests do not rerun the
+ensemble. Any change to official availability (status, chance of playing,
+selectability) drops it at once. Every prediction runs inside a request:
+the public squad may be answered with a forecast up to fifteen minutes old
+(`prediction_stale_seconds`) and `refresh_due: true`, and the page then calls
+`POST /api/scout/refresh?gameweek=N`, which predicts in its own request and
+returns `fresh`, `refreshed` or `not-cached`. Other callers predict first, or
+wait for a prediction already under way. After a cold start, the public
+squad may be answered the same way from the open Gameweek's archived
+forecast, if it is under an hour old (`prediction_restore_max_age_seconds`),
+was made by the running models, and availability has not changed since.
 
 ## Historical model training
 
