@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
+from fastapi import HTTPException
 
 from main import (
     _api_catalog,
@@ -14,6 +15,7 @@ from main import (
     get_player_predictions,
     rate_public_manager_team,
     generate_public_scout_team,
+    refresh_public_scout_predictions,
     sync_public_scout_results,
 )
 from src.models import PlayerPointsModel
@@ -57,7 +59,9 @@ class FakeRatingScout:
     def __init__(self):
         self.official_client = FakeRatingOfficialClient()
 
-    def get_official_predictions(self, gameweek, *, collect_results=True):
+    def get_official_predictions(
+        self, gameweek, *, collect_results=True, allow_stale=False
+    ):
         positions = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 1, 2, 3, 4]
         predictions = pd.DataFrame(
             [
@@ -85,7 +89,9 @@ class FakeRatingScout:
 class DepartedPlayerRatingScout(FakeRatingScout):
     """Player 5 is no longer selectable, so the model has no projection."""
 
-    def get_official_predictions(self, gameweek, *, collect_results=True):
+    def get_official_predictions(
+        self, gameweek, *, collect_results=True, allow_stale=False
+    ):
         predictions = super().get_official_predictions(
             gameweek, collect_results=collect_results
         )
@@ -101,7 +107,9 @@ class VenueScout(FakeRatingScout):
         super().__init__()
         self.data_archive = SimpleNamespace(capture_squad=lambda *args: None)
 
-    def get_official_predictions(self, gameweek, *, collect_results=True):
+    def get_official_predictions(
+        self, gameweek, *, collect_results=True, allow_stale=False
+    ):
         predictions = super().get_official_predictions(
             gameweek, collect_results=collect_results
         )
@@ -119,8 +127,38 @@ class APISchemaTests(unittest.TestCase):
         ) as predictions:
             result = asyncio.run(generate_public_scout_team(gameweek=1))
 
-        predictions.assert_called_once_with(1, collect_results=False)
+        predictions.assert_called_once_with(1, collect_results=False, allow_stale=True)
         self.assertEqual(len(result.scout_team), 15)
+        self.assertFalse(result.refresh_due)
+
+    def test_a_stale_public_squad_asks_the_page_to_refresh(self):
+        scout = VenueScout()
+        predictions = scout.get_official_predictions
+        scout.get_official_predictions = lambda *args, **kwargs: (
+            lambda frame: (frame.attrs.update(refresh_due=True), frame)[1]
+        )(predictions(*args, **kwargs))
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(generate_public_scout_team(gameweek=1))
+
+        self.assertTrue(result.refresh_due)
+
+    def test_refresh_predicts_inside_its_own_request(self):
+        scout = SimpleNamespace(refresh_predictions=lambda gameweek: f"refreshed {gameweek}")
+        with patch("main.scout", scout, create=True):
+            result = asyncio.run(refresh_public_scout_predictions(gameweek=11))
+
+        self.assertEqual(result, {"status": "refreshed 11"})
+
+    def test_a_failed_refresh_reports_the_upstream_error(self):
+        def unavailable(gameweek):
+            raise OfficialFPLAPIError("FPL is updating")
+
+        scout = SimpleNamespace(refresh_predictions=unavailable)
+        with patch("main.scout", scout, create=True):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(refresh_public_scout_predictions(gameweek=11))
+
+        self.assertEqual(raised.exception.status_code, 502)
 
     def test_public_squad_carries_current_official_details(self):
         scout = VenueScout()
@@ -232,6 +270,7 @@ class APISchemaTests(unittest.TestCase):
             "/api/gameweeks",
             "/api/scout",
             "/api/scout/sync-results",
+            "/api/scout/refresh",
             "/api/scout/team-rating",
             "/api/gw/scout",
             "/api/gw/playerpoints",
@@ -301,6 +340,7 @@ class APISchemaTests(unittest.TestCase):
                 ("GET", "/api/fpl/gameweeks/status"),
                 ("GET", "/api/scout"),
                 ("POST", "/api/scout/sync-results"),
+                ("POST", "/api/scout/refresh"),
                 ("GET", "/api/scout/team-rating"),
             },
         )

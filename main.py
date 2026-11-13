@@ -129,7 +129,6 @@ async def lifespan(app: FastAPI):
     logger.info("FPLScout initialized and ready")
     yield
     logger.info("Shutting down application")
-    scout.close()
 
 
 app = FastAPI(
@@ -993,8 +992,13 @@ async def _generate_scout_response(
     gameweek: Optional[int], public=False
 ) -> ResponseModel:
     try:
+        # The web page may get a stale forecast at once: it then asks for
+        # /api/scout/refresh in a request of its own (refresh_due).
         predictions = await run_in_threadpool(
-            scout.get_official_predictions, gameweek, collect_results=not public
+            scout.get_official_predictions,
+            gameweek,
+            collect_results=not public,
+            allow_stale=public,
         )
         team = await run_in_threadpool(scout.select_optimal_team, predictions)
         await run_in_threadpool(scout.data_archive.capture_squad, predictions, team)
@@ -1023,6 +1027,7 @@ async def _generate_scout_response(
             frozen=bool(predictions.attrs.get("frozen", False)),
             forecast_captured_at=predictions.attrs.get("forecast_captured_at"),
             freeze_method=predictions.attrs.get("freeze_method"),
+            refresh_due=bool(predictions.attrs.get("refresh_due", False)),
         )
     except OfficialFPLAPIError as error:
         logger.exception("Official FPL data request failed")
@@ -1062,6 +1067,33 @@ async def sync_public_scout_results() -> dict[str, str]:
         scout.data_archive.collect_results, scout.official_client
     )
     return {"status": str(result["status"])}
+
+
+@app.post(
+    "/api/scout/refresh",
+    tags=["Scout AI"],
+    summary="Predict a gameweek again after a stale squad was served",
+    operation_id="refresh_public_scout_predictions",
+)
+async def refresh_public_scout_predictions(
+    gameweek: Optional[int] = Query(None, ge=1, le=38),
+) -> dict[str, str]:
+    """Refresh a cached forecast inside a request of its own.
+
+    A squad response with `refresh_due` was served from an older forecast
+    so the page did not wait. The page then calls this, and the prediction
+    runs while this request holds CPU, which request-billed Cloud Run only
+    allocates during requests. It joins a prediction already under way.
+    """
+    try:
+        status = await run_in_threadpool(scout.refresh_predictions, gameweek)
+    except OfficialFPLAPIError as error:
+        logger.exception("Official FPL data request failed during refresh")
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (InferenceError, ValueError) as error:
+        logger.exception("Scout refresh failed")
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"status": status}
 
 
 @app.get(

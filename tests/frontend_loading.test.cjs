@@ -639,3 +639,48 @@ test('start-up works when storage is blocked', async () => {
 
     assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
 });
+
+test('a stale squad asks for one refresh in its own request and is not kept', async () => {
+    const refresh = deferred();
+    const requests = [];
+    const app = loadApp(async (url, options) => {
+        requests.push([options.method || 'GET', url]);
+        if (url.startsWith('/api/scout?')) return response({ ...squad, frozen: false, refresh_due: true });
+        if (url === '/api/scout/refresh?gameweek=1') return refresh.promise;
+        if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+        throw new Error('Unexpected endpoint: ' + url);
+    });
+
+    await app.gameweekManager.load(1);
+    // Loading the same Gameweek again does not send a second refresh.
+    await app.gameweekManager.load(1);
+
+    const refreshes = requests.filter(([, url]) => url.startsWith('/api/scout/refresh'));
+    assert.deepEqual(refreshes, [['POST', '/api/scout/refresh?gameweek=1']]);
+    assert.equal(app.appState.dashboardCache.has(1), false);
+    assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+
+    refresh.resolve(response({ status: 'refreshed' }));
+    await app.appState.refreshPromises.get(1);
+    assert.equal(app.appState.refreshPromises.size, 0);
+});
+
+test('a fresh squad sends no refresh, and a failed refresh does not disturb the page', async () => {
+    for (const refreshDue of [false, true]) {
+        const requests = [];
+        const app = loadApp(async (url, options) => {
+            requests.push(url);
+            if (url.startsWith('/api/scout?')) return response({ ...squad, frozen: false, refresh_due: refreshDue });
+            if (url.startsWith('/api/scout/refresh')) return response({ detail: 'FPL is updating' }, 502);
+            if (url.startsWith('/api/fpl/fixtures')) return response({ results: [] });
+            throw new Error('Unexpected endpoint: ' + url);
+        });
+
+        await app.gameweekManager.load(1);
+        await Promise.all(app.appState.refreshPromises.values());
+
+        assert.equal(requests.filter(url => url.startsWith('/api/scout/refresh')).length, refreshDue ? 1 : 0);
+        assert.equal(app.appState.currentData.scout_team[0].web_name, 'Player');
+        assert.equal(app.appState.isLoading, false);
+    }
+});
