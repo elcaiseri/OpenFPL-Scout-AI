@@ -94,6 +94,45 @@ class DepartedPlayerRatingScout(FakeRatingScout):
         return trimmed
 
 
+class TransferScout(FakeRatingScout):
+    """Player 16, a forward not in the squad, projects 9 xPts for 5.5m."""
+
+    def __init__(self, frozen=False):
+        super().__init__()
+        self.frozen = frozen
+        client = self.official_client
+        manager = client.mapped_manager
+        client.mapped_manager = lambda entry_id: {
+            **manager(entry_id),
+            "last_deadline_bank": 0.5,
+        }
+        client.mapped_players = lambda: [
+            {"id": index, "price": 5.5 if index == 16 else 5.0, "status": "a"}
+            for index in range(1, 17)
+        ]
+
+    def get_official_predictions(self, gameweek, *, collect_results=True):
+        predictions = super().get_official_predictions(
+            gameweek, collect_results=collect_results
+        )
+        extra = pd.DataFrame(
+            [
+                {
+                    "id": 16,
+                    "web_name": "Player 16",
+                    "team_name": "Club 5",
+                    "element_type": 4,
+                    "expected_points": 9.0,
+                    "availability_factor": 1.0,
+                    "selected_by_percent": 2.0,
+                }
+            ]
+        )
+        combined = pd.concat([predictions, extra], ignore_index=True)
+        combined.attrs = {**predictions.attrs, "frozen": self.frozen}
+        return combined
+
+
 class VenueScout(FakeRatingScout):
     """Player 1 plays at home, 2 away, 3 once at each venue, and 4 blanks."""
 
@@ -195,6 +234,25 @@ class APISchemaTests(unittest.TestCase):
         self.assertEqual(result.rating, 100)
         self.assertEqual(result.grade, "A+")
         self.assertEqual(len(result.squad), 15)
+
+    def test_team_rating_suggests_affordable_transfers_before_the_deadline(self):
+        with patch("main.scout", TransferScout(), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertEqual(result.bank, 0.5)
+        self.assertEqual(len(result.transfers), 1)
+        [suggestion] = result.transfers
+        self.assertEqual(suggestion["in"]["id"], 16)
+        self.assertEqual(suggestion["out"]["position"], 4)
+        self.assertEqual(suggestion["cost"], 0.5)
+        self.assertGreater(suggestion["gain"], 0)
+
+    def test_a_frozen_gameweek_suggests_no_transfers(self):
+        with patch("main.scout", TransferScout(frozen=True), create=True):
+            result = asyncio.run(rate_public_manager_team(entry_id=123, gameweek=1))
+
+        self.assertTrue(result.frozen)
+        self.assertEqual(result.transfers, [])
 
     def test_team_rating_scores_squads_holding_unprojectable_players(self):
         with patch("main.scout", DepartedPlayerRatingScout(), create=True):

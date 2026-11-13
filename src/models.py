@@ -40,6 +40,11 @@ class TeamRatingModel(BaseModel):
     version: str = "6.2.0"
     source: str = "official-fpl"
     frozen: bool = False
+    # The manager's bank at the last deadline, in £m, when FPL publishes it.
+    bank: Optional[float] = None
+    # Single transfers that raise the squad's projection within the bank, best
+    # first; empty once the gameweek is frozen (see src/transfers.py).
+    transfers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class OfficialFPLCollectionModel(BaseModel):

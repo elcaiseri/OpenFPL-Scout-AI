@@ -33,6 +33,7 @@ from src.models import (
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
 from src.scout import FPLScout, InferenceError
 from src.team_rating import rate_manager_team
+from src.transfers import suggest_transfers
 from src.utils import load_config
 
 logger = get_logger(__name__)
@@ -1140,6 +1141,20 @@ async def rate_public_manager_team(
         benchmark = await run_in_threadpool(scout.select_optimal_team, predictions)
         benchmark_records = json.loads(benchmark.to_json(orient="records"))
         rating = rate_manager_team(squad, benchmark_records)
+        frozen = bool(predictions.attrs.get("frozen", False))
+        bank = manager.get("last_deadline_bank")
+        # Transfers can still be made only before the deadline.
+        transfers = (
+            []
+            if frozen
+            else await run_in_threadpool(
+                lambda: suggest_transfers(
+                    squad,
+                    _with_official_details(prediction_records),
+                    None if bank is None else float(bank),
+                )
+            )
+        )
         manager_name = " ".join(
             str(manager.get(field) or "").strip()
             for field in ("player_first_name", "player_last_name")
@@ -1158,7 +1173,9 @@ async def rate_public_manager_team(
             ),
             version=config.get("version", "1.0.0"),
             source=str(predictions.attrs.get("source", "official-fpl")),
-            frozen=bool(predictions.attrs.get("frozen", False)),
+            frozen=frozen,
+            bank=bank,
+            transfers=transfers,
             **rating,
         )
     except HTTPException as error:
