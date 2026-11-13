@@ -92,6 +92,24 @@ class StaticCachingTests(unittest.TestCase):
         self.assertEqual(headers["cache-control"], "no-cache")
         self.assertEqual(body, Path("static/style.css").read_bytes())
 
+    def test_the_page_logo_is_a_small_cached_webp(self):
+        page = get("/")[2].decode()
+        logo = re.search(r'<span class="brand-mark"[^>]*>\s*<img src="([^"]+)"', page)
+
+        status, headers, body = get(logo.group(1))
+
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "image/webp")
+        self.assertEqual(headers["cache-control"], "public, max-age=86400")
+        self.assertLess(len(body), 20_000)
+
+    def test_page_icons_are_small(self):
+        for page in ("/", "/static/report/index.html"):
+            with self.subTest(page=page):
+                html = get(page)[2].decode()
+                for icon in re.findall(r'<link rel="icon"[^>]*href="([^"]+)"', html):
+                    self.assertLess(len(get(icon)[2]), 20_000, icon)
+
     def test_report_page_files_are_revalidated_too(self):
         for path in ("/static/report/index.html", "/static/report/charts.js"):
             with self.subTest(path=path):

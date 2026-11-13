@@ -148,9 +148,11 @@ app = FastAPI(
 # that download used to hold up the squad prediction.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-# Python 3.9's built-in table lacks .woff2, so StaticFiles would serve the
-# display font as text/plain.
+# Python 3.9's built-in table lacks .woff2 and .webp, and the slim image has
+# no /etc/mime.types to add them, so StaticFiles would mislabel the display
+# font and the logo.
 mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("image/webp", ".webp")
 
 # Sent with the page and every /static file. Without it, browsers guess how
 # long to reuse a file from its Last-Modified date, and a phone could keep a
@@ -162,14 +164,27 @@ NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
 class RevalidatingStaticFiles(StaticFiles):
     """Static files that browsers check with the server before reusing."""
 
+    cache_headers: Mapping[str, str] = NO_CACHE_HEADERS
+
     def file_response(self, *args: Any, **kwargs: Any) -> Response:
         response = super().file_response(*args, **kwargs)
-        response.headers.update(NO_CACHE_HEADERS)
+        response.headers.update(self.cache_headers)
         return response
 
 
+class CachedAssetFiles(RevalidatingStaticFiles):
+    """Images that browsers reuse for a day before checking again.
+
+    Logos and icons are linked on every page and rarely change, so a repeat
+    visit skips even the revalidation round trip. A replaced image reaches
+    everyone within a day; give it a new file name to show it at once.
+    """
+
+    cache_headers = {"Cache-Control": "public, max-age=86400"}
+
+
 app.mount("/static", RevalidatingStaticFiles(directory="static"), name="static")
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+app.mount("/assets", CachedAssetFiles(directory="assets"), name="assets")
 
 
 def _uses_bearer_auth(dependency) -> bool:

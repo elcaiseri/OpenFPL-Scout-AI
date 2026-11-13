@@ -139,7 +139,8 @@ The page and every `/static` file are sent with `Cache-Control: no-cache`, so
 browsers check for a newer copy (a quick 304 when nothing changed) instead of
 reusing an old deploy's files. The page links `style.css` and `script.js` with
 a content hash (`?v=…`), so a new deploy's page always loads its own stylesheet
-and script.
+and script. Images under `/assets` are cached for a day; give a changed image
+a new file name to show it immediately.
 
 ## API
 
