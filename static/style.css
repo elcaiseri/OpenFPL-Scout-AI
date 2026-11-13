@@ -261,11 +261,18 @@ select {
     text-transform: uppercase;
 }
 
+/* The headline is sized from --hero-size and then capped by its own column
+   (see @supports below), so "GAMEWEEK." always fits on one line. */
+.hero-copy {
+    container-type: inline-size;
+}
+
 .hero-copy h1 {
+    --hero-size: clamp(4rem, 9vw, 7.8rem);
     max-width: 720px;
     margin-top: 12px;
     font-family: var(--font-display);
-    font-size: clamp(4rem, 9vw, 7.8rem);
+    font-size: var(--hero-size);
     font-weight: 900;
     line-height: 0.79;
     letter-spacing: -0.035em;
@@ -1197,7 +1204,19 @@ select {
 }
 
 .hero-copy h1 {
-    font-size: clamp(4rem, 8vw, 7.2rem);
+    --hero-size: clamp(4rem, 8vw, 7.2rem);
+}
+
+/* Impact is missing on iOS, Android, Linux and many tablets, where the
+   headline falls back to a wide sans-serif: "GAMEWEEK." then measures about
+   6em and was clipped at every phone width and at some tablet widths. 16% of
+   the column (cqi) keeps it inside with room to spare; where Impact is
+   installed, or the column is wide, the --hero-size above still applies.
+   Browsers without container units keep --hero-size alone. */
+@supports (width: 1cqi) {
+    .hero-copy h1 {
+        font-size: min(var(--hero-size), 16cqi);
+    }
 }
 
 .hero-cta {
@@ -2726,7 +2745,7 @@ select {
     }
 
     .hero-copy h1 {
-        font-size: clamp(3.65rem, 19vw, 5.3rem);
+        --hero-size: clamp(3.65rem, 19vw, 5.3rem);
     }
 
     .hero-description {
