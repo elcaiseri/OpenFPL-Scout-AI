@@ -471,6 +471,93 @@ class DataArchive:
             logger.exception("Could not read the archived GW%d forecast", gameweek)
             return None
 
+    def gameweek_is_open(self, official_client: Any, gameweek: int) -> bool:
+        """Whether the gameweek's deadline is known and has not yet passed.
+
+        False when the season cannot be read, so callers fall back to their
+        uncached path. Works whether or not archiving is enabled.
+        """
+        try:
+            deadline = self._gameweek_deadline(official_client.bootstrap(), gameweek)
+        except Exception:
+            return False
+        return deadline is not None and self.clock() < deadline
+
+    def recent_open_forecast(
+        self,
+        official_client: Any,
+        gameweek: int,
+        max_age: timedelta,
+        *,
+        model_versions: Optional[Mapping[str, Any]] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Return an open gameweek's last archived live forecast, if recent.
+
+        Every live prediction of the open gameweek replaces its metadata file,
+        so after a cold start this is the forecast the previous instance last
+        served. It lets a new instance answer at once while it predicts again.
+        Returns None once the deadline has passed (the frozen forecast applies
+        then), when the archive is disabled or unreadable, when the forecast
+        is older than ``max_age``, or when ``model_versions`` differ from the
+        models that made it (a deploy changed them). The returned forecast is
+        never archived again.
+        """
+        if not self.enabled or max_age <= timedelta(0):
+            return None
+        try:
+            bootstrap = official_client.bootstrap()
+            deadline = self._gameweek_deadline(bootstrap, gameweek)
+            now = self.clock()
+            if deadline is not None and now >= deadline:
+                return None
+            metadata_path = (
+                self.root_path
+                / self._season_name(bootstrap)
+                / "metadata"
+                / f"gw_{gameweek:02d}.json"
+            )
+            with self._lock:
+                metadata = self._read_metadata(metadata_path)
+            forecast = metadata.get("forecast")
+            captured_at = _parse_deadline(metadata.get("captured_at_utc"))
+            if (
+                metadata.get("prediction_gameweek") != gameweek
+                or metadata.get("freeze")
+                or not isinstance(forecast, Mapping)
+                or not {"columns", "data"} <= set(forecast)
+                or captured_at is None
+                or not timedelta(0) <= now - captured_at <= max_age
+                or (
+                    model_versions is not None
+                    and metadata.get("models")
+                    != json.loads(self._json_bytes(model_versions))
+                )
+            ):
+                return None
+        except Exception:  # Fail open: predicting live is always possible.
+            logger.exception("Could not read the archived GW%d forecast", gameweek)
+            return None
+        predictions = pd.DataFrame(forecast["data"], columns=forecast["columns"])
+        predictions.attrs.update(
+            gameweek=gameweek,
+            inference=metadata.get("inference", {}),
+            source=metadata.get("source", "official-fpl"),
+            frozen=False,
+            forecast_captured_at=None,
+            freeze_method=None,
+            archive={
+                "status": "restored",
+                "prediction_archived": False,
+                "prediction_skipped_reason": "restored-from-archive",
+            },
+        )
+        logger.info(
+            "Restored the GW%d forecast archived at %s",
+            gameweek,
+            captured_at.isoformat(),
+        )
+        return predictions
+
     @staticmethod
     def _served_forecast(metadata: Mapping[str, Any], gameweek: int) -> pd.DataFrame:
         """A frozen forecast exactly as requests receive it."""

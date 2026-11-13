@@ -33,7 +33,10 @@ responsive web dashboard and FastAPI service.
 - The dashboard includes Gameweek planning, deadline status, fixture context,
   pitch and table views, detailed player cards, and a manager team-rating mode.
 - A public FPL team ID can be scored from 0–100 against the same AI benchmark,
-  with separate starting-XI, captaincy, and availability signals.
+  with separate starting-XI, captaincy, and availability signals, plus up to
+  three affordable transfers that raise its projection.
+- The Gameweek and a rated team ID stay in the address bar (`?gw=`,
+  `?team=`), so any view can be bookmarked or shared.
 - Optional FPL Data enrichment can fill missing historical statistics from GW2
   without replacing official values.
 
@@ -139,7 +142,8 @@ The page and every `/static` file are sent with `Cache-Control: no-cache`, so
 browsers check for a newer copy (a quick 304 when nothing changed) instead of
 reusing an old deploy's files. The page links `style.css` and `script.js` with
 a content hash (`?v=…`), so a new deploy's page always loads its own stylesheet
-and script.
+and script. Images under `/assets` are cached for a day; give a changed image
+a new file name to show it immediately.
 
 ## API
 
@@ -150,6 +154,7 @@ and extended data routes require `Authorization: Bearer <token>`.
 curl "https://openfpl.kassem.dev/api/scout?gameweek=1"
 curl "https://openfpl.kassem.dev/api/scout/team-rating?entry_id=1234567&gameweek=1"
 curl -X POST "https://openfpl.kassem.dev/api/scout/sync-results"
+curl -X POST "https://openfpl.kassem.dev/api/scout/refresh?gameweek=1"
 curl -H "Authorization: Bearer <token>" \
   "https://openfpl.kassem.dev/api/health"
 ```
@@ -171,8 +176,11 @@ The dashboard shows saved squads before collecting archived match results.
 After rendering a frozen squad it starts `POST /api/scout/sync-results`
 without waiting for it; collection retains the archive's five-minute cooldown
 and finishes inside that HTTP request, so request-based Cloud Run CPU remains
-available. Temporary read failures retry twice, and unavailable player metadata
-or fixtures do not hide an otherwise valid squad.
+available. A squad answered from an older cached forecast carries
+`refresh_due: true`; the page then starts `POST /api/scout/refresh` the same
+way, so the new prediction runs inside a request too. The server never
+predicts outside a request. Temporary read failures retry twice, and
+unavailable player metadata or fixtures do not hide an otherwise valid squad.
 
 ## Models and data
 

@@ -955,6 +955,49 @@ select {
     outline-offset: 3px;
 }
 
+/* While a squad loads, its status sits over faint cards in formation. */
+.loading.over-placeholders {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    min-height: 0;
+    text-shadow: 0 2px 12px rgba(0, 31, 18, 0.8);
+}
+
+.placeholder-line {
+    margin-top: 35px;
+}
+
+.player-card.placeholder {
+    pointer-events: none;
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
+    animation: placeholder-pulse 1.6s ease-in-out infinite;
+}
+
+.player-card.placeholder::before {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+@keyframes placeholder-pulse {
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* Phone cards size to their content, which a placeholder has none of, so it
+   takes a real card's height there (see the pitch container rules below). */
+@container pitch (max-width: 439px) {
+    .player-card.placeholder {
+        min-height: 80px;
+    }
+
+    .placeholder-line {
+        margin-top: 29px;
+    }
+}
+
 .loading-ball {
     display: block;
     width: 34px;
@@ -2007,6 +2050,199 @@ select {
     line-height: 1.45;
 }
 
+.share-button {
+    display: block;
+    width: fit-content;
+    margin-top: 10px;
+    padding: 7px 12px;
+    color: var(--paper);
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 800;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition: border-color var(--ease), background var(--ease);
+}
+
+.share-button:hover,
+.share-button:focus-visible {
+    border-color: var(--lime);
+    background: rgba(200, 255, 50, 0.08);
+}
+
+.rating-transfers-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--line);
+}
+
+.transfers-toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.transfers-toggle {
+    min-height: 44px;
+    padding: 10px 16px;
+    color: var(--ink-950);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--aqua);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: opacity var(--ease), background var(--ease);
+}
+
+.transfers-toggle[aria-expanded="true"] {
+    color: var(--aqua);
+    background: rgba(57, 241, 255, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(57, 241, 255, 0.45);
+}
+
+.transfers-toggle:focus-visible {
+    outline: 2px solid var(--paper);
+    outline-offset: 3px;
+}
+
+.transfers-toggle:disabled {
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px var(--line);
+    cursor: not-allowed;
+}
+
+.transfers-toggle-note {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 0.64rem;
+    line-height: 1.4;
+}
+
+.rating-transfers {
+    margin-top: 14px;
+}
+
+.rating-transfers-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rating-transfers-head small {
+    color: var(--muted);
+    font-size: 0.62rem;
+    font-weight: 700;
+}
+
+.insight-label.transfer {
+    color: var(--aqua);
+    background: rgba(57, 241, 255, 0.08);
+}
+
+.transfer-limit {
+    margin-top: 12px;
+    padding: 10px 12px;
+    color: #ffd2e8;
+    font-size: 0.66rem;
+    line-height: 1.45;
+    border: 1px solid rgba(255, 79, 167, 0.3);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 79, 167, 0.07);
+}
+
+.transfer-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    list-style: none;
+}
+
+.transfer-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    font-size: 0.72rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.transfer-player {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.transfer-player small {
+    color: var(--muted);
+    font-size: 0.56rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.transfer-player.out small {
+    color: #ff8ec5;
+}
+
+.transfer-player.in small {
+    color: var(--lime);
+}
+
+.transfer-player strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transfer-player span {
+    color: var(--muted);
+    font-size: 0.62rem;
+}
+
+.transfer-arrow {
+    color: var(--muted);
+}
+
+.transfer-gain {
+    color: var(--lime);
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.transfer-empty {
+    color: #d2c8da;
+    font-size: 0.68rem;
+}
+
+.transfer-note {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 0.58rem;
+    line-height: 1.5;
+}
+
+@media (max-width: 560px) {
+    .transfer-list li {
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    }
+
+    .transfer-gain {
+        grid-column: 1 / -1;
+    }
+}
+
 .view-switcher {
     display: inline-flex;
     padding: 3px;
@@ -2345,6 +2581,46 @@ select {
 .squad-table td {
     color: #d9d1de;
     font-size: 0.72rem;
+}
+
+.sort-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    border: 0;
+    background: none;
+    cursor: pointer;
+}
+
+.sort-button::after {
+    content: "↕";
+    opacity: 0.35;
+}
+
+[aria-sort="ascending"] .sort-button,
+[aria-sort="descending"] .sort-button {
+    color: var(--lime);
+}
+
+[aria-sort="ascending"] .sort-button::after {
+    content: "↑";
+    opacity: 1;
+}
+
+[aria-sort="descending"] .sort-button::after {
+    content: "↓";
+    opacity: 1;
+}
+
+.sort-button:focus-visible {
+    outline: 2px solid var(--lime);
+    outline-offset: 3px;
+    border-radius: 3px;
 }
 
 .squad-table tbody tr:last-child td {
@@ -3013,6 +3289,68 @@ select {
 
     .player-dialog {
         padding: 24px 20px;
+    }
+}
+
+/* Phones: the squad sat almost two screens below the fold. The deadline panel
+   already gives the deadline, so the official-data row drops its own copy and
+   shows fixtures, status and last update in one line; the hero, team-news
+   note and summary cards tighten. Section order is unchanged. */
+@media (max-width: 560px) {
+    .hero-grid {
+        gap: 18px;
+        margin-top: 30px;
+    }
+
+    .gameweek-panel {
+        min-height: 0;
+    }
+
+    .official-pulse {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .official-pulse article:first-child {
+        display: none;
+    }
+
+    .official-pulse article,
+    .official-pulse article:nth-child(-n + 2) {
+        padding: 12px 10px;
+        border-right: 1px solid var(--line);
+        border-bottom: 0;
+    }
+
+    .official-pulse article:last-child {
+        border-right: 0;
+    }
+
+    .official-pulse strong {
+        margin-top: 6px;
+        font-size: 0.82rem;
+    }
+
+    .official-pulse small {
+        display: none;
+    }
+
+    .disclaimer {
+        padding: 10px 12px;
+        font-size: 0.7rem;
+    }
+
+    .stat-card {
+        min-height: 0;
+        padding: 12px 14px;
+    }
+
+    .stat-value {
+        margin-top: 14px;
+        font-size: 1.9rem;
+    }
+
+    .stat-value.stat-name {
+        font-size: 1rem;
     }
 }
 

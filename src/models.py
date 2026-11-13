@@ -16,6 +16,9 @@ class ResponseModel(BaseModel):
     # How a frozen forecast was frozen: "deadline" (captured before it) or
     # "after-deadline" (frozen on the gameweek's first recall after it).
     freeze_method: Optional[str] = None
+    # True when an older forecast was served so the page did not wait; the
+    # page then calls POST /api/scout/refresh, where the prediction runs.
+    refresh_due: bool = False
     credits: str = "OpenFPL Scout AI Team | Official FPL + FPL Data when available | Islam Kassem (kassem.dev), 2026"
 
 
@@ -40,6 +43,17 @@ class TeamRatingModel(BaseModel):
     version: str = "6.2.0"
     source: str = "official-fpl"
     frozen: bool = False
+    # The manager's bank at the last deadline, in £m, when FPL publishes it.
+    bank: Optional[float] = None
+    # Whether transfers can still be made: the gameweek's official deadline
+    # is ahead (independent of forecast freezing).
+    transfers_open: bool = False
+    # Single transfers that raise the squad's projection within the bank, best
+    # first; empty unless transfers_open (see src/transfers.py).
+    transfers: List[Dict[str, Any]] = Field(default_factory=list)
+    # Clubs with more than three of the squad's players, e.g. after a
+    # real-life transfer; FPL's next transfer out must come from one.
+    clubs_over_limit: Dict[str, int] = Field(default_factory=dict)
 
 
 class OfficialFPLCollectionModel(BaseModel):

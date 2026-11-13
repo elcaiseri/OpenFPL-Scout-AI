@@ -15,9 +15,9 @@ const CONFIG = {
     endpoints: {
         scout: '/api/scout',
         syncResults: '/api/scout/sync-results',
+        refresh: gameweek => `/api/scout/refresh?gameweek=${gameweek}`,
         teamRating: (entryId, gameweek) => `/api/scout/team-rating?entry_id=${entryId}&gameweek=${gameweek}`,
         events: '/api/fpl/gameweeks',
-        players: '/api/fpl/players?limit=1000',
         fixtures: gameweek => `/api/fpl/fixtures?gameweek=${gameweek}`
     }
 };
@@ -38,6 +38,8 @@ const CLUB_CODES = new Map(Object.entries({
 
 const appState = {
     currentGameweek: CONFIG.defaultGameweek,
+    // The Gameweek the app opens on; only its squad is saved for next visit.
+    openingGameweek: null,
     events: [],
     visibleEvents: [],
     currentData: null,
@@ -53,11 +55,18 @@ const appState = {
     ratingCache: new Map(),
     eventsCache: null,
     eventsTimestamp: 0,
-    referenceCache: null,
-    referenceTimestamp: 0,
     resultsSyncPromise: null,
+    // Refresh requests in flight, one per Gameweek.
+    refreshPromises: new Map(),
     teamCodes: new Map(),
     pitchWidth: 0,
+    // Players on the pitch and in the list, by their cards' data-player key.
+    shownPlayers: new Map(),
+    // Whether the rating's transfer suggestions were opened with their button.
+    transfersShown: false,
+    // The List view's order: a column and a direction.
+    tableSort: { key: 'xpts', direction: 'desc' },
+    tableRows: [],
     countdownTimer: null
 };
 
@@ -188,9 +197,21 @@ const utils = {
         });
     },
 
+    // The time deadline decisions use; tests move it.
+    now() {
+        return Date.now();
+    },
+
+    // Whether a Gameweek's official deadline is known and has passed.
+    deadlinePassed(gameweek) {
+        const event = appState.events.find(item => Number(item.id) === Number(gameweek));
+        const deadline = new Date(event?.deadline_time).getTime();
+        return Number.isFinite(deadline) && this.now() >= deadline;
+    },
+
     countdown(value) {
         if (!value) return 'Deadline TBC';
-        const distance = new Date(value).getTime() - Date.now();
+        const distance = new Date(value).getTime() - this.now();
         if (!Number.isFinite(distance)) return 'Deadline TBC';
         if (distance <= 0) return 'Deadline passed';
 
@@ -268,8 +289,6 @@ const utils = {
         appState.ratingCache.clear();
         appState.eventsCache = null;
         appState.eventsTimestamp = 0;
-        appState.referenceCache = null;
-        appState.referenceTimestamp = 0;
     }
 };
 
@@ -299,7 +318,11 @@ const dom = new Proxy({}, {
             ratingManagerName: 'rating-manager-name', ratingPicksLabel: 'rating-picks-label',
             ratingProjection: 'rating-projection', ratingBenchmark: 'rating-benchmark',
             ratingGap: 'rating-gap', ratingStrengths: 'rating-strengths',
-            ratingRisks: 'rating-risks',
+            ratingRisks: 'rating-risks', ratingTransfers: 'rating-transfers',
+            ratingTransferList: 'rating-transfer-list', ratingBank: 'rating-bank',
+            ratingClubLimit: 'rating-club-limit',
+            transfersToggle: 'transfers-toggle', transfersToggleNote: 'transfers-toggle-note',
+            shareRating: 'share-rating',
             credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
             dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
             dialogTeam: 'dialog-team', dialogPoints: 'dialog-points',
@@ -314,8 +337,9 @@ const dom = new Proxy({}, {
 
 const dataLoader = {
     // The season's gameweeks are small and decide which squad to ask for, so
-    // start-up waits for them alone; the ~800-player list then downloads
-    // alongside the squad prediction instead of ahead of it.
+    // start-up waits for them alone. Squad players arrive with their current
+    // official details (price, ownership, status, news), so no player list
+    // is downloaded.
     async loadEvents(force = false) {
         const fresh = appState.eventsCache
             && Date.now() - appState.eventsTimestamp < CONFIG.cacheExpiry;
@@ -326,30 +350,15 @@ const dataLoader = {
         return appState.eventsCache;
     },
 
-    async loadReferenceData(force = false) {
-        const fresh = appState.referenceCache
-            && Date.now() - appState.referenceTimestamp < CONFIG.cacheExpiry;
-        if (fresh && !force) return appState.referenceCache;
-
-        const results = await Promise.allSettled([
-            this.loadEvents(force),
-            utils.fetchJson(CONFIG.endpoints.players)
-        ]);
-        results.filter(result => result.status === 'rejected').forEach(result => {
-            console.warn('Supporting FPL data unavailable:', result.reason);
-        });
-        const reference = {
-            events: results[0].status === 'fulfilled'
-                ? results[0].value : appState.events,
-            players: results[1].status === 'fulfilled'
-                ? results[1].value.results || [] : appState.referenceCache?.players || [],
-            available: results.every(result => result.status === 'fulfilled')
-        };
-        if (reference.available) {
-            appState.referenceCache = reference;
-            appState.referenceTimestamp = Date.now();
+    // A failed refresh keeps the gameweeks already loaded, marked unavailable
+    // so the dashboard built from them is not cached.
+    async loadSeason(force = false) {
+        try {
+            return { events: await this.loadEvents(force), available: true };
+        } catch (error) {
+            console.warn('Supporting FPL data unavailable:', error);
+            return { events: appState.events, available: false };
         }
-        return reference;
     },
 
     async loadDashboard(gameweek, force = false, onScoutReady = null) {
@@ -362,7 +371,7 @@ const dataLoader = {
             `${CONFIG.endpoints.scout}?gameweek=${gameweek}`, CONFIG.inferenceRequest
         );
         const detailsRequest = Promise.all([
-            this.loadReferenceData(force),
+            this.loadSeason(force),
             utils.fetchJson(CONFIG.endpoints.fixtures(gameweek)).catch(error => {
                 console.warn('Fixtures unavailable:', error);
                 fixturesAvailable = false;
@@ -371,8 +380,8 @@ const dataLoader = {
         ]);
         const scout = await scoutRequest;
         if (onScoutReady) {
-            // Predictions already contain the squad's names, positions and
-            // prices. Show them while optional current metadata catches up.
+            // The squad already carries names, positions, prices and status.
+            // Show it while the fixtures catch up.
             onScoutReady({
                 ...scout,
                 event: appState.events.find(event => Number(event.id) === Number(gameweek)) || null,
@@ -383,23 +392,15 @@ const dataLoader = {
                 syncedAt: new Date()
             });
         }
-        const [reference, fixturePayload] = await detailsRequest;
-
-        const byId = new Map(reference.players.map(player => [Number(player.id), player]));
-        const byIdentity = new Map(reference.players.map(player => [
-            `${player.web_name}|${player.team_name}`.toLowerCase(), player
-        ]));
-        this.learnTeamCodes(fixturePayload.results || [], reference.players);
+        const [season, fixturePayload] = await detailsRequest;
+        const fixtures = fixturePayload.results || [];
+        this.learnTeamCodes(fixtures, scout.scout_team || []);
 
         const players = (scout.scout_team || []).map(player => {
-            const identity = `${player.web_name}|${player.team_name}`.toLowerCase();
-            const official = byId.get(Number(player.id)) || byIdentity.get(identity) || {};
-            const fixture = this.playerFixture(official, fixturePayload.results || []);
+            const fixture = this.playerFixture(player, fixtures);
             return {
-                ...official,
                 ...player,
-                position: official.position || player.element_type,
-                official_element_type: official.element_type,
+                position: player.position || player.element_type,
                 fixture_id: fixture?.id || null,
                 difficulty: fixture?.difficulty || null,
                 kickoff_time: fixture?.kickoff_time || null
@@ -409,16 +410,35 @@ const dataLoader = {
         const dashboard = {
             ...scout,
             scout_team: players,
-            event: reference.events.find(event => Number(event.id) === Number(gameweek)) || null,
-            events: reference.events,
-            fixtures: fixturePayload.results || [],
+            event: season.events.find(event => Number(event.id) === Number(gameweek)) || null,
+            events: season.events,
+            fixtures,
             fixturesAvailable,
             syncedAt: new Date()
         };
-        if (reference.available && fixturesAvailable) {
+        // A stale squad is not kept: the next view of its Gameweek asks again
+        // and gets the refreshed forecast.
+        if (season.available && fixturesAvailable && !scout.refresh_due) {
             appState.dashboardCache.set(gameweek, dashboard);
         }
         return dashboard;
+    },
+
+    // The server answered with an older forecast so the page did not wait
+    // (refresh_due). The new prediction runs in this request of its own,
+    // which is when request-billed Cloud Run gives the server CPU.
+    refreshPredictions(gameweek) {
+        const key = Number(gameweek);
+        if (appState.refreshPromises.has(key)) return appState.refreshPromises.get(key);
+        const request = utils.fetchJson(CONFIG.endpoints.refresh(key), {
+            method: 'POST', timeoutMs: 0
+        }).catch(error => {
+            console.warn('Squad refresh unavailable:', error);
+        }).finally(() => {
+            appState.refreshPromises.delete(key);
+        });
+        appState.refreshPromises.set(key, request);
+        return request;
     },
 
     syncResults() {
@@ -435,9 +455,11 @@ const dataLoader = {
 
     async loadTeamRating(entryId, gameweek, force = false) {
         const key = `${entryId}:${gameweek}`;
-        if (appState.ratingCache.has(key) && !force) {
-            return appState.ratingCache.get(key);
-        }
+        const saved = appState.ratingCache.get(key);
+        // Saved before the deadline with transfers open, a rating is out of
+        // date once it passes: the server now answers with them closed.
+        const expired = saved?.transfers_open && utils.deadlinePassed(gameweek);
+        if (saved && !force && !expired) return saved;
         const rating = await utils.fetchJson(
             CONFIG.endpoints.teamRating(entryId, gameweek), CONFIG.inferenceRequest
         );
@@ -490,8 +512,15 @@ const playerRenderer = {
         };
     },
 
+    // Cards and rows carry the player's FPL id; the player itself stays in
+    // memory, instead of ~2KB of JSON per card in the page. A card and its
+    // list row share one entry, so sorting the list adds none.
     dataAttribute(player) {
-        return utils.escapeHtml(JSON.stringify(this.format(player)));
+        const key = player.id !== null && player.id !== undefined
+            ? String(player.id)
+            : `name:${player.web_name}|${player.team_name}`;
+        appState.shownPlayers.set(key, this.format(player));
+        return utils.escapeHtml(key);
     },
 
     roleBadge(player) {
@@ -595,7 +624,15 @@ const dashboardRenderer = {
 
     startCountdown(deadline) {
         clearInterval(appState.countdownTimer);
-        const update = () => { dom.deadlineCountdown.textContent = utils.countdown(deadline); };
+        const update = () => {
+            dom.deadlineCountdown.textContent = utils.countdown(deadline);
+            // At the deadline the transfers button disables itself and any
+            // suggestions on screen close.
+            const rating = appState.ratingData;
+            if (rating && !dom.transfersToggle.disabled && utils.deadlinePassed(rating.gameweek)) {
+                teamRating.transfers(rating);
+            }
+        };
         update();
         appState.countdownTimer = setInterval(update, 30000);
     },
@@ -685,6 +722,7 @@ const dashboardRenderer = {
             ? players.filter(player => utils.isBench(player))
                 .sort((a, b) => utils.number(a.pick_position, 0) - utils.number(b.pick_position, 0))
             : [];
+        appState.shownPlayers = new Map();
         const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
         const grouped = Object.fromEntries(positionOrder.map(position => [position, []]));
         starters.forEach(player => {
@@ -713,12 +751,11 @@ const dashboardRenderer = {
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
         this.fitNames();
 
-        const ranked = [...players].sort(
-            (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
-        );
-        dom.tableBody.innerHTML = ranked.map((player, index) =>
-            playerRenderer.tableRow(player, index)
-        ).join('');
+        // Each row keeps its xPts rank, whichever column the list is sorted by.
+        appState.tableRows = [...players]
+            .sort((a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0))
+            .map((player, index) => ({ player, rank: index }));
+        this.table();
         const counts = positionOrder.map(position => grouped[position].length);
         if (hasLineup) {
             dom.formationChip.textContent = counts.slice(1).join('-');
@@ -729,6 +766,30 @@ const dashboardRenderer = {
         }
         dom.squadSubtitle.textContent = options.subtitle
             || `${players.length} picks · tap a player for xPts, price and ownership`;
+    },
+
+    table() {
+        const { key, direction } = appState.tableSort;
+        const value = tableSorting.columns[key];
+        const sign = direction === 'asc' ? 1 : -1;
+        const rows = [...appState.tableRows].sort((a, b) => {
+            const left = value(a.player);
+            const right = value(b.player);
+            // Missing values sit last in either direction; ties keep xPts order.
+            if (left === null || right === null) {
+                return (left === null) - (right === null) || a.rank - b.rank;
+            }
+            const order = typeof left === 'string' ? left.localeCompare(right) : left - right;
+            return sign * order || a.rank - b.rank;
+        });
+        dom.tableBody.innerHTML = rows.map(({ player, rank }) =>
+            playerRenderer.tableRow(player, rank)
+        ).join('');
+        document.querySelectorAll('[data-sort]').forEach(button => {
+            const active = button.dataset.sort === key;
+            button.closest('th')?.setAttribute('aria-sort',
+                active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+        });
     },
 
     // Long names (Alexander-Arnold, Van de Ven) first wrap at a space or
@@ -756,13 +817,19 @@ const dashboardRenderer = {
         });
     },
 
+    // Faint cards hold the squad's 2-5-5-3 shape while it loads, so the page
+    // does not jump when the real cards arrive.
     loading(message = 'Projecting the Gameweek…') {
         dom.modelVersion.hidden = true;
+        const placeholders = [2, 5, 5, 3].map(count => `
+            <div class="formation-line placeholder-line" aria-hidden="true">${
+                '<span class="player-card placeholder"></span>'.repeat(count)
+            }</div>`).join('');
         dom.pitch.innerHTML = `
-            <div class="loading" role="status" aria-live="polite">
+            <div class="loading over-placeholders" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
                 ${utils.escapeHtml(message)}
-            </div>`;
+            </div>${placeholders}`;
         dom.fixtureRail.innerHTML = '<div class="rail-loading">Syncing Premier League fixtures…</div>';
         dom.signalState.textContent = 'Computing';
         dom.sourceState.textContent = 'Syncing';
@@ -793,6 +860,34 @@ const dashboardRenderer = {
         dom.squadValue.textContent = '—';
         dom.differentialCount.textContent = '—';
         interactions.switchView('pitch');
+    }
+};
+
+// The List view's sortable columns. Names and positions start A–Z and GK–FWD;
+// numbers start highest first.
+const tableSorting = {
+    columns: {
+        player: player => String(player.web_name || '').toLocaleLowerCase('en-GB'),
+        position: player => ({ GK: 1, DEF: 2, MID: 3, FWD: 4 })[utils.positionCode(player)] ?? null,
+        price: player => tableSorting.known(player.price),
+        ownership: player => tableSorting.known(player.selected_by_percent),
+        xpts: player => utils.number(player.expected_points, 0)
+    },
+    ascendingFirst: new Set(['player', 'position']),
+
+    // Number(null) is 0, so a missing price must not sort as £0.0m.
+    known(value) {
+        return value === null || value === undefined || value === '' ? null : utils.number(value);
+    },
+
+    sortBy(key) {
+        if (!this.columns[key]) return;
+        const current = appState.tableSort;
+        const direction = current.key === key
+            ? (current.direction === 'asc' ? 'desc' : 'asc')
+            : (this.ascendingFirst.has(key) ? 'asc' : 'desc');
+        appState.tableSort = { key, direction };
+        dashboardRenderer.table();
     }
 };
 
@@ -860,14 +955,17 @@ const gameweekManager = {
         document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = locked; });
     },
 
-    async load(gameweek, force = false) {
+    // keepSaved leaves a saved squad of this Gameweek on screen, instead of
+    // the loading state, until the current one replaces it.
+    async load(gameweek, force = false, { keepSaved = false } = {}) {
         if (appState.isLoading) return;
         const token = ++appState.loadToken;
         const isCurrent = () => token === appState.loadToken;
         this.setLocked(true);
-        dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
+        if (!keepSaved) dashboardRenderer.loading(`Running local AI for Gameweek ${gameweek}…`);
         try {
             let resultsSyncStarted = false;
+            let refreshStarted = false;
             const publish = data => {
                 // A newer load owns the screen; this one only fills the cache.
                 if (!isCurrent()) return;
@@ -875,10 +973,15 @@ const gameweekManager = {
                 appState.currentGameweek = Number(gameweek);
                 this.setActive(gameweek);
                 dashboardRenderer.render(data);
+                shareLink.write();
                 // Keep collection in its own request, after showing the squad.
                 if (data.frozen && !resultsSyncStarted) {
                     resultsSyncStarted = true;
                     dataLoader.syncResults();
+                }
+                if (data.refresh_due && !refreshStarted) {
+                    refreshStarted = true;
+                    dataLoader.refreshPredictions(gameweek);
                 }
                 // The squad is on screen. Player metadata and fixtures may
                 // still be loading, but the Gameweek can already be changed
@@ -888,6 +991,7 @@ const gameweekManager = {
             const data = await dataLoader.loadDashboard(gameweek, force, publish);
             if (!isCurrent()) return;
             publish(data);
+            if (Number(gameweek) === appState.openingGameweek) savedSquad.save(data);
             if (appState.squadMode === 'rating' && appState.ratingEntryId) {
                 await teamRating.rate(appState.ratingEntryId, force);
             }
@@ -912,7 +1016,9 @@ const gameweekManager = {
 };
 
 const teamRating = {
-    setMode(mode) {
+    // focus moves to the team ID field; a shared link opens without it, so a
+    // phone does not raise its keyboard over the result.
+    setMode(mode, { focus = true } = {}) {
         appState.squadMode = mode;
         const ratingMode = mode === 'rating';
         dom.teamRatingPanel.hidden = !ratingMode;
@@ -931,6 +1037,7 @@ const teamRating = {
                     subtitle: '15 AI picks ranked by xPts for the selected Gameweek'
                 });
             }
+            shareLink.write();
             return;
         }
 
@@ -942,7 +1049,7 @@ const teamRating = {
             dom.squadDisplay.hidden = true;
             dom.squadTools.hidden = true;
         }
-        requestAnimationFrame(() => dom.teamIdInput.focus());
+        if (focus) requestAnimationFrame(() => dom.teamIdInput.focus());
     },
 
     loading() {
@@ -959,6 +1066,9 @@ const teamRating = {
     },
 
     render(data) {
+        // A new rating starts with its suggestions closed; showing the same
+        // one again keeps them as they were.
+        if (appState.ratingData !== data) appState.transfersShown = false;
         appState.ratingData = data;
         const score = utils.number(data.rating, 0);
         dom.ratingScore.textContent = String(Math.round(score));
@@ -976,12 +1086,93 @@ const teamRating = {
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
         dom.ratingRisks.innerHTML = (data.risks || [])
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
+        this.transfers(data);
+        // Also when a rating already loaded is shown again (AI squad → Rate
+        // your team): the address bar names the team on screen.
+        shareLink.write();
         dom.teamRatingResult.hidden = false;
         dom.squadDisplay.hidden = false;
         dom.squadTools.hidden = false;
         dashboardRenderer.squad(data.squad || [], {
             subtitle: `${data.team_name || 'Your team'} · AI score ${Math.round(score)}/100`
         });
+    },
+
+    // Suggestions exist only before the deadline and with a published bank.
+    // Whether transfers can still be suggested for this rating, and if not,
+    // why. transfers_open is the server's answer when the rating loaded; the
+    // deadline is checked again here, as a page can stay open past it.
+    transferWindow(data) {
+        // Number(null) is 0, so a missing bank must not read as £0.0m.
+        const bank = data.bank === null || data.bank === undefined ? null : utils.number(data.bank);
+        const gameweek = Number(data.gameweek);
+        if (!data.transfers_open || utils.deadlinePassed(gameweek)) {
+            return {
+                open: false,
+                reason: Number.isFinite(gameweek)
+                    ? `Transfers are closed: the Gameweek ${gameweek} deadline has passed.`
+                    : 'Transfers are closed for this Gameweek.'
+            };
+        }
+        if (bank === null) {
+            return { open: false, reason: 'FPL has not published this team\'s bank, so transfers cannot be costed.' };
+        }
+        return {
+            open: true,
+            bank,
+            reason: Number.isFinite(gameweek) ? `Available until the Gameweek ${gameweek} deadline.` : ''
+        };
+    },
+
+    // The suggestions open from their button, which works only while the
+    // Gameweek's deadline is ahead.
+    toggleTransfers() {
+        const data = appState.ratingData;
+        if (!data || !this.transferWindow(data).open) return;
+        appState.transfersShown = !appState.transfersShown;
+        this.transfers(data);
+    },
+
+    transfers(data) {
+        const access = this.transferWindow(data);
+        const shown = access.open && appState.transfersShown;
+        dom.transfersToggle.disabled = !access.open;
+        dom.transfersToggle.textContent = !access.open ? 'Suggested transfers closed'
+            : shown ? 'Hide suggested transfers' : 'Show suggested transfers';
+        dom.transfersToggle.setAttribute('aria-expanded', String(shown));
+        dom.transfersToggleNote.textContent = access.reason;
+        dom.ratingTransfers.hidden = !shown;
+        if (!shown) return;
+        const bank = access.bank;
+        dom.ratingBank.textContent = `${utils.money(bank)} in the bank at the last deadline`;
+        // A real-life transfer can leave more than three players from a club;
+        // FPL then only accepts a transfer that sells one of them.
+        const overLimit = Object.entries(data.clubs_over_limit || {});
+        dom.ratingClubLimit.hidden = !overLimit.length;
+        dom.ratingClubLimit.textContent = overLimit.length
+            ? `Your squad has ${overLimit.map(([club, count]) => `${count} ${club}`).join(' and ')} players. `
+                + 'FPL requires your next transfer to sell one of them, so only those sales are suggested.'
+            : '';
+        const transfers = Array.isArray(data.transfers) ? data.transfers : [];
+        if (!transfers.length) {
+            dom.ratingTransferList.innerHTML = overLimit.length
+                ? '<li class="transfer-empty">No affordable sale of one of those players raises this squad\'s projection.</li>'
+                : '<li class="transfer-empty">No affordable single transfer raises this squad\'s projection.</li>';
+            return;
+        }
+        const player = (item, direction) => `
+            <span class="transfer-player ${direction}">
+                <small>${direction === 'out' ? 'Out' : 'In'}</small>
+                <strong>${utils.escapeHtml(item.web_name)}</strong>
+                <span>${utils.escapeHtml(utils.teamCode(item.team_name))} · ${utils.money(item.price)} · ${utils.number(item.expected_points, 0).toFixed(2)} xPts</span>
+            </span>`;
+        dom.ratingTransferList.innerHTML = transfers.map(item => `
+            <li>
+                ${player(item.out || {}, 'out')}
+                <span class="transfer-arrow" aria-hidden="true">→</span>
+                ${player(item.in || {}, 'in')}
+                <strong class="transfer-gain">+${utils.number(item.gain, 0).toFixed(2)} xPts</strong>
+            </li>`).join('');
     },
 
     error(message) {
@@ -1002,6 +1193,7 @@ const teamRating = {
             );
             this.render(data);
             recentTeams.remember(data);
+            shareLink.write();
         } catch (error) {
             console.error('Team rating failed:', error);
             this.error(error.message);
@@ -1014,6 +1206,110 @@ const teamRating = {
                 dom.gameweekSelect.disabled = false;
                 document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
             }
+        }
+    }
+};
+
+// The Gameweek and rated team live in the address bar (?gw=12&team=123456), so
+// a view can be bookmarked or shared. The opening Gameweek is left out, so a
+// plain link always opens the newest one. replaceState keeps Back for leaving.
+const shareLink = {
+    read() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const id = name => {
+                const value = params.get(name) || '';
+                return /^\d{1,9}$/.test(value) && Number(value) > 0 ? Number(value) : null;
+            };
+            return { gameweek: id('gw'), team: id('team') };
+        } catch (error) {
+            return { gameweek: null, team: null };
+        }
+    },
+
+    write() {
+        try {
+            const url = new URL(window.location.href);
+            const gameweek = Number(appState.currentGameweek);
+            if (appState.openingGameweek && gameweek !== appState.openingGameweek) {
+                url.searchParams.set('gw', String(gameweek));
+            } else {
+                url.searchParams.delete('gw');
+            }
+            const rated = appState.squadMode === 'rating' && appState.ratingData
+                && Number(appState.ratingData.entry_id) === Number(appState.ratingEntryId);
+            if (rated) url.searchParams.set('team', String(appState.ratingEntryId));
+            else url.searchParams.delete('team');
+            if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+        } catch (error) {
+            // No address bar to update (an embedded or sandboxed page).
+        }
+    },
+
+    // The link to a rating as shown: its team and, unless it is the opening
+    // one, its Gameweek, whatever the address bar says.
+    ratingUrl(rating) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('team', String(Number(rating.entry_id)));
+        const gameweek = Number(rating.gameweek);
+        if (appState.openingGameweek && gameweek !== appState.openingGameweek) {
+            url.searchParams.set('gw', String(gameweek));
+        } else {
+            url.searchParams.delete('gw');
+        }
+        return url.href;
+    },
+
+    // The phone's share sheet where there is one, otherwise the clipboard.
+    async share(button, text, url = window.location.href) {
+        const label = button.textContent;
+        try {
+            if (navigator.share) {
+                await navigator.share({ title: document.title, text, url });
+                return;
+            }
+            await navigator.clipboard.writeText(url);
+            button.textContent = 'Link copied';
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            button.textContent = 'Copy the address bar link';
+        }
+        setTimeout(() => { button.textContent = label; }, 2000);
+    }
+};
+
+// The opening Gameweek's last complete squad, kept on this device so a return
+// visit shows it at once, marked as refreshing, while the current squad loads
+// (a cold server can take many seconds). Storage can be blocked or full.
+const savedSquad = {
+    storageKey: 'openfpl.lastSquad',
+    schema: 1,
+    maxAgeMs: 12 * 60 * 60 * 1000,
+
+    read() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.storageKey) || 'null');
+            const fresh = saved?.schema === this.schema
+                && Date.now() - Number(saved.savedAt) < this.maxAgeMs;
+            const data = saved?.data;
+            if (!fresh || !Number.isInteger(data?.gameweek)) return null;
+            if (!Array.isArray(data.scout_team) || !data.scout_team.length) return null;
+            return data;
+        } catch (error) {
+            return null;
+        }
+    },
+
+    // Only a complete squad: its fixtures and season data loaded.
+    save(data) {
+        if (data.fixturesLoading || data.fixturesAvailable === false) return;
+        const { events, ...squad } = data;
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify({
+                schema: this.schema, savedAt: Date.now(), data: squad
+            }));
+        } catch (error) {
+            // Private browsing or blocked storage: the next visit loads as usual.
         }
     }
 };
@@ -1064,9 +1360,10 @@ const interactions = {
     showPlayer(target) {
         let player;
         try {
-            player = JSON.parse(target.dataset.player);
+            player = appState.shownPlayers.get(target.dataset.player);
+            if (!player) throw new Error(`No player for key ${target.dataset.player}`);
         } catch (error) {
-            console.error('Could not parse player briefing:', error);
+            console.error('Could not open player briefing:', error);
             return;
         }
         const status = utils.statusInfo(player.status, player.can_select !== false);
@@ -1128,7 +1425,6 @@ const interactions = {
         dom.refreshButton.disabled = true;
         appState.dashboardCache.delete(appState.currentGameweek);
         appState.eventsCache = null;
-        appState.referenceCache = null;
         try {
             await gameweekManager.load(appState.currentGameweek, true);
         } finally {
@@ -1161,12 +1457,24 @@ const interactions = {
         document.querySelectorAll('.view-button').forEach(button => {
             button.addEventListener('click', () => this.switchView(button.dataset.view));
         });
+        document.querySelectorAll('[data-sort]').forEach(button => {
+            button.addEventListener('click', () => tableSorting.sortBy(button.dataset.sort));
+        });
         document.querySelectorAll('.squad-mode-button').forEach(button => {
             button.addEventListener('click', () => teamRating.setMode(button.dataset.squadMode));
         });
         // The hero's two buttons pick the squad mode, then follow their #squad link.
         document.querySelectorAll('[data-squad-mode-link]').forEach(link => {
             link.addEventListener('click', () => this.openSquadMode(link.dataset.squadModeLink));
+        });
+        dom.transfersToggle.addEventListener('click', () => teamRating.toggleTransfers());
+        dom.shareRating.addEventListener('click', () => {
+            const rating = appState.ratingData;
+            if (!rating) return;
+            shareLink.share(dom.shareRating,
+                `${rating.team_name || 'My FPL team'} scores ${Math.round(utils.number(rating.rating, 0))}/100 `
+                + `for Gameweek ${rating.gameweek} on OpenFPL Scout AI`,
+                shareLink.ratingUrl(rating));
         });
         dom.teamRatingForm.addEventListener('submit', event => {
             event.preventDefault();
@@ -1207,18 +1515,43 @@ const app = {
     },
 
     async start() {
-        dashboardRenderer.loading('Checking the official FPL season…');
+        const link = shareLink.read();
+        const saved = savedSquad.read();
+        if (saved) this.showSaved(saved);
+        else dashboardRenderer.loading('Checking the official FPL season…');
         try {
             appState.events = await dataLoader.loadEvents();
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = gameweekManager.openingGameweek(appState.events);
-            appState.currentGameweek = Number(active.id);
+            appState.openingGameweek = Number(active.id);
+            // A shared Gameweek opens if the planner still offers it.
+            const offered = gameweekManager.planningWindow(appState.events)
+                .some(event => Number(event.id) === link.gameweek);
+            appState.currentGameweek = offered ? link.gameweek : Number(active.id);
             gameweekManager.populate(appState.events);
-            await gameweekManager.load(appState.currentGameweek);
+            if (link.team) {
+                // A shared rating: score that team once the squad loads.
+                appState.ratingEntryId = link.team;
+                dom.teamIdInput.value = String(link.team);
+                teamRating.setMode('rating', { focus: false });
+                document.getElementById('squad')?.scrollIntoView?.();
+            }
+            // A saved squad of another Gameweek gives way to the loading state.
+            await gameweekManager.load(appState.currentGameweek, false, {
+                keepSaved: Number(saved?.gameweek) === appState.currentGameweek
+            });
         } catch (error) {
             console.error('Application initialization failed:', error);
             dashboardRenderer.error(error.message);
         }
+    },
+
+    showSaved(data) {
+        appState.currentGameweek = Number(data.gameweek);
+        appState.currentData = data;
+        dashboardRenderer.render(data);
+        dom.signalState.textContent = 'Refreshing';
+        dom.sourceState.textContent = 'Saved squad';
     }
 };
 
@@ -1230,9 +1563,13 @@ window.FPLScoutApp = {
     CONFIG,
     utils,
     dataLoader,
+    dashboardRenderer,
     gameweekManager,
     teamRating,
     recentTeams,
+    savedSquad,
+    shareLink,
+    tableSorting,
     interactions,
     clearCache: utils.clearCache
 };
