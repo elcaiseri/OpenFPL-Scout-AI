@@ -57,6 +57,11 @@ const appState = {
     resultsSyncPromise: null,
     teamCodes: new Map(),
     pitchWidth: 0,
+    // Players on the pitch and in the list, by their cards' data-player key.
+    shownPlayers: new Map(),
+    // The List view's order: a column and a direction.
+    tableSort: { key: 'xpts', direction: 'desc' },
+    tableRows: [],
     countdownTimer: null
 };
 
@@ -296,7 +301,9 @@ const dom = new Proxy({}, {
             ratingManagerName: 'rating-manager-name', ratingPicksLabel: 'rating-picks-label',
             ratingProjection: 'rating-projection', ratingBenchmark: 'rating-benchmark',
             ratingGap: 'rating-gap', ratingStrengths: 'rating-strengths',
-            ratingRisks: 'rating-risks',
+            ratingRisks: 'rating-risks', ratingTransfers: 'rating-transfers',
+            ratingTransferList: 'rating-transfer-list', ratingBank: 'rating-bank',
+            shareRating: 'share-rating',
             credits: 'credits', playerDialog: 'player-dialog', dialogClose: 'dialog-close',
             dialogPositionBadge: 'dialog-position-badge', dialogPlayerName: 'dialog-player-name',
             dialogTeam: 'dialog-team', dialogPoints: 'dialog-points',
@@ -465,8 +472,12 @@ const playerRenderer = {
         };
     },
 
+    // Cards and rows carry a short key; the player itself stays in memory,
+    // instead of ~2KB of JSON per card in the page.
     dataAttribute(player) {
-        return utils.escapeHtml(JSON.stringify(this.format(player)));
+        const key = String(appState.shownPlayers.size);
+        appState.shownPlayers.set(key, this.format(player));
+        return key;
     },
 
     roleBadge(player) {
@@ -660,6 +671,7 @@ const dashboardRenderer = {
             ? players.filter(player => utils.isBench(player))
                 .sort((a, b) => utils.number(a.pick_position, 0) - utils.number(b.pick_position, 0))
             : [];
+        appState.shownPlayers = new Map();
         const positionOrder = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
         const grouped = Object.fromEntries(positionOrder.map(position => [position, []]));
         starters.forEach(player => {
@@ -688,12 +700,11 @@ const dashboardRenderer = {
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
         this.fitNames();
 
-        const ranked = [...players].sort(
-            (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
-        );
-        dom.tableBody.innerHTML = ranked.map((player, index) =>
-            playerRenderer.tableRow(player, index)
-        ).join('');
+        // Each row keeps its xPts rank, whichever column the list is sorted by.
+        appState.tableRows = [...players]
+            .sort((a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0))
+            .map((player, index) => ({ player, rank: index }));
+        this.table();
         const counts = positionOrder.map(position => grouped[position].length);
         if (hasLineup) {
             dom.formationChip.textContent = counts.slice(1).join('-');
@@ -704,6 +715,30 @@ const dashboardRenderer = {
         }
         dom.squadSubtitle.textContent = options.subtitle
             || `${players.length} picks · tap a player for xPts, price and ownership`;
+    },
+
+    table() {
+        const { key, direction } = appState.tableSort;
+        const value = tableSorting.columns[key];
+        const sign = direction === 'asc' ? 1 : -1;
+        const rows = [...appState.tableRows].sort((a, b) => {
+            const left = value(a.player);
+            const right = value(b.player);
+            // Missing values sit last in either direction; ties keep xPts order.
+            if (left === null || right === null) {
+                return (left === null) - (right === null) || a.rank - b.rank;
+            }
+            const order = typeof left === 'string' ? left.localeCompare(right) : left - right;
+            return sign * order || a.rank - b.rank;
+        });
+        dom.tableBody.innerHTML = rows.map(({ player, rank }) =>
+            playerRenderer.tableRow(player, rank)
+        ).join('');
+        document.querySelectorAll('[data-sort]').forEach(button => {
+            const active = button.dataset.sort === key;
+            button.closest('th')?.setAttribute('aria-sort',
+                active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+        });
     },
 
     // Long names (Alexander-Arnold, Van de Ven) first wrap at a space or
@@ -731,13 +766,19 @@ const dashboardRenderer = {
         });
     },
 
+    // Faint cards hold the squad's 2-5-5-3 shape while it loads, so the page
+    // does not jump when the real cards arrive.
     loading(message = 'Projecting the Gameweek…') {
         dom.modelVersion.hidden = true;
+        const placeholders = [2, 5, 5, 3].map(count => `
+            <div class="formation-line placeholder-line" aria-hidden="true">${
+                '<span class="player-card placeholder"></span>'.repeat(count)
+            }</div>`).join('');
         dom.pitch.innerHTML = `
-            <div class="loading" role="status" aria-live="polite">
+            <div class="loading over-placeholders" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
                 ${utils.escapeHtml(message)}
-            </div>`;
+            </div>${placeholders}`;
         dom.fixtureRail.innerHTML = '<div class="rail-loading">Syncing Premier League fixtures…</div>';
         dom.signalState.textContent = 'Computing';
         dom.sourceState.textContent = 'Syncing';
@@ -768,6 +809,34 @@ const dashboardRenderer = {
         dom.squadValue.textContent = '—';
         dom.differentialCount.textContent = '—';
         interactions.switchView('pitch');
+    }
+};
+
+// The List view's sortable columns. Names and positions start A–Z and GK–FWD;
+// numbers start highest first.
+const tableSorting = {
+    columns: {
+        player: player => String(player.web_name || '').toLocaleLowerCase('en-GB'),
+        position: player => ({ GK: 1, DEF: 2, MID: 3, FWD: 4 })[utils.positionCode(player)] ?? null,
+        price: player => tableSorting.known(player.price),
+        ownership: player => tableSorting.known(player.selected_by_percent),
+        xpts: player => utils.number(player.expected_points, 0)
+    },
+    ascendingFirst: new Set(['player', 'position']),
+
+    // Number(null) is 0, so a missing price must not sort as £0.0m.
+    known(value) {
+        return value === null || value === undefined || value === '' ? null : utils.number(value);
+    },
+
+    sortBy(key) {
+        if (!this.columns[key]) return;
+        const current = appState.tableSort;
+        const direction = current.key === key
+            ? (current.direction === 'asc' ? 'desc' : 'asc')
+            : (this.ascendingFirst.has(key) ? 'asc' : 'desc');
+        appState.tableSort = { key, direction };
+        dashboardRenderer.table();
     }
 };
 
@@ -852,6 +921,7 @@ const gameweekManager = {
                 appState.currentGameweek = Number(gameweek);
                 this.setActive(gameweek);
                 dashboardRenderer.render(data);
+                shareLink.write();
                 // Keep collection in its own request, after showing the squad.
                 if (data.frozen && !resultsSyncStarted) {
                     resultsSyncStarted = true;
@@ -890,7 +960,9 @@ const gameweekManager = {
 };
 
 const teamRating = {
-    setMode(mode) {
+    // focus moves to the team ID field; a shared link opens without it, so a
+    // phone does not raise its keyboard over the result.
+    setMode(mode, { focus = true } = {}) {
         appState.squadMode = mode;
         const ratingMode = mode === 'rating';
         dom.teamRatingPanel.hidden = !ratingMode;
@@ -909,6 +981,7 @@ const teamRating = {
                     subtitle: '15 AI picks ranked by xPts for the selected Gameweek'
                 });
             }
+            shareLink.write();
             return;
         }
 
@@ -920,7 +993,7 @@ const teamRating = {
             dom.squadDisplay.hidden = true;
             dom.squadTools.hidden = true;
         }
-        requestAnimationFrame(() => dom.teamIdInput.focus());
+        if (focus) requestAnimationFrame(() => dom.teamIdInput.focus());
     },
 
     loading() {
@@ -954,12 +1027,40 @@ const teamRating = {
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
         dom.ratingRisks.innerHTML = (data.risks || [])
             .map(item => `<li>${utils.escapeHtml(item)}</li>`).join('');
+        this.transfers(data);
         dom.teamRatingResult.hidden = false;
         dom.squadDisplay.hidden = false;
         dom.squadTools.hidden = false;
         dashboardRenderer.squad(data.squad || [], {
             subtitle: `${data.team_name || 'Your team'} · AI score ${Math.round(score)}/100`
         });
+    },
+
+    // Suggestions exist only before the deadline and with a published bank.
+    transfers(data) {
+        // Number(null) is 0, so a missing bank must not read as £0.0m.
+        const bank = data.bank === null || data.bank === undefined ? null : utils.number(data.bank);
+        dom.ratingTransfers.hidden = Boolean(data.frozen) || bank === null;
+        if (dom.ratingTransfers.hidden) return;
+        dom.ratingBank.textContent = `${utils.money(bank)} in the bank at the last deadline`;
+        const transfers = Array.isArray(data.transfers) ? data.transfers : [];
+        if (!transfers.length) {
+            dom.ratingTransferList.innerHTML = '<li class="transfer-empty">No affordable single transfer raises this squad\'s projection.</li>';
+            return;
+        }
+        const player = (item, direction) => `
+            <span class="transfer-player ${direction}">
+                <small>${direction === 'out' ? 'Out' : 'In'}</small>
+                <strong>${utils.escapeHtml(item.web_name)}</strong>
+                <span>${utils.escapeHtml(utils.teamCode(item.team_name))} · ${utils.money(item.price)} · ${utils.number(item.expected_points, 0).toFixed(2)} xPts</span>
+            </span>`;
+        dom.ratingTransferList.innerHTML = transfers.map(item => `
+            <li>
+                ${player(item.out || {}, 'out')}
+                <span class="transfer-arrow" aria-hidden="true">→</span>
+                ${player(item.in || {}, 'in')}
+                <strong class="transfer-gain">+${utils.number(item.gain, 0).toFixed(2)} xPts</strong>
+            </li>`).join('');
     },
 
     error(message) {
@@ -980,6 +1081,7 @@ const teamRating = {
             );
             this.render(data);
             recentTeams.remember(data);
+            shareLink.write();
         } catch (error) {
             console.error('Team rating failed:', error);
             this.error(error.message);
@@ -993,6 +1095,61 @@ const teamRating = {
                 document.querySelectorAll('.gameweek-option').forEach(button => { button.disabled = false; });
             }
         }
+    }
+};
+
+// The Gameweek and rated team live in the address bar (?gw=12&team=123456), so
+// a view can be bookmarked or shared. The opening Gameweek is left out, so a
+// plain link always opens the newest one. replaceState keeps Back for leaving.
+const shareLink = {
+    read() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const id = name => {
+                const value = params.get(name) || '';
+                return /^\d{1,9}$/.test(value) && Number(value) > 0 ? Number(value) : null;
+            };
+            return { gameweek: id('gw'), team: id('team') };
+        } catch (error) {
+            return { gameweek: null, team: null };
+        }
+    },
+
+    write() {
+        try {
+            const url = new URL(window.location.href);
+            const gameweek = Number(appState.currentGameweek);
+            if (appState.openingGameweek && gameweek !== appState.openingGameweek) {
+                url.searchParams.set('gw', String(gameweek));
+            } else {
+                url.searchParams.delete('gw');
+            }
+            const rated = appState.squadMode === 'rating' && appState.ratingData
+                && Number(appState.ratingData.entry_id) === Number(appState.ratingEntryId);
+            if (rated) url.searchParams.set('team', String(appState.ratingEntryId));
+            else url.searchParams.delete('team');
+            if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+        } catch (error) {
+            // No address bar to update (an embedded or sandboxed page).
+        }
+    },
+
+    // The phone's share sheet where there is one, otherwise the clipboard.
+    async share(button, text) {
+        const url = window.location.href;
+        const label = button.textContent;
+        try {
+            if (navigator.share) {
+                await navigator.share({ title: document.title, text, url });
+                return;
+            }
+            await navigator.clipboard.writeText(url);
+            button.textContent = 'Link copied';
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            button.textContent = 'Copy the address bar link';
+        }
+        setTimeout(() => { button.textContent = label; }, 2000);
     }
 };
 
@@ -1078,9 +1235,10 @@ const interactions = {
     showPlayer(target) {
         let player;
         try {
-            player = JSON.parse(target.dataset.player);
+            player = appState.shownPlayers.get(target.dataset.player);
+            if (!player) throw new Error(`No player for key ${target.dataset.player}`);
         } catch (error) {
-            console.error('Could not parse player briefing:', error);
+            console.error('Could not open player briefing:', error);
             return;
         }
         const status = utils.statusInfo(player.status, player.can_select !== false);
@@ -1174,12 +1332,22 @@ const interactions = {
         document.querySelectorAll('.view-button').forEach(button => {
             button.addEventListener('click', () => this.switchView(button.dataset.view));
         });
+        document.querySelectorAll('[data-sort]').forEach(button => {
+            button.addEventListener('click', () => tableSorting.sortBy(button.dataset.sort));
+        });
         document.querySelectorAll('.squad-mode-button').forEach(button => {
             button.addEventListener('click', () => teamRating.setMode(button.dataset.squadMode));
         });
         // The hero's two buttons pick the squad mode, then follow their #squad link.
         document.querySelectorAll('[data-squad-mode-link]').forEach(link => {
             link.addEventListener('click', () => this.openSquadMode(link.dataset.squadModeLink));
+        });
+        dom.shareRating.addEventListener('click', () => {
+            const rating = appState.ratingData;
+            if (!rating) return;
+            shareLink.share(dom.shareRating,
+                `${rating.team_name || 'My FPL team'} scores ${Math.round(utils.number(rating.rating, 0))}/100 `
+                + `for Gameweek ${rating.gameweek} on OpenFPL Scout AI`);
         });
         dom.teamRatingForm.addEventListener('submit', event => {
             event.preventDefault();
@@ -1220,6 +1388,7 @@ const app = {
     },
 
     async start() {
+        const link = shareLink.read();
         const saved = savedSquad.read();
         if (saved) this.showSaved(saved);
         else dashboardRenderer.loading('Checking the official FPL season…');
@@ -1228,8 +1397,18 @@ const app = {
             if (!appState.events.length) throw new Error('No official gameweeks are published yet');
             const active = gameweekManager.openingGameweek(appState.events);
             appState.openingGameweek = Number(active.id);
-            appState.currentGameweek = Number(active.id);
+            // A shared Gameweek opens if the planner still offers it.
+            const offered = gameweekManager.planningWindow(appState.events)
+                .some(event => Number(event.id) === link.gameweek);
+            appState.currentGameweek = offered ? link.gameweek : Number(active.id);
             gameweekManager.populate(appState.events);
+            if (link.team) {
+                // A shared rating: score that team once the squad loads.
+                appState.ratingEntryId = link.team;
+                dom.teamIdInput.value = String(link.team);
+                teamRating.setMode('rating', { focus: false });
+                document.getElementById('squad')?.scrollIntoView?.();
+            }
             // A saved squad of another Gameweek gives way to the loading state.
             await gameweekManager.load(appState.currentGameweek, false, {
                 keepSaved: Number(saved?.gameweek) === appState.currentGameweek
@@ -1257,10 +1436,13 @@ window.FPLScoutApp = {
     CONFIG,
     utils,
     dataLoader,
+    dashboardRenderer,
     gameweekManager,
     teamRating,
     recentTeams,
     savedSquad,
+    shareLink,
+    tableSorting,
     interactions,
     clearCache: utils.clearCache
 };
