@@ -957,6 +957,33 @@ test('the scout squad keeps all 15 on the pitch and marks its bench B', () => {
     assert.equal(list.match(/table-role vice">VC/g).length, 1);
 });
 
+test('the bench follows the XI on each pitch line and in every list sort', () => {
+    const app = loadApp(async () => response({}));
+    const body = app.document.getElementById('squad-table-body');
+    // The bench defender out-projects a starter only on paper, a tie broken
+    // by the XI: the API lists starters first, then the bench.
+    const players = [
+        { id: 1, web_name: 'Saliba', element_type: 'Defender', price: 6.0, expected_points: 5, role: 'captain' },
+        { id: 2, web_name: 'Gabriel', element_type: 'Defender', price: 6.5, expected_points: 4, role: '' },
+        { id: 3, web_name: 'Raya', element_type: 'Goalkeeper', price: 5.5, expected_points: 3, role: 'vice' },
+        { id: 4, web_name: 'Petrovic', element_type: 'Goalkeeper', price: 4.5, expected_points: 3.5, role: 'bench' },
+        { id: 5, web_name: 'Konsa', element_type: 'Defender', price: 4.8, expected_points: 4.5, role: 'bench' }
+    ];
+    app.dashboardRenderer.squad(players);
+
+    const lines = Array.from(app.document.getElementById('pitch').innerHTML
+        .matchAll(/formation-line formation-(\w+)">([\s\S]*?)<\/div>\s*(?=<div class="position-label|$)/g),
+    match => [match[1], Array.from(match[2].matchAll(/aria-label="(\w+),/g), name => name[1])]);
+    assert.deepEqual(Object.fromEntries(lines).goalkeeper, ['Raya', 'Petrovic']);
+    assert.deepEqual(Object.fromEntries(lines).defender, ['Saliba', 'Gabriel', 'Konsa']);
+
+    assert.deepEqual(rowNames(body.innerHTML), ['Saliba', 'Gabriel', 'Raya', 'Petrovic', 'Konsa']);
+    app.tableSorting.sortBy('price');
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Saliba', 'Raya', 'Konsa', 'Petrovic']);
+    app.tableSorting.sortBy('player');
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Raya', 'Saliba', 'Konsa', 'Petrovic']);
+});
+
 test('cards carry a short key, and the briefing opens the player it names', () => {
     const app = loadApp(async () => response({}));
     app.dashboardRenderer.squad(listPlayers());

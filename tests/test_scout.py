@@ -472,6 +472,13 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(roles["P2-0"], "vice")
         self.assertEqual(roles["P1-1"], "bench")
         self.assertEqual(set(roles), {"captain", "vice", "bench", ""})
+        # The XI comes first by projection, then the bench in substitution
+        # order: goalkeeper, then outfield by projection.
+        self.assertEqual(team["role"].tolist()[:2], ["captain", "vice"])
+        self.assertTrue(team["expected_points"].iloc[:11].is_monotonic_decreasing)
+        self.assertEqual(
+            team["web_name"].tolist()[11:], ["P1-1", "P3-4", "P4-1", "P4-2"]
+        )
 
     def test_unavailable_players_are_scaled_and_never_selected(self):
         history = league_history()

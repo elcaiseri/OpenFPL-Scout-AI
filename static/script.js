@@ -731,8 +731,10 @@ const dashboardRenderer = {
             const position = player.position || player.element_type;
             if (grouped[position]) grouped[position].push(player);
         });
+        // Starters lead each line; bench picks follow them.
         Object.values(grouped).forEach(group => group.sort(
-            (a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
+            (a, b) => utils.isBench(a) - utils.isBench(b)
+                || utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
         ));
 
         const lines = positionOrder.map(position => {
@@ -753,10 +755,17 @@ const dashboardRenderer = {
         requestAnimationFrame(() => dom.pitch.classList.add('fade-in'));
         this.fitNames();
 
-        // Each row keeps its xPts rank, whichever column the list is sorted by.
-        appState.tableRows = [...players]
-            .sort((a, b) => utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0))
-            .map((player, index) => ({ player, rank: index }));
+        // Each row keeps its rank, whichever column the list is sorted by:
+        // the XI by xPts, then the bench in the order it came (a scout bench
+        // in substitution order, a manager's by bench slot).
+        const benchOrder = player => utils.number(player.pick_position, 0);
+        appState.tableRows = players
+            .map((player, index) => ({ player, index }))
+            .sort((a, b) => utils.isBench(a.player) - utils.isBench(b.player)
+                || (utils.isBench(a.player)
+                    ? benchOrder(a.player) - benchOrder(b.player) || a.index - b.index
+                    : utils.number(b.player.expected_points, 0) - utils.number(a.player.expected_points, 0)))
+            .map(({ player }, index) => ({ player, rank: index }));
         this.table();
         const counts = positionOrder.map(position => grouped[position].length);
         if (hasLineup) {
@@ -775,6 +784,11 @@ const dashboardRenderer = {
         const value = tableSorting.columns[key];
         const sign = direction === 'asc' ? 1 : -1;
         const rows = [...appState.tableRows].sort((a, b) => {
+            // The bench stays below the XI in every sort.
+            const bench = utils.isBench(a.player) - utils.isBench(b.player);
+            if (bench) return bench;
+            // Sorted by xPts, the bench keeps its substitution order.
+            if (key === 'xpts' && utils.isBench(a.player)) return -sign * (a.rank - b.rank);
             const left = value(a.player);
             const right = value(b.player);
             // Missing values sit last in either direction; ties keep xPts order.

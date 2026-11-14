@@ -10,7 +10,9 @@ class ResponseModel(BaseModel):
             "The 15 picks. Each player's `role` is `captain` or `vice` (the "
             "starting XI's two best projections), `bench` (the four players "
             "outside the highest-projected legal starting XI), or an empty "
-            "string for the rest of the XI."
+            "string for the rest of the XI. The XI comes first, best "
+            "projection first, then the bench in substitution order: the "
+            "goalkeeper, then the outfield players by projection."
         ),
     )
     player_points: List[Dict[str, Any]] = Field(default_factory=list)

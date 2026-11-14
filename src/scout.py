@@ -1210,7 +1210,18 @@ class FPLScout:
             starters["expected_points"].sum(),
             team.loc[team["role"].eq("bench"), "expected_points"].sum(),
         )
-        return team
+        # The XI comes first, best projection first, then the bench in FPL's
+        # substitution order: the goalkeeper, then the outfield players by
+        # projection.
+        bench = team["role"].eq("bench")
+        order = pd.DataFrame(
+            {
+                "bench": bench,
+                "outfield": bench & team["element_type"].ne("Goalkeeper"),
+                "points": -pd.to_numeric(team["expected_points"], errors="coerce"),
+            }
+        ).sort_values(["bench", "outfield", "points"], kind="stable")
+        return team.loc[order.index].reset_index(drop=True)
 
     @staticmethod
     def _starting_xi(team: pd.DataFrame) -> List[Any]:

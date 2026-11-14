@@ -218,7 +218,9 @@ and report `frozen: false`, as do closed ones when the archive is disabled.
 Each `scout_team` player has a `role`. The squad's highest-projected legal
 starting XI (one goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards)
 holds `captain` and `vice`, its two best projections, and `""` for the other
-nine; the remaining four players are `bench`.
+nine; the remaining four players are `bench`. The list holds the XI first,
+best projection first, then the bench in substitution order: the goalkeeper,
+then the outfield players by projection.
 
 Each `scout_team` player also carries its current official `team_id`,
 `position`, `price`, `selected_by_percent`, `status`, `can_select`, `news`,
