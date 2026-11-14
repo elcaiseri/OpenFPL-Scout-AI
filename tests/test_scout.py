@@ -429,6 +429,57 @@ class ScoutInferenceTests(unittest.TestCase):
                 self.assertGreater(team["now_cost"].sum(), 100.0)
                 self.assertLessEqual(team["team_name"].value_counts().max(), 3)
 
+    def test_squad_benches_the_four_picks_outside_the_best_xi(self):
+        points = {
+            1: [9.0, 8.5, 1.0],
+            2: [7.0, 6.0, 5.0, 4.0, 3.0, 0.5],
+            3: [6.5, 6.4, 2.0, 1.5, 1.2, 0.5],
+            4: [5.5, 0.8, 0.7, 0.3],
+        }
+        rows = [
+            {
+                "id": position * 100 + offset,
+                "element_type": position,
+                "web_name": f"P{position}-{offset}",
+                "team_name": f"Club {position}-{offset}",
+                "expected_points": value,
+            }
+            for position, values in points.items()
+            for offset, value in enumerate(values)
+        ]
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        team = scout.select_optimal_team(pd.DataFrame(rows))
+        roles = team.set_index("web_name")["role"]
+
+        # 5-4-1 is the highest-projected legal XI; the other four are "bench".
+        starters = team.loc[team["role"].ne("bench")]
+        self.assertEqual(
+            starters["element_type"].value_counts().to_dict(),
+            {"Goalkeeper": 1, "Defender": 5, "Midfielder": 4, "Forward": 1},
+        )
+        self.assertEqual(
+            sorted(roles[roles.eq("bench")].index), ["P1-1", "P3-4", "P4-1", "P4-2"]
+        )
+        self.assertNotIn("pick_position", team.columns)
+        # The armband stays in the XI, even though the benched goalkeeper
+        # projects second best in the squad.
+        self.assertEqual(roles["P1-0"], "captain")
+        self.assertEqual(roles["P2-0"], "vice")
+        self.assertEqual(roles["P1-1"], "bench")
+        self.assertEqual(set(roles), {"captain", "vice", "bench", ""})
+        # The XI comes first by projection, then the bench in substitution
+        # order: goalkeeper, then outfield by projection.
+        self.assertEqual(team["role"].tolist()[:2], ["captain", "vice"])
+        self.assertTrue(team["expected_points"].iloc[:11].is_monotonic_decreasing)
+        self.assertEqual(
+            team["web_name"].tolist()[11:], ["P1-1", "P3-4", "P4-1", "P4-2"]
+        )
+
     def test_unavailable_players_are_scaled_and_never_selected(self):
         history = league_history()
         # Players 11 and 12 are Club 0 midfielders with the best recent form.

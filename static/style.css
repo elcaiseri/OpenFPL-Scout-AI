@@ -901,6 +901,12 @@ select {
     background: var(--aqua);
 }
 
+/* The scout squad's four bench picks stay on the pitch, marked B. */
+.role-badge.bench {
+    color: var(--paper);
+    background: var(--plum-600);
+}
+
 .home-indicator {
     display: inline-block;
     flex: 0 0 6px;

@@ -29,6 +29,7 @@ from src.data_archive import DataArchive
 from src.fpl_data_inference import FPLDataHistoryProvider
 from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
+from src.team_rating import _best_benchmark_lineup
 
 logger = get_logger(__name__)
 
@@ -1186,20 +1187,62 @@ class FPLScout:
             strategy=strategy or "model-ensemble",
             require_available=strategy == "ownership-cold-start",
         )
-        team["role"] = ""
-        team.loc[0, "role"] = "captain"
-        team.loc[1, "role"] = "vice"
+        starting = self._starting_xi(team)
+        starters = team.loc[starting].sort_values(
+            "expected_points", ascending=False, kind="stable"
+        )
+        captain, vice = starters.index[0], starters.index[1]
+        # Every pick has a role: the XI's two best projections take the
+        # armbands, the rest of the XI is "", and the other four are "bench".
+        team["role"] = "bench"
+        team.loc[starting, "role"] = ""
+        team.loc[captain, "role"] = "captain"
+        team.loc[vice, "role"] = "vice"
         team["element_type"] = team["element_type"].map(self.POSITION_MAPPING)
 
         logger.info(
-            "Selected captain %s (%.2f) and vice-captain %s (%.2f); total %.2f",
-            team.loc[0, "web_name"],
-            team.loc[0, "expected_points"],
-            team.loc[1, "web_name"],
-            team.loc[1, "expected_points"],
-            team["expected_points"].sum(),
+            "Selected captain %s (%.2f) and vice-captain %s (%.2f); "
+            "starting XI %.2f, bench %.2f",
+            team.loc[captain, "web_name"],
+            team.loc[captain, "expected_points"],
+            team.loc[vice, "web_name"],
+            team.loc[vice, "expected_points"],
+            starters["expected_points"].sum(),
+            team.loc[team["role"].eq("bench"), "expected_points"].sum(),
         )
-        return team
+        # The XI comes first, best projection first, then the bench in FPL's
+        # substitution order: the goalkeeper, then the outfield players by
+        # projection.
+        bench = team["role"].eq("bench")
+        order = pd.DataFrame(
+            {
+                "bench": bench,
+                "outfield": bench & team["element_type"].ne("Goalkeeper"),
+                "points": -pd.to_numeric(team["expected_points"], errors="coerce"),
+            }
+        ).sort_values(["bench", "outfield", "points"], kind="stable")
+        return team.loc[order.index].reset_index(drop=True)
+
+    @staticmethod
+    def _starting_xi(team: pd.DataFrame) -> List[Any]:
+        """Return the index of the squad's highest-projected legal XI.
+
+        One goalkeeper, 3–5 defenders, 2–5 midfielders and 1–3 forwards,
+        chosen the way the team rating's AI benchmark chooses them.
+        """
+        positions = pd.to_numeric(team["element_type"], errors="coerce")
+        points = pd.to_numeric(team["expected_points"], errors="coerce")
+        rows = [
+            {
+                "element_type": int(positions[index]),
+                "expected_points": float(points[index]),
+                "_row": index,
+            }
+            for index in team.index
+        ]
+        lineup, _ = _best_benchmark_lineup(rows)
+        starting = {player["_row"] for player in lineup}
+        return [index for index in team.index if index in starting]
 
     def _select_budget_free_squad(
         self,

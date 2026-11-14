@@ -932,6 +932,63 @@ test('the list sorts by column, keeps each xPts rank, and puts missing values la
     assert.deepEqual(rowNames(body.innerHTML), ['Areola', 'Cash', 'Bowen']);
 });
 
+test('the scout squad keeps all 15 on the pitch and marks its bench B', () => {
+    const app = loadApp(async () => response({}));
+    const positions = ['Goalkeeper', 'Defender', 'Defender', 'Defender', 'Defender',
+        'Midfielder', 'Midfielder', 'Midfielder', 'Midfielder', 'Forward', 'Forward',
+        'Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
+    const players = positions.map((element_type, index) => ({
+        id: index + 1, web_name: `P${index + 1}`, element_type, expected_points: 15 - index,
+        role: index === 0 ? 'captain' : index === 1 ? 'vice' : index > 10 ? 'bench' : ''
+    }));
+    app.dashboardRenderer.squad(players);
+
+    const pitch = app.document.getElementById('pitch').innerHTML;
+    assert.doesNotMatch(pitch, /pitch-bench/);
+    assert.equal(pitch.match(/class="player-card/g).length, 15);
+    // B0 is the bench goalkeeper, B1–B3 the outfield bench in the API's order.
+    const benched = Object.fromEntries(Array.from(
+        pitch.matchAll(/aria-label="(P\d+), [^"]*">\s*<span class="role-badge bench" aria-label="[^"]+">(B\d)</g),
+        match => [match[1], match[2]]));
+    assert.deepEqual(benched, { P12: 'B0', P13: 'B1', P14: 'B2', P15: 'B3' });
+    assert.equal(app.document.getElementById('formation-chip').textContent, '2 • 5 • 5 • 3');
+
+    // The list numbers the bench the same way, never with a vice-captain badge.
+    const list = app.document.getElementById('squad-table-body').innerHTML;
+    assert.deepEqual(Array.from(list.matchAll(/table-role bench">(B\d)/g), match => match[1]),
+        ['B0', 'B1', 'B2', 'B3']);
+    assert.equal(list.match(/table-role vice">VC/g).length, 1);
+});
+
+test('the bench follows the XI on each pitch line and in every list sort', () => {
+    const app = loadApp(async () => response({}));
+    const body = app.document.getElementById('squad-table-body');
+    // The bench defender out-projects a starter only on paper, a tie broken
+    // by the XI: the API lists starters first, then the bench.
+    const players = [
+        { id: 1, web_name: 'Saliba', element_type: 'Defender', price: 6.0, expected_points: 5, role: 'captain' },
+        { id: 2, web_name: 'Gabriel', element_type: 'Defender', price: 6.5, expected_points: 4, role: '' },
+        { id: 3, web_name: 'Raya', element_type: 'Goalkeeper', price: 5.5, expected_points: 3, role: 'vice' },
+        { id: 4, web_name: 'Petrovic', element_type: 'Goalkeeper', price: 4.5, expected_points: 3.5, role: 'bench' },
+        { id: 5, web_name: 'Konsa', element_type: 'Defender', price: 4.8, expected_points: 4.5, role: 'bench' },
+        { id: 6, web_name: 'Mings', element_type: 'Defender', price: 4.4, expected_points: 4.6, role: 'bench' }
+    ];
+    app.dashboardRenderer.squad(players);
+
+    const lines = Array.from(app.document.getElementById('pitch').innerHTML
+        .matchAll(/formation-line formation-(\w+)">([\s\S]*?)<\/div>\s*(?=<div class="position-label|$)/g),
+    match => [match[1], Array.from(match[2].matchAll(/aria-label="(\w+),/g), name => name[1])]);
+    assert.deepEqual(Object.fromEntries(lines).goalkeeper, ['Raya', 'Petrovic']);
+    // Bench defenders keep their B order (Konsa B1, Mings B2), not their xPts.
+    assert.deepEqual(Object.fromEntries(lines).defender, ['Saliba', 'Gabriel', 'Konsa', 'Mings']);
+
+    assert.deepEqual(rowNames(body.innerHTML), ['Saliba', 'Gabriel', 'Raya', 'Petrovic', 'Konsa', 'Mings']);
+    app.tableSorting.sortBy('price');
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Saliba', 'Raya', 'Konsa', 'Petrovic', 'Mings']);
+    app.tableSorting.sortBy('player');
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Raya', 'Saliba', 'Konsa', 'Mings', 'Petrovic']);
+});
+
 test('cards carry a short key, and the briefing opens the player it names', () => {
     const app = loadApp(async () => response({}));
     app.dashboardRenderer.squad(listPlayers());
