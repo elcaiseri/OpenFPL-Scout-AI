@@ -215,12 +215,10 @@ older version's forecast when its archive proves it predates the deadline, and
 otherwise the prediction made on that recall. Open Gameweeks are predicted live
 and report `frozen: false`, as do closed ones when the archive is disabled.
 
-Each `scout_team` player has a `pick_position`, numbered the way FPL
-publishes picks: 1–11 are the highest-projected legal starting XI (one
-goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards), from goalkeeper to
-forward, 12 is the second goalkeeper and 13–15 are the outfield bench in
-substitution order, highest projection first. The `captain` and `vice` roles
-always go to the XI's two highest projections.
+Each `scout_team` player has a `role`. The squad's highest-projected legal
+starting XI (one goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards)
+holds `captain` and `vice`, its two best projections, and `""` for the other
+nine; the remaining four players are `bench`.
 
 Each `scout_team` player also carries its current official `team_id`,
 `position`, `price`, `selected_by_percent`, `status`, `can_select`, `news`,

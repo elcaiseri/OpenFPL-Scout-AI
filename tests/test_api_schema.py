@@ -436,6 +436,13 @@ class APISchemaTests(unittest.TestCase):
             for operation in methods.values():
                 self.assertTrue(operation["tags"])
 
+    def test_the_squad_schema_documents_every_role(self):
+        field = app.openapi()["components"]["schemas"]["ResponseModel"][
+            "properties"
+        ]["scout_team"]
+        for role in ("`captain`", "`vice`", "`bench`", "empty string"):
+            self.assertIn(role, field["description"])
+
     def test_only_ui_api_routes_are_public(self):
         groups = _api_catalog()
         endpoints = [endpoint for group in groups for endpoint in group["endpoints"]]

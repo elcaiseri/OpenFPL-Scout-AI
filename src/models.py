@@ -4,7 +4,15 @@ from pydantic import BaseModel, Field
 
 
 class ResponseModel(BaseModel):
-    scout_team: List[Dict[str, Any]]
+    scout_team: List[Dict[str, Any]] = Field(
+        ...,
+        description=(
+            "The 15 picks. Each player's `role` is `captain` or `vice` (the "
+            "starting XI's two best projections), `bench` (the four players "
+            "outside the highest-projected legal starting XI), or an empty "
+            "string for the rest of the XI."
+        ),
+    )
     player_points: List[Dict[str, Any]] = Field(default_factory=list)
     gameweek: int
     strategy: str = "model-ensemble"

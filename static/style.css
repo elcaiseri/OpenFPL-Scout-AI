@@ -901,6 +901,12 @@ select {
     background: var(--aqua);
 }
 
+/* The scout squad's four bench picks stay on the pitch, marked B. */
+.role-badge.bench {
+    color: var(--paper);
+    background: var(--plum-600);
+}
+
 .home-indicator {
     display: inline-block;
     flex: 0 0 6px;
@@ -2370,9 +2376,8 @@ select {
     place-items: center;
 }
 
-/* The bench, the scout squad's or a manager's, sits in its own band below
-   the XI, in substitution order, so it never reads as part of the starting
-   lineup. */
+/* A manager's bench sits in its own band below the XI, in substitution
+   order, so it never reads as part of the starting lineup. */
 .pitch-bench {
     position: relative;
     z-index: 2;
@@ -2387,7 +2392,7 @@ select {
     margin-bottom: 0;
 }
 
-.formation-bench .player-card:not(.captain):not(.vice):not(.placeholder) {
+.formation-bench .player-card:not(.captain):not(.vice) {
     background: linear-gradient(155deg, rgba(229, 234, 231, 0.96), rgba(204, 214, 208, 0.9));
 }
 

@@ -429,7 +429,7 @@ class ScoutInferenceTests(unittest.TestCase):
                 self.assertGreater(team["now_cost"].sum(), 100.0)
                 self.assertLessEqual(team["team_name"].value_counts().max(), 3)
 
-    def test_squad_starts_the_best_xi_and_benches_four_in_order(self):
+    def test_squad_benches_the_four_picks_outside_the_best_xi(self):
         points = {
             1: [9.0, 8.5, 1.0],
             2: [7.0, 6.0, 5.0, 4.0, 3.0, 0.5],
@@ -454,24 +454,24 @@ class ScoutInferenceTests(unittest.TestCase):
         )
 
         team = scout.select_optimal_team(pd.DataFrame(rows))
-        slots = team.set_index("pick_position").sort_index()
+        roles = team.set_index("web_name")["role"]
 
-        self.assertEqual(slots.index.tolist(), list(range(1, 16)))
-        starters, bench = slots.loc[:11], slots.loc[12:]
-        # 5-4-1 is the highest-projected legal XI, goalkeeper to forward.
+        # 5-4-1 is the highest-projected legal XI; the other four are "bench".
+        starters = team.loc[team["role"].ne("bench")]
         self.assertEqual(
             starters["element_type"].value_counts().to_dict(),
             {"Goalkeeper": 1, "Defender": 5, "Midfielder": 4, "Forward": 1},
         )
-        self.assertEqual(starters["web_name"].iloc[0], "P1-0")
-        # The second goalkeeper sits first, then the outfield bench by xPts.
-        self.assertEqual(bench["web_name"].tolist(), ["P1-1", "P3-4", "P4-1", "P4-2"])
+        self.assertEqual(
+            sorted(roles[roles.eq("bench")].index), ["P1-1", "P3-4", "P4-1", "P4-2"]
+        )
+        self.assertNotIn("pick_position", team.columns)
         # The armband stays in the XI, even though the benched goalkeeper
         # projects second best in the squad.
-        roles = team.set_index("web_name")["role"]
         self.assertEqual(roles["P1-0"], "captain")
         self.assertEqual(roles["P2-0"], "vice")
-        self.assertEqual(roles["P1-1"], "")
+        self.assertEqual(roles["P1-1"], "bench")
+        self.assertEqual(set(roles), {"captain", "vice", "bench", ""})
 
     def test_unavailable_players_are_scaled_and_never_selected(self):
         history = league_history()

@@ -1187,12 +1187,15 @@ class FPLScout:
             strategy=strategy or "model-ensemble",
             require_available=strategy == "ownership-cold-start",
         )
-        team["pick_position"] = self._pick_positions(team)
-        starters = team.loc[team["pick_position"].le(11)].sort_values(
+        starting = self._starting_xi(team)
+        starters = team.loc[starting].sort_values(
             "expected_points", ascending=False, kind="stable"
         )
         captain, vice = starters.index[0], starters.index[1]
-        team["role"] = ""
+        # Every pick has a role: the XI's two best projections take the
+        # armbands, the rest of the XI is "", and the other four are "bench".
+        team["role"] = "bench"
+        team.loc[starting, "role"] = ""
         team.loc[captain, "role"] = "captain"
         team.loc[vice, "role"] = "vice"
         team["element_type"] = team["element_type"].map(self.POSITION_MAPPING)
@@ -1205,18 +1208,16 @@ class FPLScout:
             team.loc[vice, "web_name"],
             team.loc[vice, "expected_points"],
             starters["expected_points"].sum(),
-            team.loc[team["pick_position"].gt(11), "expected_points"].sum(),
+            team.loc[team["role"].eq("bench"), "expected_points"].sum(),
         )
         return team
 
     @staticmethod
-    def _pick_positions(team: pd.DataFrame) -> List[int]:
-        """Number the squad's slots the way FPL publishes picks.
+    def _starting_xi(team: pd.DataFrame) -> List[Any]:
+        """Return the index of the squad's highest-projected legal XI.
 
-        Slots 1–11 are the highest-projected legal XI (one goalkeeper, 3–5
-        defenders, 2–5 midfielders, 1–3 forwards), ordered goalkeeper to
-        forward. Slot 12 is the second goalkeeper and 13–15 the outfield bench
-        in substitution order, highest projection first.
+        One goalkeeper, 3–5 defenders, 2–5 midfielders and 1–3 forwards,
+        chosen the way the team rating's AI benchmark chooses them.
         """
         positions = pd.to_numeric(team["element_type"], errors="coerce")
         points = pd.to_numeric(team["expected_points"], errors="coerce")
@@ -1230,23 +1231,7 @@ class FPLScout:
         ]
         lineup, _ = _best_benchmark_lineup(rows)
         starting = {player["_row"] for player in lineup}
-
-        def slot_order(player: Mapping[str, Any]) -> Tuple[int, float]:
-            return int(player["element_type"]), -float(player["expected_points"])
-
-        starters = sorted(lineup, key=slot_order)
-        bench = sorted(
-            (player for player in rows if player["_row"] not in starting),
-            key=lambda player: (
-                int(player["element_type"]) != 1,
-                -float(player["expected_points"]),
-            ),
-        )
-        slots = {
-            player["_row"]: slot
-            for slot, player in enumerate([*starters, *bench], start=1)
-        }
-        return [slots[index] for index in team.index]
+        return [index for index in team.index if index in starting]
 
     def _select_budget_free_squad(
         self,

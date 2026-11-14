@@ -149,10 +149,11 @@ const utils = {
         return best && best.base + best.captain;
     },
 
-    // A pick carries its slot: 1–11 start, 12–15 are the bench in
-    // substitution order. Scout picks are numbered the same way.
+    // A published FPL pick carries its slot: 1–11 start, 12–15 are the bench
+    // in substitution order. Scout picks carry no slot; their four bench
+    // players have the role "bench" and stay on the pitch with a B badge.
     isBench(player) {
-        return this.number(player.pick_position, 0) > 11;
+        return player.role === 'bench' || this.number(player.pick_position, 0) > 11;
     },
 
     // A double gameweek with a home and an away match has no single venue;
@@ -526,6 +527,7 @@ const playerRenderer = {
     roleBadge(player) {
         if (player.role === 'captain') return '<span class="role-badge captain" aria-label="Captain">C</span>';
         if (player.role === 'vice') return '<span class="role-badge vice" aria-label="Vice captain">VC</span>';
+        if (player.role === 'bench') return '<span class="role-badge bench" aria-label="Bench">B</span>';
         return '';
     },
 
@@ -565,7 +567,7 @@ const playerRenderer = {
         const player = this.format(rawPlayer);
         const status = player.status_info;
         const venue = utils.venueCode(player);
-        const role = player.role
+        const role = player.role === 'captain' || player.role === 'vice'
             ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
             : '';
         const bench = utils.isBench(player) ? '<span class="table-role bench">SUB</span>' : '';
@@ -714,9 +716,8 @@ const dashboardRenderer = {
         if (!Array.isArray(players) || !players.length) {
             throw new Error('The AI engine returned no squad players');
         }
-        // Both the scout squad and a manager's published squad number their
-        // picks: 1–11 start, 12–15 are the bench. A squad without slots (one
-        // saved by an older version) puts all 15 picks on the pitch.
+        // A manager's published squad has a starting XI and an ordered bench;
+        // the scout squad has neither, so all 15 picks take the pitch.
         const hasLineup = players.every(player => utils.number(player.pick_position, 0) >= 1);
         const starters = hasLineup ? players.filter(player => !utils.isBench(player)) : players;
         const bench = hasLineup
@@ -766,9 +767,7 @@ const dashboardRenderer = {
             dom.formationChip.title = 'Squad by position: goalkeepers • defenders • midfielders • forwards';
         }
         dom.squadSubtitle.textContent = options.subtitle
-            || (hasLineup
-                ? `Starting XI and ${bench.length} on the bench · tap a player for xPts, price and ownership`
-                : `${players.length} picks · tap a player for xPts, price and ownership`);
+            || `${players.length} picks · tap a player for xPts, price and ownership`;
     },
 
     table() {
@@ -820,16 +819,14 @@ const dashboardRenderer = {
         });
     },
 
-    // Faint cards hold a starting XI and its bench while the squad loads, so
-    // the page does not jump when the real cards arrive.
+    // Faint cards hold the squad's 2-5-5-3 shape while it loads, so the page
+    // does not jump when the real cards arrive.
     loading(message = 'Projecting the Gameweek…') {
         dom.modelVersion.hidden = true;
-        const cards = count => '<span class="player-card placeholder"></span>'.repeat(count);
-        const placeholders = [1, 4, 4, 2].map(count => `
-            <div class="formation-line placeholder-line" aria-hidden="true">${cards(count)}</div>`).join('')
-            + `<div class="pitch-bench placeholder-bench" aria-hidden="true">
-                <div class="formation-line formation-bench">${cards(4)}</div>
-            </div>`;
+        const placeholders = [2, 5, 5, 3].map(count => `
+            <div class="formation-line placeholder-line" aria-hidden="true">${
+                '<span class="player-card placeholder"></span>'.repeat(count)
+            }</div>`).join('');
         dom.pitch.innerHTML = `
             <div class="loading over-placeholders" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
@@ -1039,7 +1036,7 @@ const teamRating = {
             dom.squadTools.hidden = false;
             if (appState.currentData?.scout_team) {
                 dashboardRenderer.squad(appState.currentData.scout_team, {
-                    subtitle: 'AI starting XI and bench for the selected Gameweek'
+                    subtitle: '15 AI picks ranked by xPts for the selected Gameweek'
                 });
             }
             shareLink.write();
@@ -1374,8 +1371,7 @@ const interactions = {
         const status = utils.statusInfo(player.status, player.can_select !== false);
         const role = player.role === 'captain' ? 'Captain'
             : player.role === 'vice' ? 'Vice captain'
-            : utils.isBench(player) ? 'Bench'
-            : utils.number(player.pick_position, 0) >= 1 ? 'Starting XI' : 'Squad';
+            : utils.isBench(player) ? 'Bench' : 'Squad';
 
         dom.dialogPositionBadge.textContent = utils.positionCode(player);
         dom.dialogPlayerName.textContent = player.web_name;
