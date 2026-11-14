@@ -946,14 +946,17 @@ test('the scout squad keeps all 15 on the pitch and marks its bench B', () => {
     const pitch = app.document.getElementById('pitch').innerHTML;
     assert.doesNotMatch(pitch, /pitch-bench/);
     assert.equal(pitch.match(/class="player-card/g).length, 15);
-    const benched = Array.from(pitch.matchAll(/aria-label="(P\d+), [^"]*">\s*<span class="role-badge bench" aria-label="Bench">B</g),
-        match => match[1]);
-    assert.deepEqual(benched.sort(), ['P12', 'P13', 'P14', 'P15']);
+    // B0 is the bench goalkeeper, B1–B3 the outfield bench in the API's order.
+    const benched = Object.fromEntries(Array.from(
+        pitch.matchAll(/aria-label="(P\d+), [^"]*">\s*<span class="role-badge bench" aria-label="[^"]+">(B\d)</g),
+        match => [match[1], match[2]]));
+    assert.deepEqual(benched, { P12: 'B0', P13: 'B1', P14: 'B2', P15: 'B3' });
     assert.equal(app.document.getElementById('formation-chip').textContent, '2 • 5 • 5 • 3');
 
-    // The list marks the bench SUB, never with a vice-captain badge.
+    // The list numbers the bench the same way, never with a vice-captain badge.
     const list = app.document.getElementById('squad-table-body').innerHTML;
-    assert.equal(list.match(/table-role bench">SUB/g).length, 4);
+    assert.deepEqual(Array.from(list.matchAll(/table-role bench">(B\d)/g), match => match[1]),
+        ['B0', 'B1', 'B2', 'B3']);
     assert.equal(list.match(/table-role vice">VC/g).length, 1);
 });
 
@@ -967,7 +970,8 @@ test('the bench follows the XI on each pitch line and in every list sort', () =>
         { id: 2, web_name: 'Gabriel', element_type: 'Defender', price: 6.5, expected_points: 4, role: '' },
         { id: 3, web_name: 'Raya', element_type: 'Goalkeeper', price: 5.5, expected_points: 3, role: 'vice' },
         { id: 4, web_name: 'Petrovic', element_type: 'Goalkeeper', price: 4.5, expected_points: 3.5, role: 'bench' },
-        { id: 5, web_name: 'Konsa', element_type: 'Defender', price: 4.8, expected_points: 4.5, role: 'bench' }
+        { id: 5, web_name: 'Konsa', element_type: 'Defender', price: 4.8, expected_points: 4.5, role: 'bench' },
+        { id: 6, web_name: 'Mings', element_type: 'Defender', price: 4.4, expected_points: 4.6, role: 'bench' }
     ];
     app.dashboardRenderer.squad(players);
 
@@ -975,13 +979,14 @@ test('the bench follows the XI on each pitch line and in every list sort', () =>
         .matchAll(/formation-line formation-(\w+)">([\s\S]*?)<\/div>\s*(?=<div class="position-label|$)/g),
     match => [match[1], Array.from(match[2].matchAll(/aria-label="(\w+),/g), name => name[1])]);
     assert.deepEqual(Object.fromEntries(lines).goalkeeper, ['Raya', 'Petrovic']);
-    assert.deepEqual(Object.fromEntries(lines).defender, ['Saliba', 'Gabriel', 'Konsa']);
+    // Bench defenders keep their B order (Konsa B1, Mings B2), not their xPts.
+    assert.deepEqual(Object.fromEntries(lines).defender, ['Saliba', 'Gabriel', 'Konsa', 'Mings']);
 
-    assert.deepEqual(rowNames(body.innerHTML), ['Saliba', 'Gabriel', 'Raya', 'Petrovic', 'Konsa']);
+    assert.deepEqual(rowNames(body.innerHTML), ['Saliba', 'Gabriel', 'Raya', 'Petrovic', 'Konsa', 'Mings']);
     app.tableSorting.sortBy('price');
-    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Saliba', 'Raya', 'Konsa', 'Petrovic']);
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Saliba', 'Raya', 'Konsa', 'Petrovic', 'Mings']);
     app.tableSorting.sortBy('player');
-    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Raya', 'Saliba', 'Konsa', 'Petrovic']);
+    assert.deepEqual(rowNames(body.innerHTML), ['Gabriel', 'Raya', 'Saliba', 'Konsa', 'Mings', 'Petrovic']);
 });
 
 test('cards carry a short key, and the briefing opens the player it names', () => {

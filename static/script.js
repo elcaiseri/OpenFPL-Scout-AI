@@ -156,6 +156,29 @@ const utils = {
         return player.role === 'bench' || this.number(player.pick_position, 0) > 11;
     },
 
+    // A bench pick's place in FPL's substitution order: 0 for the goalkeeper,
+    // then 1–3 for the outfield players. A published pick takes it from its
+    // slot (12–15); a scout pick from the squad's order (see benchSlots).
+    benchSlot(player) {
+        const slot = this.number(player.pick_position, 0);
+        if (slot > 11) return slot - 12;
+        return player.role === 'bench' && Number.isInteger(player.bench_slot) ? player.bench_slot : null;
+    },
+
+    // /api/scout lists its bench in substitution order, goalkeeper first;
+    // number it B0 (goalkeeper), B1, B2, B3.
+    benchSlots(players) {
+        let outfield = 0;
+        return players.map(player => player.role === 'bench' && !(this.number(player.pick_position, 0) > 11)
+            ? { ...player, bench_slot: this.positionCode(player) === 'GK' ? 0 : ++outfield }
+            : player);
+    },
+
+    benchLabel(player) {
+        const slot = this.benchSlot(player);
+        return slot === null ? 'SUB' : `B${slot}`;
+    },
+
     // A double gameweek with a home and an away match has no single venue;
     // its opponent label then names each fixture's venue.
     venueCode(player) {
@@ -527,7 +550,11 @@ const playerRenderer = {
     roleBadge(player) {
         if (player.role === 'captain') return '<span class="role-badge captain" aria-label="Captain">C</span>';
         if (player.role === 'vice') return '<span class="role-badge vice" aria-label="Vice captain">VC</span>';
-        if (player.role === 'bench') return '<span class="role-badge bench" aria-label="Bench">B</span>';
+        if (player.role === 'bench') {
+            const slot = utils.benchSlot(player);
+            const label = slot === 0 ? 'Bench goalkeeper' : slot === null ? 'Bench' : `Bench ${slot}`;
+            return `<span class="role-badge bench" aria-label="${label}">${utils.benchLabel(player)}</span>`;
+        }
         return '';
     },
 
@@ -570,7 +597,7 @@ const playerRenderer = {
         const role = player.role === 'captain' || player.role === 'vice'
             ? `<span class="table-role ${player.role}">${player.role === 'captain' ? 'C' : 'VC'}</span>`
             : '';
-        const bench = utils.isBench(player) ? '<span class="table-role bench">SUB</span>' : '';
+        const bench = utils.isBench(player) ? `<span class="table-role bench">${utils.benchLabel(player)}</span>` : '';
         // On a phone the list drops to player, fixture and xPts, so position,
         // club code and any availability flag ride under the name instead.
         const flag = status.className !== 'available'
@@ -712,10 +739,11 @@ const dashboardRenderer = {
         }).join('');
     },
 
-    squad(players, options = {}) {
-        if (!Array.isArray(players) || !players.length) {
+    squad(squadPlayers, options = {}) {
+        if (!Array.isArray(squadPlayers) || !squadPlayers.length) {
             throw new Error('The AI engine returned no squad players');
         }
+        const players = utils.benchSlots(squadPlayers);
         // A manager's published squad has a starting XI and an ordered bench;
         // the scout squad has neither, so all 15 picks take the pitch.
         const hasLineup = players.every(player => utils.number(player.pick_position, 0) >= 1);
@@ -734,7 +762,9 @@ const dashboardRenderer = {
         // Starters lead each line; bench picks follow them.
         Object.values(grouped).forEach(group => group.sort(
             (a, b) => utils.isBench(a) - utils.isBench(b)
-                || utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0)
+                || (utils.isBench(a)
+                    ? (utils.benchSlot(a) ?? 99) - (utils.benchSlot(b) ?? 99)
+                    : utils.number(b.expected_points, 0) - utils.number(a.expected_points, 0))
         ));
 
         const lines = positionOrder.map(position => {
@@ -758,7 +788,7 @@ const dashboardRenderer = {
         // Each row keeps its rank, whichever column the list is sorted by:
         // the XI by xPts, then the bench in the order it came (a scout bench
         // in substitution order, a manager's by bench slot).
-        const benchOrder = player => utils.number(player.pick_position, 0);
+        const benchOrder = player => utils.benchSlot(player) ?? 99;
         appState.tableRows = players
             .map((player, index) => ({ player, index }))
             .sort((a, b) => utils.isBench(a.player) - utils.isBench(b.player)
@@ -1385,7 +1415,9 @@ const interactions = {
         const status = utils.statusInfo(player.status, player.can_select !== false);
         const role = player.role === 'captain' ? 'Captain'
             : player.role === 'vice' ? 'Vice captain'
-            : utils.isBench(player) ? 'Bench' : 'Squad';
+            : utils.isBench(player)
+                ? (utils.benchSlot(player) === null ? 'Bench' : `Bench · ${utils.benchLabel(player)}`)
+                : 'Squad';
 
         dom.dialogPositionBadge.textContent = utils.positionCode(player);
         dom.dialogPlayerName.textContent = player.web_name;
