@@ -291,4 +291,10 @@ Built by [Islam Kassem](https://kassem.dev/), Senior AI/ML Engineer in Riyadh ([
 
 [MIT](LICENSE)
 
+## Support OpenFPL
+
+If OpenFPL helps your FPL season, consider
+[sponsoring its development on GitHub](https://github.com/sponsors/elcaiseri).
+Sponsorship helps cover hosting, data infrastructure, and ongoing maintenance.
+
 Questions: [iqasem4444@gmail.com](mailto:iqasem4444@gmail.com)
