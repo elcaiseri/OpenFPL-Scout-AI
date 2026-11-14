@@ -2370,8 +2370,9 @@ select {
     place-items: center;
 }
 
-/* A manager's bench sits in its own band below the XI, in substitution
-   order, so it never reads as part of the starting lineup. */
+/* The bench, the scout squad's or a manager's, sits in its own band below
+   the XI, in substitution order, so it never reads as part of the starting
+   lineup. */
 .pitch-bench {
     position: relative;
     z-index: 2;
@@ -2386,7 +2387,7 @@ select {
     margin-bottom: 0;
 }
 
-.formation-bench .player-card:not(.captain):not(.vice) {
+.formation-bench .player-card:not(.captain):not(.vice):not(.placeholder) {
     background: linear-gradient(155deg, rgba(229, 234, 231, 0.96), rgba(204, 214, 208, 0.9));
 }
 

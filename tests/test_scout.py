@@ -429,6 +429,50 @@ class ScoutInferenceTests(unittest.TestCase):
                 self.assertGreater(team["now_cost"].sum(), 100.0)
                 self.assertLessEqual(team["team_name"].value_counts().max(), 3)
 
+    def test_squad_starts_the_best_xi_and_benches_four_in_order(self):
+        points = {
+            1: [9.0, 8.5, 1.0],
+            2: [7.0, 6.0, 5.0, 4.0, 3.0, 0.5],
+            3: [6.5, 6.4, 2.0, 1.5, 1.2, 0.5],
+            4: [5.5, 0.8, 0.7, 0.3],
+        }
+        rows = [
+            {
+                "id": position * 100 + offset,
+                "element_type": position,
+                "web_name": f"P{position}-{offset}",
+                "team_name": f"Club {position}-{offset}",
+                "expected_points": value,
+            }
+            for position, values in points.items()
+            for offset, value in enumerate(values)
+        ]
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        team = scout.select_optimal_team(pd.DataFrame(rows))
+        slots = team.set_index("pick_position").sort_index()
+
+        self.assertEqual(slots.index.tolist(), list(range(1, 16)))
+        starters, bench = slots.loc[:11], slots.loc[12:]
+        # 5-4-1 is the highest-projected legal XI, goalkeeper to forward.
+        self.assertEqual(
+            starters["element_type"].value_counts().to_dict(),
+            {"Goalkeeper": 1, "Defender": 5, "Midfielder": 4, "Forward": 1},
+        )
+        self.assertEqual(starters["web_name"].iloc[0], "P1-0")
+        # The second goalkeeper sits first, then the outfield bench by xPts.
+        self.assertEqual(bench["web_name"].tolist(), ["P1-1", "P3-4", "P4-1", "P4-2"])
+        # The armband stays in the XI, even though the benched goalkeeper
+        # projects second best in the squad.
+        roles = team.set_index("web_name")["role"]
+        self.assertEqual(roles["P1-0"], "captain")
+        self.assertEqual(roles["P2-0"], "vice")
+        self.assertEqual(roles["P1-1"], "")
+
     def test_unavailable_players_are_scaled_and_never_selected(self):
         history = league_history()
         # Players 11 and 12 are Club 0 midfielders with the best recent form.

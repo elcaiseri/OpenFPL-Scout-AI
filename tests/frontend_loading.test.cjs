@@ -932,6 +932,28 @@ test('the list sorts by column, keeps each xPts rank, and puts missing values la
     assert.deepEqual(rowNames(body.innerHTML), ['Areola', 'Cash', 'Bowen']);
 });
 
+test('the scout squad shows its starting XI on the pitch and its bench below', () => {
+    const app = loadApp(async () => response({}));
+    const positions = ['Goalkeeper', 'Defender', 'Defender', 'Defender', 'Defender',
+        'Midfielder', 'Midfielder', 'Midfielder', 'Midfielder', 'Forward', 'Forward',
+        'Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
+    const players = positions.map((element_type, index) => ({
+        id: index + 1, web_name: `P${index + 1}`, element_type,
+        expected_points: 15 - index, pick_position: index + 1,
+        role: index === 0 ? 'captain' : index === 1 ? 'vice' : ''
+    }));
+    app.dashboardRenderer.squad(players);
+
+    const pitch = app.document.getElementById('pitch').innerHTML;
+    const [field, bench] = pitch.split('class="pitch-bench"');
+    assert.equal(field.match(/class="player-card/g).length, 11);
+    assert.deepEqual(Array.from(bench.matchAll(/aria-label="(P\d+)/g), match => match[1]),
+        ['P12', 'P13', 'P14', 'P15']);
+    assert.equal(app.document.getElementById('formation-chip').textContent, '4-4-2');
+    assert.match(app.document.getElementById('squad-subtitle').textContent, /Starting XI and 4 on the bench/);
+    assert.match(app.document.getElementById('squad-table-body').innerHTML, /P12[\s\S]*?SUB/);
+});
+
 test('cards carry a short key, and the briefing opens the player it names', () => {
     const app = loadApp(async () => response({}));
     app.dashboardRenderer.squad(listPlayers());

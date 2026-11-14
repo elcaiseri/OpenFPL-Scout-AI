@@ -29,6 +29,7 @@ from src.data_archive import DataArchive
 from src.fpl_data_inference import FPLDataHistoryProvider
 from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
+from src.team_rating import _best_benchmark_lineup
 
 logger = get_logger(__name__)
 
@@ -1186,20 +1187,66 @@ class FPLScout:
             strategy=strategy or "model-ensemble",
             require_available=strategy == "ownership-cold-start",
         )
+        team["pick_position"] = self._pick_positions(team)
+        starters = team.loc[team["pick_position"].le(11)].sort_values(
+            "expected_points", ascending=False, kind="stable"
+        )
+        captain, vice = starters.index[0], starters.index[1]
         team["role"] = ""
-        team.loc[0, "role"] = "captain"
-        team.loc[1, "role"] = "vice"
+        team.loc[captain, "role"] = "captain"
+        team.loc[vice, "role"] = "vice"
         team["element_type"] = team["element_type"].map(self.POSITION_MAPPING)
 
         logger.info(
-            "Selected captain %s (%.2f) and vice-captain %s (%.2f); total %.2f",
-            team.loc[0, "web_name"],
-            team.loc[0, "expected_points"],
-            team.loc[1, "web_name"],
-            team.loc[1, "expected_points"],
-            team["expected_points"].sum(),
+            "Selected captain %s (%.2f) and vice-captain %s (%.2f); "
+            "starting XI %.2f, bench %.2f",
+            team.loc[captain, "web_name"],
+            team.loc[captain, "expected_points"],
+            team.loc[vice, "web_name"],
+            team.loc[vice, "expected_points"],
+            starters["expected_points"].sum(),
+            team.loc[team["pick_position"].gt(11), "expected_points"].sum(),
         )
         return team
+
+    @staticmethod
+    def _pick_positions(team: pd.DataFrame) -> List[int]:
+        """Number the squad's slots the way FPL publishes picks.
+
+        Slots 1–11 are the highest-projected legal XI (one goalkeeper, 3–5
+        defenders, 2–5 midfielders, 1–3 forwards), ordered goalkeeper to
+        forward. Slot 12 is the second goalkeeper and 13–15 the outfield bench
+        in substitution order, highest projection first.
+        """
+        positions = pd.to_numeric(team["element_type"], errors="coerce")
+        points = pd.to_numeric(team["expected_points"], errors="coerce")
+        rows = [
+            {
+                "element_type": int(positions[index]),
+                "expected_points": float(points[index]),
+                "_row": index,
+            }
+            for index in team.index
+        ]
+        lineup, _ = _best_benchmark_lineup(rows)
+        starting = {player["_row"] for player in lineup}
+
+        def slot_order(player: Mapping[str, Any]) -> Tuple[int, float]:
+            return int(player["element_type"]), -float(player["expected_points"])
+
+        starters = sorted(lineup, key=slot_order)
+        bench = sorted(
+            (player for player in rows if player["_row"] not in starting),
+            key=lambda player: (
+                int(player["element_type"]) != 1,
+                -float(player["expected_points"]),
+            ),
+        )
+        slots = {
+            player["_row"]: slot
+            for slot, player in enumerate([*starters, *bench], start=1)
+        }
+        return [slots[index] for index in team.index]
 
     def _select_budget_free_squad(
         self,

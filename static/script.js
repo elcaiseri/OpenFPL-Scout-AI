@@ -149,8 +149,8 @@ const utils = {
         return best && best.base + best.captain;
     },
 
-    // A published FPL pick carries its slot: 1–11 start, 12–15 are the bench
-    // in substitution order. Scout picks carry no slot.
+    // A pick carries its slot: 1–11 start, 12–15 are the bench in
+    // substitution order. Scout picks are numbered the same way.
     isBench(player) {
         return this.number(player.pick_position, 0) > 11;
     },
@@ -714,8 +714,9 @@ const dashboardRenderer = {
         if (!Array.isArray(players) || !players.length) {
             throw new Error('The AI engine returned no squad players');
         }
-        // A manager's published squad has a starting XI and an ordered bench;
-        // the scout squad has neither, so all 15 picks take the pitch.
+        // Both the scout squad and a manager's published squad number their
+        // picks: 1–11 start, 12–15 are the bench. A squad without slots (one
+        // saved by an older version) puts all 15 picks on the pitch.
         const hasLineup = players.every(player => utils.number(player.pick_position, 0) >= 1);
         const starters = hasLineup ? players.filter(player => !utils.isBench(player)) : players;
         const bench = hasLineup
@@ -765,7 +766,9 @@ const dashboardRenderer = {
             dom.formationChip.title = 'Squad by position: goalkeepers • defenders • midfielders • forwards';
         }
         dom.squadSubtitle.textContent = options.subtitle
-            || `${players.length} picks · tap a player for xPts, price and ownership`;
+            || (hasLineup
+                ? `Starting XI and ${bench.length} on the bench · tap a player for xPts, price and ownership`
+                : `${players.length} picks · tap a player for xPts, price and ownership`);
     },
 
     table() {
@@ -817,14 +820,16 @@ const dashboardRenderer = {
         });
     },
 
-    // Faint cards hold the squad's 2-5-5-3 shape while it loads, so the page
-    // does not jump when the real cards arrive.
+    // Faint cards hold a starting XI and its bench while the squad loads, so
+    // the page does not jump when the real cards arrive.
     loading(message = 'Projecting the Gameweek…') {
         dom.modelVersion.hidden = true;
-        const placeholders = [2, 5, 5, 3].map(count => `
-            <div class="formation-line placeholder-line" aria-hidden="true">${
-                '<span class="player-card placeholder"></span>'.repeat(count)
-            }</div>`).join('');
+        const cards = count => '<span class="player-card placeholder"></span>'.repeat(count);
+        const placeholders = [1, 4, 4, 2].map(count => `
+            <div class="formation-line placeholder-line" aria-hidden="true">${cards(count)}</div>`).join('')
+            + `<div class="pitch-bench placeholder-bench" aria-hidden="true">
+                <div class="formation-line formation-bench">${cards(4)}</div>
+            </div>`;
         dom.pitch.innerHTML = `
             <div class="loading over-placeholders" role="status" aria-live="polite">
                 <span class="loading-ball" aria-hidden="true"></span>
@@ -1034,7 +1039,7 @@ const teamRating = {
             dom.squadTools.hidden = false;
             if (appState.currentData?.scout_team) {
                 dashboardRenderer.squad(appState.currentData.scout_team, {
-                    subtitle: '15 AI picks ranked by xPts for the selected Gameweek'
+                    subtitle: 'AI starting XI and bench for the selected Gameweek'
                 });
             }
             shareLink.write();
@@ -1369,7 +1374,8 @@ const interactions = {
         const status = utils.statusInfo(player.status, player.can_select !== false);
         const role = player.role === 'captain' ? 'Captain'
             : player.role === 'vice' ? 'Vice captain'
-            : utils.isBench(player) ? 'Bench' : 'Squad';
+            : utils.isBench(player) ? 'Bench'
+            : utils.number(player.pick_position, 0) >= 1 ? 'Starting XI' : 'Squad';
 
         dom.dialogPositionBadge.textContent = utils.positionCode(player);
         dom.dialogPlayerName.textContent = player.web_name;
