@@ -165,6 +165,10 @@ class Reel:
         self.labels = {k: self._pos_label(k) for k in ("FORWARDS", "MIDFIELDERS", "DEFENDERS", "GOALKEEPERS")}
         self.big_captain = self._make_big_captain()
         self.vice_row = self._make_vice_row()
+        self.hook_hero = self._make_hook_hero()
+        glow = Image.new("RGBA", (900, 700), (0, 0, 0, 0))
+        ImageDraw.Draw(glow).ellipse([170, 150, 730, 550], fill=(200, 255, 50, 56))
+        self.hook_glow = glow.filter(ImageFilter.GaussianBlur(90))
         self.scenes: List[Tuple[str, Callable, float, float]] = [
             ("hook", self.s_hook, 0.0, 3.0),
             ("captain", self.s_captain, 3.0, 7.0),
@@ -342,6 +346,40 @@ class Reel:
         vc.alpha_composite(pill, (860 - pill.width - 36, 85 - pill.height // 2))
         return shadowed(vc, 18, 10, 110)
 
+    # ---- hook: the payoff is on screen from the first frame ----
+    HOOK_W, HOOK_H = 1000, 720
+    HOOK_KICKER = "THE AI'S CAPTAIN PICK"
+    HOOK_FIGURE_Y = 500  # centre of the big figure inside the hero; the glow sits behind it
+
+    @staticmethod
+    def _hook_number(d: ImageDraw.ImageDraw, cx: float, cy: float, value: str, unit: str, size: int) -> None:
+        """A display-size figure with a small unit, centred as one group."""
+        f, fu = font("disp", size), font("black", int(size * 0.28))
+        gap = size * 0.06
+        total = f.getlength(value) + gap + fu.getlength(unit)
+        x = cx - total / 2
+        d.text((x, cy), value, font=f, fill=A(LIME, 1), anchor="lm")
+        d.text((x + f.getlength(value) + gap, cy + size * 0.24), unit, font=fu, fill=A(LIME, 1), anchor="lm")
+
+    def _make_hook_hero(self) -> Image.Image:
+        """Captain, fixture and xP: what the viewer came for, drawn once and held from frame 0."""
+        c = self.sq.captain
+        w, h = self.HOOK_W, self.HOOK_H
+        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        disp(d, (w / 2, 150), c.name.upper(), 240, A(PAPER, 1), max_width=w - 40)
+        sub = f"{c.club_short}  ·  {c.fixture}"
+        d.text((w / 2, 312), sub, font=fit(sub, "xb", 46, w - 40), fill=A(MUTED, 1), anchor="mm")
+        self._hook_number(d, w / 2, self.HOOK_FIGURE_Y, f"{c.xp:.1f}", "xP", 280)
+        return im
+
+    def hook_sub(self) -> str:
+        v = self.sq.vice
+        return f"Vice: {v.name}  ·  {v.xp:.1f} xP  ·  {v.fixture}"
+
+    def hook_pill(self) -> str:
+        return status_line(self.sq)
+
     # ---- chrome ----
     def brand_bar(self, base: Image.Image, al: float) -> None:
         if al <= 0:
@@ -358,25 +396,30 @@ class Reel:
 
     # ---- scenes ----
     def s_hook(self, base: Image.Image, t: float) -> None:
+        """Lead with the answer. Nothing fades in from empty: frame 0 is also the cover image."""
         d = ImageDraw.Draw(base)
-        pl = eback(prog(t, 0.0, 0.7))
-        glow = Image.new("RGBA", (700, 700), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse([150, 150, 550, 550], fill=(200, 255, 50, 70))
-        paste(base, glow.filter(ImageFilter.GaussianBlur(80)), W / 2, 560, cl(pl))
-        paste(base, self.lion(440), W / 2, 560, cl(pl * 1.4), scale=0.6 + 0.4 * pl)
-        p1, p2, p3 = eo(prog(t, 0.45, 0.5)), eo(prog(t, 0.65, 0.5)), eo(prog(t, 1.0, 0.5))
-        disp(d, (W / 2, 1000 + 50 * (1 - p1)), f"GAMEWEEK {self.gw}", 190, A(PAPER, p1), max_width=980)
-        disp(d, (W / 2, 1180 + 50 * (1 - p2)), f"THE {self.MODE}", 130, A(LIME, p2))
-        lw = 560 * eo(prog(t, 0.9, 0.6))
-        d.rectangle([W / 2 - lw / 2, 1282, W / 2 + lw / 2, 1290], fill=A(PINK, 1))
-        d.text((W / 2, 1360), "AI scout team  ·  15 picks  ·  captain  ·  vice", font=font("sb", 36), fill=A(PAPER, p3),
+        paste(base, self.lion(180), W / 2, 250)
+        disp(d, (W / 2, 420), f"GAMEWEEK {self.gw}", 104, A(PAPER, 1), max_width=980)
+        disp(d, (W / 2, 522), f"THE {self.MODE}", 76, A(LIME, 1))
+        lw = 300 + 260 * eo(prog(t, 0.0, 0.6))
+        d.rectangle([W / 2 - lw / 2, 586, W / 2 + lw / 2, 593], fill=A(PINK, 1))
+        d.text((W / 2, 668), self.HOOK_KICKER, font=fit(self.HOOK_KICKER, "black", 42, 960), fill=A(PINK, 1),
                anchor="mm")
-        pill = status_line(self.sq)
+        # The hero settles from slightly large instead of fading in, so every frame shows the final figures.
+        settle = 1.0 if self.still_mode else 1.08 - 0.08 * eo(prog(t, 0.0, 0.55))
+        cy = 730 + self.HOOK_H / 2
+        paste(base, self.hook_glow, W / 2, cy - self.HOOK_H / 2 + self.HOOK_FIGURE_Y, 1.0)
+        paste(base, self.hook_hero, W / 2, cy, 1.0, scale=settle)
+        p2 = eo(prog(t, 0.35, 0.45))
+        sub = self.hook_sub()
+        if sub:
+            d.text((W / 2, 1420 + 20 * (1 - p2)), sub, font=fit(sub, "sb", 38, 960), fill=A(PAPER, p2), anchor="mm")
+        pill = self.hook_pill()
         pf = fit(pill, "b", 28, 900)
         pw = pf.getlength(pill) + 64
-        d.rounded_rectangle([W / 2 - pw / 2, 1420, W / 2 + pw / 2, 1482], 31, fill=A(PLUM800, p3),
-                            outline=A(PLUM600, p3), width=2)
-        d.text((W / 2, 1451), pill, font=pf, fill=A(MUTED, p3), anchor="mm")
+        d.rounded_rectangle([W / 2 - pw / 2, 1462, W / 2 + pw / 2, 1524], 31, fill=A(PLUM800, p2),
+                            outline=A(PLUM600, p2), width=2)
+        d.text((W / 2, 1493), pill, font=pf, fill=A(MUTED, p2), anchor="mm")
 
     def s_captain(self, base: Image.Image, t: float) -> None:
         d = ImageDraw.Draw(base)

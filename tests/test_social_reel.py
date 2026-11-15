@@ -289,5 +289,43 @@ class RecapDifferentialsTest(unittest.TestCase):
             attach_differentials(recap, self.picks, points_from_live(live), "preview", None)
 
 
+try:
+    import numpy as np
+    from scripts.social_reel.recap_render import RecapReel
+    from scripts.social_reel.render import Reel
+    HAVE_RENDER = True
+except ImportError:  # Pillow is only needed to draw the reel, not for the data tests above
+    HAVE_RENDER = False
+
+
+@unittest.skipUnless(HAVE_RENDER, "Pillow and NumPy are needed to draw the reel")
+class HookFirstFrameTest(unittest.TestCase):
+    """The hook must show its figures on the very first frame, not fade them in."""
+
+    def setUp(self):
+        self.squad = parse_squad(json.loads(FIXTURE.read_text(encoding="utf-8")))
+
+    def lit(self, reel, T):
+        """Share of the hero area that differs from the bare background at time T."""
+        box = (40, 600, 1040, 1400)
+        frame = np.asarray(reel.frame(T, progress=False).crop(box), dtype=np.int16)
+        bare = np.asarray(reel.bg.convert("RGB").crop(box), dtype=np.int16)
+        return float((np.abs(frame - bare).max(axis=2) > 60).mean())
+
+    def check(self, reel):
+        self.assertEqual(reel.scenes[0][0], "hook")
+        first, settled = self.lit(reel, 0.0), self.lit(reel, 2.0)
+        self.assertGreater(first, 0.08)
+        self.assertGreater(first, settled * 0.8)
+
+    def test_preview_hook_is_drawn_from_frame_zero(self):
+        self.check(Reel(self.squad))
+
+    def test_recap_hook_is_drawn_from_frame_zero(self):
+        live = json.loads(LIVE_FIXTURE.read_text(encoding="utf-8"))
+        info = gameweek_info(json.loads(BOOTSTRAP_FIXTURE.read_text(encoding="utf-8")), 6)
+        self.check(RecapReel(build_recap(self.squad, points_from_live(live), info)))
+
+
 if __name__ == "__main__":
     unittest.main()

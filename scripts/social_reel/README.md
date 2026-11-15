@@ -12,6 +12,13 @@ Builds the weekly OpenFPL Scout AI social pack for one gameweek, straight from `
 
 Scenes: hook → captain and vice → the full 15 on the pitch → top 5 by xP with club stacks → the differentials → model and link.
 
+### The hook
+
+The first frame is the cover image and the first second decides whether the viewer stays, so the hook leads with the
+answer rather than a title card: the captain, fixture and xP in preview mode, the score and its margin on the gameweek
+average in recap mode. Those figures are fully drawn from frame 0 (the hero settles from slightly large; nothing fades
+in from empty and nothing counts up), with the gameweek and mode ("THE PREVIEW" / "THE RECAP") above them.
+
 ### The differentials card
 
 "THE DIFFERENTIALS": the top 2 by xP in each position (8 players) from the model's full projected pool,
@@ -46,7 +53,7 @@ FPL's per-gameweek `selected` counts) is labelled "Retro pick" on the card and i
 
 ## Modes
 
-One generator, two modes. The mode is the hook's headline ("THE PREVIEW" / "THE RECAP") and sits in the brand-bar chip on every scene ("GW7 · PREVIEW").
+One generator, two modes. The mode is named on the hook ("THE PREVIEW" / "THE RECAP") and sits in the brand-bar chip on every scene ("GW7 · PREVIEW").
 
 | Mode | When | Output |
 | --- | --- | --- |
