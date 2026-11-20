@@ -1549,6 +1549,173 @@ async def admin_working_team(
     return await _run(_working_team, entry_id, request)
 
 
+class OutlookRequest(TeamRequest):
+    horizon: int = Field(5, ge=1, le=8)
+
+
+def _outlook(entry_id: int, request: OutlookRequest) -> Dict[str, Any]:
+    """The working squad's next gameweeks: fixtures, projections and chip values."""
+    scout = _scout()
+    client = scout.official_client
+    resolved = _resolve_gameweek(scout, request.gameweek)
+    if not scout.data_archive.gameweek_is_open(client, resolved):
+        if request.draft is not None:
+            _require_open(scout, resolved)
+        resolved = client.next_gameweek()
+    overrides = _overrides(request.overrides)
+    plan_context = _manager_plan_context(entry_id, resolved, request.draft)
+    gameweeks = [gameweek for gameweek in range(resolved, resolved + request.horizon) if gameweek <= 38]
+    points, identity, _, notes = _horizon(scout, gameweeks, overrides)
+    official = _official_players(scout)
+    team_fixtures = _team_fixtures(scout, gameweeks)
+    squad = []
+    for row in plan_context["squad"]:
+        details = official.get(row["id"], {})
+        squad.append({**row, "team_id": details.get("team_id")})
+    fixture_counts = {
+        player["id"]: {
+            gameweek: len((team_fixtures.get(int(player["team_id"]), {}) if player.get("team_id") else {}).get(gameweek, []))
+            for gameweek in gameweeks
+        }
+        for player in squad
+    }
+    players = _optimizer_players(plan_context, points, identity, gameweeks, official)
+    locked = [player_id for player_id, value in overrides.items() if value["lock"]]
+    banned = [player_id for player_id, value in overrides.items() if value["ban"]]
+    totals: Dict[int, Optional[float]] = {}
+
+    def free_hit_total(gameweek: int) -> Optional[float]:
+        if gameweek not in totals:
+            frame = players.copy()
+            frame["total"] = frame[gameweek]
+            pool = optimizer.candidate_pool(frame, [row["id"] for row in squad], locked_ids=locked)
+            solution = optimizer.solve_squad(
+                pool, [gameweek], budget=plan_context["budget"],
+                current_ids=[row["id"] for row in squad], bench_weight=0.0,
+                locked_ids=locked, banned_ids=banned,
+            )
+            totals[gameweek] = solution["projected_total"] if solution else None
+        return totals[gameweek]
+
+    history = client.manager_history(entry_id)
+    chips = my_team.chip_values(
+        squad,
+        points,
+        gameweeks,
+        chips_played=history.get("chips", []) or [],
+        fixture_counts=fixture_counts,
+        free_hit_total=free_hit_total,
+    )
+    ticker = my_team.fixture_ticker(squad, points, gameweeks, team_fixtures)
+    return _json(
+        {
+            "entry_id": entry_id,
+            "start_gameweek": resolved,
+            "gameweeks": gameweeks,
+            "edited": request.draft is not None,
+            "budget": plan_context["budget"],
+            "chips": chips,
+            "ticker": ticker,
+            "chips_status": plan_context["chips"],
+            "notes": notes,
+        }
+    )
+
+
+@router.post(
+    "/managers/{entry_id}/outlook",
+    summary="Fixture ticker, projections and chip values for the coming gameweeks",
+)
+async def admin_outlook(
+    entry_id: int, request: OutlookRequest = Body(default_factory=OutlookRequest)
+):
+    return await _run(_outlook, entry_id, request)
+
+
+def _review(entry_id: int, gameweek: Optional[int]) -> Dict[str, Any]:
+    """How a manager's captain, bench, lineup and transfers did in a gameweek."""
+    scout = _scout()
+    client = scout.official_client
+    manager = client.mapped_manager(entry_id)
+    current_event = manager.get("current_event")
+    if not current_event:
+        raise HTTPException(status_code=422, detail="This manager has not played a gameweek yet.")
+    resolved = int(gameweek or current_event)
+    if resolved > int(current_event):
+        raise HTTPException(
+            status_code=422,
+            detail=f"GW{resolved} has not been played yet; the latest is GW{current_event}.",
+        )
+    picks_payload = client.mapped_manager_picks(entry_id, resolved)
+    official = _official_players(scout)
+    events = {int(event.get("id") or 0): event for event in client.bootstrap().get("events", [])}
+    event = events.get(resolved, {})
+    finished = bool(event.get("finished"))
+    actuals = _live_actuals(scout, resolved)
+    forecast = None
+    try:
+        archived = scout.data_archive.archived_forecast(client, resolved)
+    except Exception as error:
+        logger.info("No archived GW%d forecast for the review: %s", resolved, error)
+        archived = None
+    if archived is not None and not archived.empty:
+        frame = archived.drop_duplicates("id")
+        forecast = {
+            int(player_id): float(value)
+            for player_id, value in zip(frame["id"], pd.to_numeric(frame["expected_points"], errors="coerce").fillna(0.0))
+        }
+    transfers = [
+        transfer
+        for transfer in client.mapped_manager_transfers(entry_id)
+        if int(transfer.get("event") or 0) == resolved
+    ]
+    since: Dict[int, float] = {}
+    for transfer in transfers:
+        for key in ("element_in_id", "element_out_id"):
+            player_id = int(transfer.get(key) or 0)
+            if not player_id or player_id in since:
+                continue
+            try:
+                rows = client.mapped_player_summary(player_id).get("history", [])
+            except Exception:
+                continue
+            since[player_id] = float(
+                sum(float(row.get("total_points") or 0) for row in rows if int(row.get("gameweek") or 0) >= resolved)
+            )
+    review = my_team.gameweek_review(
+        {**picks_payload, "gameweek": resolved},
+        official,
+        actuals,
+        forecast=forecast,
+        transfers=transfers,
+        since=since,
+        finished=finished,
+    )
+    history = client.manager_history(entry_id)
+    row = next((item for item in history.get("current", []) if int(item.get("event") or 0) == resolved), {})
+    review.update(
+        {
+            "entry_id": entry_id,
+            "latest_gameweek": int(current_event),
+            "average": event.get("average_entry_score"),
+            "highest": event.get("highest_score"),
+            "rank": row.get("rank"),
+            "overall_rank": row.get("overall_rank"),
+            "total_points": row.get("total_points"),
+            "forecast_frozen": bool(archived.attrs.get("frozen")) if archived is not None else None,
+        }
+    )
+    return _json(review)
+
+
+@router.get(
+    "/managers/{entry_id}/review",
+    summary="How a manager's captain, bench and transfers did in a gameweek",
+)
+async def admin_review(entry_id: int, gameweek: Optional[int] = Query(None, ge=1, le=38)):
+    return await _run(_review, entry_id, gameweek)
+
+
 class OptimizeRequest(BaseModel):
     entry_id: int = Field(..., ge=1)
     gameweek: Optional[int] = Field(None, ge=1, le=38)

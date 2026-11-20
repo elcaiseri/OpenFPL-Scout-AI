@@ -346,8 +346,16 @@ class ManagerFPL(FakeFPL):
                 {"element_in": self.bought, "element_in_cost": 45, "element_out": 90,
                  "element_out_cost": 50, "event": 2, "time": "2026-08-21T10:00:00Z"},
             ],
+            "event/2/live/": {
+                "elements": [
+                    {"id": player["id"], "stats": {"total_points": player["id"] % 7, "minutes": 0 if player["id"] % 11 == 0 else 90}}
+                    for player in self.elements
+                ],
+            },
             f"entry/{entry}/event/2/picks/": {
-                "active_chip": None, "automatic_subs": [], "entry_history": {"event": 2, "bank": 15},
+                "active_chip": None, "automatic_subs": [],
+                "entry_history": {"event": 2, "bank": 15, "points": 40, "points_on_bench": 6,
+                                  "event_transfers": 1, "event_transfers_cost": 0},
                 "picks": [
                     {"element": player_id, "position": index + 1, "multiplier": 2 if index == 0 else 1 if index < 11 else 0,
                      "is_captain": index == 0, "is_vice_captain": index == 1}
@@ -601,6 +609,65 @@ class WorkingTeamApiTests(OptimizerApiTests):
                 self.assertIn(locked_in, plan["squad_ids"])
                 self.assertNotIn(locked_out, plan["squad_ids"])
         self.assertTrue(result["plans"][1]["feasible"])
+
+    def test_outlook_lists_fixtures_projections_and_chip_values(self):
+        status, _, data = request(
+            "POST", "/api/admin/managers/77/outlook", body={"gameweek": 3, "horizon": 2}
+        )
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["gameweeks"], [3, 4])
+        weeks = data["chips"]["gameweeks"]
+        self.assertEqual([week["gameweek"] for week in weeks], [3, 4])
+        for week in weeks:
+            self.assertGreaterEqual(week["bboost"], 0)
+            self.assertGreater(week["3xc"], 0)
+            self.assertIsNotNone(week["freehit"])
+            self.assertGreaterEqual(week["freehit"], 0)
+        self.assertIn(data["chips"]["best"]["bboost"], (3, 4))
+        rows = data["ticker"]["rows"]
+        self.assertEqual(len(rows), 15)
+        self.assertTrue(all(len(row["cells"]) == 2 for row in rows))
+        self.assertTrue(any(cell["fixtures"] for row in rows for cell in row["cells"]))
+        route = next(item for item in admin_routes() if item.path == "/api/admin/managers/{entry_id}/outlook")
+        self.assertTrue(_uses_bearer_auth(route.dependant))
+
+    def test_outlook_follows_the_working_squad_and_moves_past_closed_weeks(self):
+        first = self.swap_options(4)
+        status, _, data = request(
+            "POST", "/api/admin/managers/77/outlook",
+            body={"gameweek": 3, "horizon": 1, "draft": self.draft([first])},
+        )
+        self.assertEqual(status, 200, data)
+        self.assertIn(first[1], [row["id"] for row in data["ticker"]["rows"]])
+        self.now[0] = self.now[0].replace(day=30)
+        status, _, data = request(
+            "POST", "/api/admin/managers/77/outlook", body={"gameweek": 3, "draft": self.draft()}
+        )
+        self.assertEqual(status, 409, data)
+
+    def test_review_scores_the_captain_bench_and_transfers(self):
+        status, _, review = request("GET", "/api/admin/managers/77/review?gameweek=2")
+        self.assertEqual(status, 200, review)
+        self.assertTrue(review["finished"])
+        squad = self.fpl.squad
+        starters = squad[:11]
+        points = {pid: pid % 7 for pid in squad}
+        minutes = {pid: 0 if pid % 11 == 0 else 90 for pid in squad}
+        captain = squad[0]
+        expected = sum(points[pid] for pid in starters)
+        if minutes[captain]:
+            expected += points[captain]
+        elif minutes[squad[1]]:
+            expected += points[squad[1]]
+        self.assertEqual(review["points"]["computed"], expected)
+        self.assertEqual(review["points"]["official"], 40)
+        self.assertEqual(review["transfers"]["count"], 1)
+        self.assertEqual(review["transfers"]["items"][0]["in_id"], self.fpl.bought)
+        self.assertIn("since_delta", review["transfers"]["items"][0])
+        self.assertEqual(len(review["players"]), 15)
+        self.assertIsNotNone(review["hindsight"])
+        status, _, data = request("GET", "/api/admin/managers/77/review?gameweek=5")
+        self.assertEqual(status, 422, data)
 
 
 if __name__ == "__main__":

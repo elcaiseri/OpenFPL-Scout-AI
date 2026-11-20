@@ -384,5 +384,129 @@ class PriceTests(unittest.TestCase):
         self.assertEqual(effect, {"now": 5.1, "after_rise": 5.2, "after_fall": 5.1})
 
 
+
+def squad_rows(players):
+    return [{**players[pid], "team_id": pid, "pick_position": pid} for pid in range(1, 16)]
+
+
+class OutlookTests(unittest.TestCase):
+    def test_chip_values_per_gameweek(self):
+        players = make_players()
+        rows = squad_rows(players)
+        points = pd.DataFrame(
+            {11: [float(pid) for pid in range(1, 16)], 12: [1.0] * 15}, index=list(range(1, 16))
+        )
+        chips = [{"name": "3xc", "event": 5}]
+        result = my_team.chip_values(
+            rows, points, [11, 12], chips_played=chips,
+            fixture_counts={15: {11: 2}, 14: {12: 0}},
+            free_hit_total=lambda gameweek: {11: 200.0, 12: 5.0}[gameweek],
+        )
+        week = result["gameweeks"][0]
+        # Best XI: GK 12, DEF 5,4,3,13 (or similar), etc. Check against best_lineup.
+        records = [{"id": pid, "element_type": players[pid]["element_type"], "expected_points": float(pid)} for pid in range(1, 16)]
+        from src.team_rating import best_lineup
+        lineup, total = best_lineup(records)
+        bench = sum(float(pid) for pid in range(1, 16)) - total
+        self.assertEqual(week["bboost"], round(bench, 2))
+        self.assertEqual(week["3xc"], 15.0)
+        self.assertEqual(week["base"], round(total + 15.0, 2))
+        self.assertEqual(week["freehit"], round(200.0 - total - 15.0, 2))
+        self.assertEqual((week["doubles"], week["blanks"]), (1, 0))
+        self.assertEqual(result["gameweeks"][1]["blanks"], 1)
+        self.assertEqual(result["gameweeks"][1]["freehit"], 0.0)  # never below zero
+        self.assertFalse(week["available"]["3xc"])  # played in GW5, same half
+        self.assertIsNone(result["best"]["3xc"])
+        self.assertEqual(result["best"]["bboost"], 11)
+
+    def test_fixture_ticker_reads_each_side_of_a_fixture(self):
+        players = make_players()
+        rows = squad_rows(players)[:2]
+        points = pd.DataFrame({11: [2.0, 3.0], 12: [1.0, 0.0]}, index=[1, 2])
+        fixtures = {
+            1: {11: [{"opponent_short": "B", "home": True, "difficulty": 2}],
+                12: [{"opponent_short": "C", "home": False, "difficulty": 4},
+                     {"opponent_short": "D", "home": True, "difficulty": 3}]},
+        }
+        ticker = my_team.fixture_ticker(rows, points, [11, 12], fixtures)
+        first, second = ticker["rows"]
+        self.assertEqual(first["cells"][0]["fixtures"], [{"opponent": "B", "home": True, "difficulty": 2}])
+        self.assertEqual(len(first["cells"][1]["fixtures"]), 2)
+        self.assertEqual(first["total"], 3.0)
+        self.assertEqual(first["difficulty"], 3.0)
+        self.assertEqual(second["cells"][1]["fixtures"], [])  # a blank
+        self.assertIsNone(second["difficulty"])
+        self.assertEqual(ticker["gameweeks"], [11, 12])
+        self.assertEqual(ticker["totals"][0]["best_xi"], None)  # two players field no XI
+        full = my_team.fixture_ticker(squad_rows(players), pd.DataFrame({11: [1.0] * 15}, index=range(1, 16)), [11], {})
+        self.assertEqual(full["totals"][0]["best_xi"], 12.0)
+
+
+def review_payload(captain=6, vice=7, chip=None, subs=(), points=None):
+    return {
+        "gameweek": 11,
+        "active_chip": chip,
+        "automatic_subs": [{"element_in": a, "element_out": b} for a, b in subs],
+        "entry_history": {"points": points, "points_on_bench": 4, "event_transfers_cost": 4},
+        "picks": [
+            {"element": pid, "position": pid, "is_captain": pid == captain, "is_vice_captain": pid == vice}
+            for pid in range(1, 16)
+        ],
+    }
+
+
+class ReviewTests(unittest.TestCase):
+    def setUp(self):
+        self.players = make_players()
+        self.actuals = {pid: {"points": 2.0, "minutes": 90.0} for pid in range(1, 16)}
+        self.actuals[103] = {"points": 9.0, "minutes": 90.0}
+        self.actuals[8] = {"points": 12.0, "minutes": 90.0}
+        self.actuals[6] = {"points": 0.0, "minutes": 0.0}
+
+    def test_captain_bench_autosubs_and_hindsight(self):
+        review = my_team.gameweek_review(
+            review_payload(captain=6, vice=7, subs=[(13, 6)], points=24),
+            self.players, self.actuals,
+        )
+        # P6 missed: P13 came on, P7 wore the armband. 10 starters at 2 + P8 12 + P13 2 + vice 2.
+        self.assertEqual(review["captain"]["armband_id"], 7)
+        self.assertEqual(review["points"]["computed"], 2 * 9 + 12 + 2 + 2)
+        self.assertFalse(review["points"]["matches"])  # the official 24 disagrees
+        self.assertEqual(review["captain"]["best_id"], 8)
+        self.assertEqual(review["captain"]["cost"], 10.0)
+        self.assertEqual(review["bench"]["computed"], 0.0 + 2 + 2 + 2)
+        self.assertEqual(review["autosubs"][0]["in_id"], 13)
+        self.assertGreaterEqual(review["hindsight"]["left_on_table"], 0)
+        self.assertEqual(review["hindsight"]["captain_id"], 8)
+
+    def test_transfers_are_judged_on_the_week_and_since(self):
+        transfers = [{"element_in": 103, "element_out": 14, "element_in_cost": 6.0, "element_out_cost": 5.0}]
+        review = my_team.gameweek_review(
+            review_payload(), self.players, self.actuals, transfers=transfers,
+            since={103: 20.0, 14: 30.0},
+        )
+        item = review["transfers"]["items"][0]
+        self.assertEqual((item["in_points"], item["out_points"], item["delta"]), (9.0, 2.0, 7.0))
+        self.assertEqual(review["transfers"]["net"], 3.0)  # 7 gained, 4 for the hit
+        self.assertEqual(review["transfers"]["since_net"], -14.0)
+        self.assertEqual(review["transfers"]["verdict"], "not yet")
+
+    def test_forecast_comparison_and_chips(self):
+        forecast = {pid: 3.0 for pid in range(1, 16)}
+        review = my_team.gameweek_review(
+            review_payload(captain=8, vice=7, chip="3xc"), self.players, self.actuals,
+            forecast=forecast, finished=False,
+        )
+        self.assertTrue(review["provisional"])
+        self.assertEqual(review["captain"]["multiplier"], 3)
+        self.assertEqual(review["points"]["computed"], 2 * 9 + 0 + 12 * 3)
+        self.assertEqual(review["forecast"]["xi_expected"], 11 * 3.0 + 2 * 3.0)
+        self.assertEqual(review["forecast"]["over"][0]["id"], 8)
+        self.assertEqual(review["forecast"]["under"][0]["id"], 6)
+        boosted = my_team.gameweek_review(review_payload(captain=8, chip="bboost"), self.players, self.actuals)
+        self.assertEqual(boosted["points"]["computed"], 2 * 13 + 0 + 12 * 2)
+        self.assertEqual(boosted["bench"]["computed"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -937,3 +937,344 @@ def selling_effect(purchase: Optional[float], current: Optional[float]) -> Dict[
         "after_rise": selling_price(purchase, round(current + 0.1, 1)),
         "after_fall": selling_price(purchase, round(current - 0.1, 1)),
     }
+
+
+# ----------------------------------------------------------------------
+# Outlook: chip planner and fixture ticker
+# ----------------------------------------------------------------------
+
+
+def _best_week(
+    squad: Sequence[Mapping[str, Any]], points: pd.DataFrame, gameweek: int
+) -> Tuple[List[Dict[str, Any]], Optional[float], Optional[Dict[str, Any]], set]:
+    """The squad's records, best XI total, captain and XI ids for a gameweek.
+
+    The total and captain are None when the squad cannot field a legal XI.
+    """
+    records = [
+        {
+            "id": int(player["id"]),
+            "web_name": player.get("web_name"),
+            "element_type": _position(player),
+            "expected_points": float(points.at[int(player["id"]), gameweek])
+            if int(player["id"]) in points.index
+            else 0.0,
+        }
+        for player in squad
+    ]
+    try:
+        lineup, total = best_lineup(records)
+    except ValueError:
+        return records, None, None, set()
+    captain = max(lineup, key=lambda player: player["expected_points"])
+    return records, total, captain, {player["id"] for player in lineup}
+
+
+def chip_values(
+    squad: Sequence[Mapping[str, Any]],
+    points: pd.DataFrame,
+    gameweeks: Sequence[int],
+    *,
+    chips_played: Sequence[Mapping[str, Any]] = (),
+    fixture_counts: Optional[Mapping[int, Mapping[int, int]]] = None,
+    free_hit_total: Optional[Callable[[int], Optional[float]]] = None,
+) -> Dict[str, Any]:
+    """What each chip would add in each gameweek, for the squad as it stands.
+
+    Bench Boost adds the bench of that week's best lineup, Triple Captain
+    one more captain score, and Free Hit the best one-week squad within the
+    budget minus this squad's best lineup. No further transfers are assumed.
+    """
+    from src.optimizer import chip_status
+
+    fixture_counts = fixture_counts or {}
+    weeks = []
+    for gameweek in gameweeks:
+        records, xi_total, captain, lineup_ids = _best_week(squad, points, int(gameweek))
+        legal = xi_total is not None
+        captain_points = captain["expected_points"] if captain else 0.0
+        base = (xi_total or 0.0) + captain_points
+        bench = sum(player["expected_points"] for player in records if player["id"] not in lineup_ids)
+        free_hit = free_hit_total(int(gameweek)) if free_hit_total and legal else None
+        counts = [int((fixture_counts.get(int(player["id"])) or {}).get(int(gameweek), 1)) for player in squad]
+        status = chip_status(chips_played, int(gameweek))
+        weeks.append(
+            {
+                "gameweek": int(gameweek),
+                "half": status["half"],
+                "base": round(base, 2) if legal else None,
+                "captain_id": captain["id"] if captain else None,
+                "captain_name": captain.get("web_name") if captain else None,
+                "bboost": round(bench, 2) if legal else None,
+                "3xc": round(captain_points, 2) if legal else None,
+                "freehit": round(max(0.0, free_hit - base), 2) if free_hit is not None else None,
+                "freehit_total": round(free_hit, 2) if free_hit is not None else None,
+                "doubles": sum(1 for count in counts if count >= 2),
+                "blanks": sum(1 for count in counts if count == 0),
+                "available": {
+                    chip: bool(value.get("available_this_half"))
+                    for chip, value in status["chips"].items()
+                },
+            }
+        )
+    best: Dict[str, Optional[int]] = {}
+    for chip in ("bboost", "3xc", "freehit"):
+        options = [week for week in weeks if week[chip] is not None and week["available"].get(chip, True)]
+        best[chip] = max(options, key=lambda week: (week[chip], -week["gameweek"]))["gameweek"] if options else None
+    return {"gameweeks": weeks, "best": best, "assumption": "Your squad as it stands, with no further transfers."}
+
+
+def fixture_ticker(
+    squad: Sequence[Mapping[str, Any]],
+    points: pd.DataFrame,
+    gameweeks: Sequence[int],
+    team_fixtures: Mapping[int, Mapping[int, Sequence[Mapping[str, Any]]]],
+) -> Dict[str, Any]:
+    """Each squad player's fixtures and projected points, gameweek by gameweek."""
+    rows = []
+    for player in squad:
+        player_id = int(player["id"])
+        team_id = player.get("team_id")
+        by_week = team_fixtures.get(int(team_id), {}) if team_id is not None else {}
+        cells = []
+        for gameweek in gameweeks:
+            value = float(points.at[player_id, gameweek]) if player_id in points.index else 0.0
+            cells.append(
+                {
+                    "gameweek": int(gameweek),
+                    "fixtures": [
+                        {
+                            "opponent": fixture.get("opponent_short") or fixture.get("opponent"),
+                            "home": fixture.get("home"),
+                            "difficulty": fixture.get("difficulty"),
+                        }
+                        for fixture in by_week.get(int(gameweek), [])
+                    ],
+                    "expected_points": round(value, 2),
+                }
+            )
+        difficulties = [
+            float(fixture["difficulty"])
+            for cell in cells
+            for fixture in cell["fixtures"]
+            if fixture.get("difficulty")
+        ]
+        rows.append(
+            {
+                "id": player_id,
+                "web_name": player.get("web_name"),
+                "team_name": player.get("team_name"),
+                "position": POSITION_SHORT.get(_position(player)),
+                "pick_position": player.get("pick_position"),
+                "cells": cells,
+                "total": round(sum(cell["expected_points"] for cell in cells), 2),
+                "difficulty": round(float(np.mean(difficulties)), 2) if difficulties else None,
+            }
+        )
+    totals = []
+    for gameweek in gameweeks:
+        _, xi_total, captain, _ = _best_week(squad, points, int(gameweek))
+        totals.append(
+            {
+                "gameweek": int(gameweek),
+                "best_xi": round(xi_total + captain["expected_points"], 2)
+                if xi_total is not None and captain
+                else None,
+            }
+        )
+    return {"gameweeks": [int(value) for value in gameweeks], "rows": rows, "totals": totals}
+
+
+# ----------------------------------------------------------------------
+# Gameweek review: how the manager's decisions did
+# ----------------------------------------------------------------------
+
+
+def gameweek_review(
+    picks_payload: Mapping[str, Any],
+    players: Mapping[int, Mapping[str, Any]],
+    actuals: Mapping[int, Mapping[str, float]],
+    *,
+    forecast: Optional[Mapping[int, float]] = None,
+    transfers: Sequence[Mapping[str, Any]] = (),
+    since: Optional[Mapping[int, float]] = None,
+    finished: bool = True,
+) -> Dict[str, Any]:
+    """Captain, bench, lineup and transfers of one gameweek against hindsight."""
+    chip = picks_payload.get("active_chip")
+    picks = sorted(picks_payload.get("picks", []), key=lambda pick: int(pick.get("position") or 0))
+    entry = picks_payload.get("entry_history") or {}
+    multiplier = 3 if chip == "3xc" else 2
+
+    def points_of(player_id: int) -> float:
+        return float(_number((actuals.get(player_id) or {}).get("points"), 0.0))
+
+    def minutes_of(player_id: int) -> float:
+        return float(_number((actuals.get(player_id) or {}).get("minutes"), 0.0))
+
+    def label(player_id: Optional[int]) -> Optional[str]:
+        return None if player_id is None else _name(players.get(player_id), player_id)
+
+    ids = [int(pick["element"]) for pick in picks]
+    starters = [int(pick["element"]) for pick in picks if int(pick.get("position") or 0) <= STARTERS]
+    final = list(ids) if chip == "bboost" else list(starters)
+    subs = []
+    for sub in picks_payload.get("automatic_subs", []) or []:
+        incoming, outgoing = int(sub.get("element_in")), int(sub.get("element_out"))
+        if outgoing in final:
+            final[final.index(outgoing)] = incoming
+        subs.append({"in_id": incoming, "in_name": label(incoming), "out_id": outgoing, "out_name": label(outgoing)})
+    captain = next((int(p["element"]) for p in picks if p.get("is_captain")), None)
+    vice = next((int(p["element"]) for p in picks if p.get("is_vice_captain")), None)
+    armband = None
+    if captain in final and minutes_of(captain) > 0:
+        armband = captain
+    elif vice in final and vice is not None and minutes_of(vice) > 0:
+        armband = vice
+    computed = sum(points_of(pid) for pid in final) + (
+        (multiplier - 1) * points_of(armband) if armband is not None else 0.0
+    )
+    official = _number(entry.get("points"), None)
+    bench_ids = [pid for pid in ids if pid not in final]
+    bench_points = sum(points_of(pid) for pid in bench_ids)
+    played = [pid for pid in final if minutes_of(pid) > 0]
+    best_captain = max(played, key=points_of, default=None)
+    captain_cost = (
+        (multiplier - 1) * (points_of(best_captain) - (points_of(armband) if armband is not None else 0.0))
+        if best_captain is not None
+        else 0.0
+    )
+
+    records = [
+        {"id": pid, "web_name": label(pid), "element_type": _position(players.get(pid, {})), "expected_points": points_of(pid)}
+        for pid in ids
+    ]
+    hindsight = None
+    try:
+        lineup, total = best_lineup(records)
+        top = max(lineup, key=lambda player: player["expected_points"])
+        hindsight_total = total + (multiplier - 1) * top["expected_points"]
+        if chip == "bboost":
+            hindsight_total = sum(points_of(pid) for pid in ids) + (multiplier - 1) * max(points_of(pid) for pid in ids)
+        hindsight = {
+            "total": round(hindsight_total, 1),
+            "starting_ids": [player["id"] for player in lineup],
+            "captain_id": top["id"],
+            "captain_name": top["web_name"],
+            "left_on_table": round(hindsight_total - computed, 1),
+        }
+    except ValueError:
+        pass
+
+    hits = int(_number(entry.get("event_transfers_cost"), 0) or 0)
+    items = []
+    for transfer in transfers:
+        incoming = int(transfer.get("element_in_id", transfer.get("element_in")) or 0)
+        outgoing = int(transfer.get("element_out_id", transfer.get("element_out")) or 0)
+        item = {
+            "in_id": incoming,
+            "in_name": label(incoming),
+            "out_id": outgoing,
+            "out_name": label(outgoing),
+            "in_cost": transfer.get("element_in_cost"),
+            "out_cost": transfer.get("element_out_cost"),
+            "in_points": points_of(incoming),
+            "out_points": points_of(outgoing),
+            "delta": points_of(incoming) - points_of(outgoing),
+            "in_played": incoming in final,
+        }
+        if since is not None and incoming in since and outgoing in since:
+            item["since_delta"] = float(since[incoming]) - float(since[outgoing])
+        items.append(item)
+    net = sum(item["delta"] for item in items) - hits
+    since_net = (
+        sum(item.get("since_delta", item["delta"]) for item in items) - hits if items else None
+    )
+    transfer_summary = {
+        "items": items,
+        "count": len(items),
+        "hits": hits,
+        "net": round(net, 1),
+        "since_net": round(since_net, 1) if since_net is not None else None,
+        "verdict": None if not items else (
+            "paid off" if (since_net if since_net is not None else net) > 0
+            else "not yet" if (since_net if since_net is not None else net) < 0 else "even"
+        ),
+        "free_hit": chip == "freehit",
+    }
+
+    forecast_view: Dict[str, Any] = {"available": forecast is not None}
+    if forecast is not None:
+        rows = []
+        for pid in starters:
+            expected = float(_number(forecast.get(pid), 0.0))
+            rows.append(
+                {
+                    "id": pid,
+                    "web_name": label(pid),
+                    "expected_points": round(expected, 2),
+                    "points": points_of(pid),
+                    "difference": round(points_of(pid) - expected, 2),
+                }
+            )
+        rows.sort(key=lambda row: row["difference"])
+        captain_expected = float(_number(forecast.get(captain), 0.0)) if captain else 0.0
+        forecast_view.update(
+            {
+                "xi_expected": round(sum(row["expected_points"] for row in rows) + (multiplier - 1) * captain_expected, 2),
+                "xi_points": round(sum(row["points"] for row in rows) + (multiplier - 1) * (points_of(captain) if captain else 0.0), 1),
+                "players": rows,
+                "under": rows[:3],
+                "over": list(reversed(rows[-3:])),
+            }
+        )
+    return {
+        "gameweek": picks_payload.get("gameweek"),
+        "finished": bool(finished),
+        "provisional": not finished,
+        "chip": chip,
+        "points": {
+            "official": official,
+            "computed": round(computed, 1),
+            "matches": official is None or abs(float(official) - computed) < 0.5,
+            "hits": hits,
+            "net": round((official if official is not None else computed) - hits, 1),
+        },
+        "bench": {
+            "official": _number(entry.get("points_on_bench"), None),
+            "computed": round(bench_points, 1),
+            "ids": bench_ids,
+        },
+        "captain": {
+            "id": captain,
+            "name": label(captain),
+            "points": points_of(captain) if captain else None,
+            "armband_id": armband,
+            "armband_name": label(armband),
+            "multiplier": multiplier,
+            "best_id": best_captain,
+            "best_name": label(best_captain),
+            "best_points": points_of(best_captain) if best_captain is not None else None,
+            "cost": round(max(0.0, captain_cost), 1),
+        },
+        "autosubs": subs,
+        "hindsight": hindsight,
+        "transfers": transfer_summary,
+        "forecast": forecast_view,
+        "players": [
+            {
+                "id": pid,
+                "web_name": label(pid),
+                "team_name": players.get(pid, {}).get("team_name"),
+                "element_type": _position(players.get(pid, {})),
+                "position": POSITION_SHORT.get(_position(players.get(pid, {}))),
+                "pick_position": index + 1,
+                "points": points_of(pid),
+                "minutes": minutes_of(pid),
+                "in_final_xi": pid in final,
+                "role": "captain" if pid == captain else "vice" if pid == vice else "",
+                "expected_points": round(float(_number(forecast.get(pid), 0.0)), 2) if forecast is not None else None,
+            }
+            for index, pid in enumerate(ids)
+        ],
+    }
