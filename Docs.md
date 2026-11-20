@@ -1,6 +1,6 @@
 # OpenFPL Scout AI Team API
 
-Version: 6.4.0
+Version: 7.0.0
 
 OpenFPL Scout AI Team generates player projections and a positional 15-player squad.
 The public official Fantasy Premier League API remains the authoritative
@@ -269,7 +269,7 @@ forecast made with them is never restored after a restart.
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "6.4.0",
+  "version": "7.0.0",
   "source": "official-fpl+fpl-data",
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",
