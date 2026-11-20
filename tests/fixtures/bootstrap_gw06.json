@@ -1,0 +1,23 @@
+{
+ "events": [
+  {
+   "id": 6,
+   "name": "Gameweek 6",
+   "deadline_time": "2026-10-10T10:00:00Z",
+   "finished": false,
+   "data_checked": false,
+   "average_entry_score": 58,
+   "highest_score": 131
+  },
+  {
+   "id": 7,
+   "name": "Gameweek 7",
+   "deadline_time": "2026-10-17T10:00:00Z",
+   "finished": false,
+   "data_checked": false,
+   "is_next": true,
+   "average_entry_score": 0,
+   "highest_score": null
+  }
+ ]
+}
