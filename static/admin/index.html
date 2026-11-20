@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#0b0410">
+    <title>OpenFPL Control Room</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="stylesheet" href="/static/admin/admin.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- Sign-in gate: the page holds no data until a valid token is entered. -->
+    <section id="login" class="login" hidden>
+        <form id="login-form" class="login-card" autocomplete="off">
+            <img src="/assets/openfpl-predictive-lion-frameless-2026-96.png" alt="" width="56" height="56">
+            <h1>OpenFPL Control Room</h1>
+            <p class="muted">Private owner dashboard. Sign in with one of your <code>VALID_API_KEYS</code> tokens.</p>
+            <label for="login-token">API token</label>
+            <input id="login-token" name="token" type="password" required spellcheck="false" autocapitalize="off" placeholder="Bearer token">
+            <label class="check"><input id="login-remember" type="checkbox"> Remember on this device</label>
+            <button type="submit" class="btn primary">Sign in</button>
+            <p id="login-error" class="error-text" role="alert" hidden></p>
+        </form>
+    </section>
+
+    <div id="app" class="app" hidden>
+        <header class="topbar">
+            <div class="brand">
+                <img src="/assets/openfpl-predictive-lion-frameless-2026-96.png" alt="" width="36" height="36">
+                <div>
+                    <strong>Control Room</strong>
+                    <span id="version-label" class="muted small"></span>
+                </div>
+            </div>
+            <div class="topbar-controls">
+                <label class="gw-picker">
+                    <span class="small muted">Gameweek</span>
+                    <select id="gw-select" aria-label="Gameweek"></select>
+                </label>
+                <div id="deadline" class="deadline small" aria-live="polite"></div>
+                <span id="health-pill" class="pill">Checking…</span>
+                <button id="refresh-button" class="btn ghost" type="button" title="Reload this view">Reload</button>
+                <button id="logout-button" class="btn ghost" type="button">Sign out</button>
+            </div>
+        </header>
+
+        <nav class="tabs" aria-label="Dashboard sections">
+            <button type="button" data-tab="command" class="tab">Command centre</button>
+            <button type="button" data-tab="predictions" class="tab">Predictions</button>
+            <button type="button" data-tab="squad" class="tab">AI squad</button>
+            <button type="button" data-tab="myteam" class="tab">My team</button>
+            <button type="button" data-tab="models" class="tab">Model health</button>
+            <button type="button" data-tab="sandbox" class="tab">What-if</button>
+            <button type="button" data-tab="data" class="tab">FPL data</button>
+            <button type="button" data-tab="health" class="tab">App health</button>
+            <button type="button" data-tab="explorer" class="tab">API explorer</button>
+        </nav>
+
+        <main id="main" class="main" tabindex="-1"></main>
+    </div>
+
+    <aside id="drawer" class="drawer" hidden aria-labelledby="drawer-title" role="dialog" aria-modal="true">
+        <div class="drawer-head">
+            <h2 id="drawer-title">Player</h2>
+            <button type="button" class="btn ghost" id="drawer-close" aria-label="Close">Close</button>
+        </div>
+        <div id="drawer-body" class="drawer-body"></div>
+    </aside>
+    <div id="drawer-backdrop" class="backdrop" hidden></div>
+
+    <dialog id="confirm-dialog" class="dialog">
+        <form method="dialog">
+            <h2 id="confirm-title">Confirm</h2>
+            <p id="confirm-message"></p>
+            <div class="dialog-actions">
+                <button value="cancel" class="btn ghost">Cancel</button>
+                <button value="ok" class="btn danger" id="confirm-ok">Confirm</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="modal" class="dialog wide">
+        <div class="modal-head">
+            <h2 id="modal-title"></h2>
+            <form method="dialog"><button class="btn ghost" value="close">Close</button></form>
+        </div>
+        <div id="modal-body"></div>
+    </dialog>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+    <!-- Offline training metrics from the technical report (window.REPORT). -->
+    <script src="/static/report/data.js" defer></script>
+    <script src="/static/admin/admin.js" defer></script>
+</body>
+</html>

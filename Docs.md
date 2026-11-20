@@ -189,6 +189,47 @@ A double-gameweek player's `opponent_team_name` joins both opponents
 venue; with one home and one away match it is `null` and each opponent carries
 its venue (`"Chelsea (H) / Tottenham (A)"`).
 
+### Owner dashboard (private)
+
+The `/admin` page and the routes below are for the service owner. Every route
+needs a bearer token, sends `Cache-Control: no-store`, and is hidden from the
+OpenAPI schema and `GET /api`. Set `OPENFPL_ADMIN_ENABLED=false` to answer the
+page and every route with 404.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/admin/overview` | Service, process, gameweek, model, cache, archive, request and upstream summary |
+| GET | `/api/admin/models` | Per-model status and feature contract, agreement, feature coverage and enrichment |
+| GET | `/api/admin/predictions` | Every player's projection, each model's projection, the 5-match inputs and the selection decision |
+| GET | `/api/admin/players/{player_id}/explain` | Input effects against a typical player in his position, fixture sensitivity and the selection reasoning |
+| GET | `/api/admin/squad` | The AI squad with the reason for every pick, cut-offs, near misses and the best XI |
+| GET | `/api/admin/accuracy` | Archived forecasts of played gameweeks against official points (`played_only`) |
+| GET | `/api/admin/timeline` | Prediction runs, what changed in the squad and why, and admin actions |
+| GET | `/api/admin/logs` | Recent log records (`level`, `q`, `logger`, `limit`) |
+| GET | `/api/admin/metrics` | Per-route requests and latency, official FPL calls and cache, in-memory state |
+| GET | `/api/admin/archive` | Files the season archive holds per gameweek |
+| GET | `/api/admin/config` | Effective configuration and environment flags (never secrets) |
+| POST | `/api/admin/predictions/recompute` | Predict an open gameweek again now (409 for a frozen one) |
+| POST | `/api/admin/archive/collect` | Collect official results, optionally skipping the cooldown (`force`) |
+| POST | `/api/admin/cache/clear` | Clear the official response, fixture and live forecast caches |
+| POST | `/api/admin/models/{name}` | Set a model's runtime `weight` or `enabled` flag (409 below `minimum_successful_models`) |
+| POST | `/api/admin/models/reset` | Remove every runtime model override |
+| POST | `/api/admin/enrichment` | Turn FPL Data enrichment on or off |
+| POST | `/api/admin/simulate` | Sandbox: re-select the squad with custom weights, locks, exclusions, club limit and availability |
+
+Runtime changes last until the service restarts and are recorded in the
+timeline. Explanations re-run the live ensemble on the rows the models saw:
+in memory for gameweeks this instance predicted, otherwise rebuilt from the
+archived pre-gameweek history (or current official history) with current
+availability, and then marked `approximate`.
+
+Each forecast's `inference` metadata now also records `model_predictions`
+(every model's projection per player, on the served scale) and
+`feature_coverage` (which inputs had data). Both are archived with the
+forecast, so each model's accuracy can be checked once its gameweek is played.
+Runtime model overrides are recorded in the archived model versions, so a
+forecast made with them is never restored after a restart.
+
 ## Response
 
 ```json

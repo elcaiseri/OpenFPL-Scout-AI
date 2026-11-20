@@ -58,7 +58,7 @@ Run the test suite with:
 
 ```bash
 uv run python -m unittest discover -s tests
-node --test tests/frontend_loading.test.cjs
+node --test tests/frontend_loading.test.cjs tests/admin_dashboard.test.cjs
 ```
 
 Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
@@ -182,6 +182,39 @@ way, so the new prediction runs inside a request too. The server never
 predicts outside a request. Temporary read failures retry twice, and
 unavailable player metadata or fixtures do not hide an otherwise valid squad.
 
+## Owner dashboard
+
+`/admin` is a private control room for the service owner. The page holds no
+data: it asks for one of the `VALID_API_KEYS` tokens (kept for the browser
+session, or on the device if you tick *Remember*) and reads everything from
+bearer-protected `/api/admin/*` routes. Those routes are left out of the
+public OpenAPI schema and the `/api` catalog, the page is sent with
+`X-Robots-Tag: noindex`, and `OPENFPL_ADMIN_ENABLED=false` answers both
+with 404.
+
+| Tab | What it shows |
+|---|---|
+| Command centre | Health tiles, the public squad, the AI decision log (every prediction run and what changed in the squad, and why), forecast cache, recent problems and live controls |
+| Predictions | Every player's projection with each model's view, the model spread and the 5-match inputs (minutes, xG, xA, xGI, shots, defensive contribution, FPL xP…), filters, charts and CSV export |
+| AI squad | The pitch, the reason behind every pick, captaincy margins, position cut-offs, near misses and players kept out by the club limit, compared with the official dream team |
+| My team | A public FPL team scored against the AI, every suggested transfer explained side by side, season history, picks, transfers, leagues and cups |
+| Model health | Per-model status, weights and feature contract, model agreement, feature coverage, FPL Data enrichment, and archived forecasts checked against actual points beside the offline training metrics |
+| What-if | A sandbox: re-select the squad with your own model weights, locked or excluded players, club limit and availability, without touching the public site |
+| FPL data | Fixture difficulty, results and fixture stats, live gameweek, players, club strength, dream teams, set pieces, winners and rankings |
+| App health | Per-route request counts and latencies, the official FPL upstream and its cache, logs, the archive and the effective configuration |
+| API explorer | Call any OpenFPL route with your token and inspect the response |
+
+Clicking any player opens an explanation: each input's effect against a
+typical player in his position, the projection's path from that typical
+player, every model's projection, how the projection would change against
+each opponent, his season so far, and why the AI picked him or not.
+
+Live controls (re-predict an open gameweek now, force results collection,
+clear caches, set a model's weight or turn it off, turn FPL Data enrichment
+on or off) ask for confirmation, are logged as warnings and in the decision
+log, and last until the service restarts. A closed gameweek's forecast stays
+frozen: it cannot be predicted again.
+
 ## Models and data
 
 Runtime data flows from official FPL through the shared feature pipeline, model
@@ -279,6 +312,8 @@ uv run python -m scripts.download_fpl_data \
 | `src/scout.py` | Inference, cold start, and squad selection |
 | `src/features.py` | Shared model-inference feature contract |
 | `src/fpl_data_inference.py` | Guarded optional stat enrichment |
+| `src/admin.py`, `src/insights.py`, `src/observability.py` | Owner dashboard API, explanations and accuracy, in-process metrics and logs |
+| `static/admin/` | Owner dashboard |
 | `static/` | Responsive dashboard |
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |

@@ -95,6 +95,10 @@ def _best_benchmark_lineup(
     return best_lineup, best_total
 
 
+# Public name for the dashboard: the best legal XI and its projected total.
+best_lineup = _best_benchmark_lineup
+
+
 def _grade(rating: int) -> str:
     if rating >= 95:
         return "A+"

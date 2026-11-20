@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from threading import RLock
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Deque, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -83,6 +85,17 @@ class OfficialFPLClient:
         self.session = session or self._build_session()
         self._cache: Dict[str, _CacheEntry] = {}
         self._cache_lock = RLock()
+        # Upstream call statistics for the owner dashboard (per instance).
+        self._stats: Dict[str, Any] = {
+            "requests": 0,
+            "cache_hits": 0,
+            "failures": 0,
+            "not_found": 0,
+            "last_success_at": None,
+            "last_error": None,
+            "last_error_at": None,
+        }
+        self._latencies: Deque[Tuple[str, float]] = deque(maxlen=200)
 
     @staticmethod
     def _build_session() -> requests.Session:
@@ -110,9 +123,11 @@ class OfficialFPLClient:
         with self._cache_lock:
             cached = self._cache.get(cache_key)
             if cached is not None and cached.expires_at > now:
+                self._stats["cache_hits"] += 1
                 return cached.value
 
         url = f"{self.base_url}/{cache_key}"
+        started = time.perf_counter()
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
@@ -120,26 +135,134 @@ class OfficialFPLClient:
         except requests.HTTPError as error:
             status_code = getattr(error.response, "status_code", None)
             if status_code == 404:
+                self._record_call(cache_key, started, not_found=True)
                 raise OfficialFPLNotFoundError(
                     f"Official FPL resource was not found: /{cache_key}"
                 ) from error
-            raise OfficialFPLAPIError(
+            failure = OfficialFPLAPIError(
                 f"Official FPL returned HTTP {status_code or 'error'} for "
                 f"/{cache_key}"
-            ) from error
+            )
+            self._record_call(cache_key, started, error=str(failure))
+            raise failure from error
         except (requests.RequestException, ValueError) as error:
             # Retries already ran; record what finally failed (429s, a timeout,
             # a reset connection, invalid JSON) so the warning is actionable.
-            raise OfficialFPLAPIError(
+            failure = OfficialFPLAPIError(
                 f"Official FPL request failed: {url}", cause=_failure_cause(error)
-            ) from error
+            )
+            self._record_call(cache_key, started, error=failure.log_message)
+            raise failure from error
 
+        self._record_call(cache_key, started)
         with self._cache_lock:
             self._cache[cache_key] = _CacheEntry(
                 value=value,
                 expires_at=now + (self.cache_ttl if ttl is None else ttl),
             )
         return value
+
+    @staticmethod
+    def _path_family(cache_key: str) -> str:
+        """Group upstream paths so per-player summaries count as one family."""
+        parts = [part for part in cache_key.split("?")[0].split("/") if part]
+        if not parts:
+            return "/"
+        kept = [part if not part.isdigit() else "{id}" for part in parts]
+        return "/" + "/".join(kept) + "/"
+
+    def _record_call(
+        self,
+        cache_key: str,
+        started: float,
+        *,
+        error: Optional[str] = None,
+        not_found: bool = False,
+    ) -> None:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        stamp = datetime.now(timezone.utc).isoformat()
+        with self._cache_lock:
+            self._stats["requests"] += 1
+            self._latencies.append((self._path_family(cache_key), elapsed_ms))
+            if not_found:
+                self._stats["not_found"] += 1
+            elif error is not None:
+                self._stats["failures"] += 1
+                self._stats["last_error"] = error
+                self._stats["last_error_at"] = stamp
+            else:
+                self._stats["last_success_at"] = stamp
+
+    def stats_snapshot(self) -> Dict[str, Any]:
+        """Upstream request counts, cache hits, failures and latencies."""
+        with self._cache_lock:
+            stats = dict(self._stats)
+            latencies = list(self._latencies)
+        by_family: Dict[str, List[float]] = {}
+        for family, elapsed in latencies:
+            by_family.setdefault(family, []).append(elapsed)
+
+        def summary(values: List[float]) -> Dict[str, Any]:
+            ordered = sorted(values)
+            return {
+                "samples": len(ordered),
+                "avg_ms": round(sum(ordered) / len(ordered), 1),
+                "p95_ms": round(
+                    ordered[min(len(ordered) - 1, int(0.95 * len(ordered)))], 1
+                ),
+                "max_ms": round(ordered[-1], 1),
+            }
+
+        lookups = stats["requests"] + stats["cache_hits"]
+        return {
+            **stats,
+            "cache_hit_rate": round(stats["cache_hits"] / lookups, 4)
+            if lookups
+            else None,
+            "latency": summary([value for _, value in latencies])
+            if latencies
+            else None,
+            "latency_by_endpoint": {
+                family: summary(values)
+                for family, values in sorted(
+                    by_family.items(), key=lambda item: -len(item[1])
+                )
+            },
+            "base_url": self.base_url,
+            "timeout_seconds": self.timeout,
+            "cache_ttl_seconds": self.cache_ttl,
+            "history_cache_ttl_seconds": self.history_cache_ttl,
+        }
+
+    def cache_status(self) -> Dict[str, Any]:
+        """What the response cache holds, grouped by upstream path family."""
+        now = time.monotonic()
+        with self._cache_lock:
+            entries = [
+                (key, entry.expires_at - now) for key, entry in self._cache.items()
+            ]
+        families: Dict[str, Dict[str, Any]] = {}
+        for key, remaining in entries:
+            family = families.setdefault(
+                self._path_family(key),
+                {"entries": 0, "live": 0, "expired": 0, "max_ttl_left_seconds": None},
+            )
+            family["entries"] += 1
+            if remaining > 0:
+                family["live"] += 1
+                best = family["max_ttl_left_seconds"]
+                family["max_ttl_left_seconds"] = round(
+                    remaining if best is None else max(best, remaining), 1
+                )
+            else:
+                family["expired"] += 1
+        return {
+            "entries": len(entries),
+            "live": sum(1 for _, remaining in entries if remaining > 0),
+            "families": dict(
+                sorted(families.items(), key=lambda item: -item[1]["entries"])
+            ),
+        }
 
     def clear_cache(self) -> None:
         with self._cache_lock:

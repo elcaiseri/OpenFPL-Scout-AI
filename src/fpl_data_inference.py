@@ -397,6 +397,56 @@ class FPLDataHistoryProvider:
                 self._condition.notify_all()
         return dataset, origin
 
+    def status(self) -> dict[str, Any]:
+        """The loaded dataset and refresh state, for the owner dashboard."""
+        with self._condition:
+            dataset = self._dataset
+            last_attempt = self._last_attempt_at
+            refreshing = self._refreshing
+            last_error = self._last_error
+            refresh_error = self._last_refresh_error
+        summary = None
+        if dataset is not None:
+            details = asdict(dataset.summary)
+            summary = {
+                key: details[key]
+                for key in (
+                    "bytes",
+                    "rows",
+                    "players",
+                    "min_gameweek",
+                    "max_gameweek",
+                    "latest_observed_gameweek",
+                    "supplied_target_features",
+                    "missing_target_features",
+                )
+                if key in details
+            }
+            summary["sha256"] = str(details.get("sha256", ""))[:16]
+            summary["columns"] = len(details.get("columns", ()))
+        age = None if last_attempt is None else round(self.clock() - last_attempt, 1)
+        return {
+            "season": self.season_value,
+            "loaded": dataset is not None,
+            "dataset": summary,
+            "refreshing": refreshing,
+            "seconds_since_refresh_attempt": age,
+            "refresh_ttl_seconds": self.refresh_ttl_seconds,
+            "next_refresh_in_seconds": None
+            if age is None
+            else round(max(0.0, self.refresh_ttl_seconds - age), 1),
+            "last_error": last_error,
+            "last_refresh_error": refresh_error,
+            "remote_download_allowed": self.remote_download_allowed,
+            "local_only": self.local_only,
+            "local_path": str(self.local_path) if self.local_path else None,
+            "runtime_cache_path": str(self.runtime_cache_path)
+            if self.runtime_cache_path
+            else None,
+            "minimum_match_ratio": self.minimum_match_ratio,
+            "max_gameweek_lag": self.max_gameweek_lag,
+        }
+
     def enrich(
         self, official_history: pd.DataFrame, target_gameweek: int
     ) -> tuple[pd.DataFrame, dict[str, Any]]:
