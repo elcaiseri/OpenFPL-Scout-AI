@@ -197,7 +197,7 @@ with 404.
 | Command centre | Health tiles, the public squad, the AI decision log (every prediction run and what changed in the squad, and why), forecast cache, recent problems and live controls |
 | Predictions | Every player's projection with each model's view, the model spread and the 5-match inputs (minutes, xG, xA, xGI, shots, defensive contribution, FPL xP…), filters, charts and CSV export |
 | AI squad | The pitch, the reason behind every pick, captaincy margins, position cut-offs, near misses and players kept out by the club limit, compared with the official dream team |
-| My team | A public FPL team scored against the AI, every suggested transfer explained side by side, season history, picks, transfers, leagues and cups |
+| My team | A public FPL team on the pitch, scored against the AI, and an optimizer: the best transfers for your free transfers over 1–5 gameweeks (hits included), a Wildcard squad for the next 5 gameweeks, or a Free Hit squad for this one, each move explained side by side. Also season history, picks, transfers, leagues and cups |
 | Model health | Per-model status, weights and feature contract, model agreement, feature coverage, FPL Data enrichment, and archived forecasts checked against actual points beside the offline training metrics |
 | What-if | A sandbox: re-select the squad with your own model weights, locked or excluded players, club limit and availability, without touching the public site |
 | FPL data | Fixture difficulty, results and fixture stats, live gameweek, players, club strength, dream teams, set pieces, winners and rankings |
@@ -208,6 +208,13 @@ Clicking any player opens an explanation: each input's effect against a
 typical player in his position, the projection's path from that typical
 player, every model's projection, how the projection would change against
 each opponent, his season so far, and why the AI picked him or not.
+
+The optimizer finds the provably best squad (scipy's integer-programming
+solver) within the budget, positions and three-per-club rule, maximising each
+gameweek's best XI plus captain. Official FPL does not publish free
+transfers or selling prices, so both are estimated from public history (one
+free transfer a gameweek, at most five banked; FPL's sell-on rule) and can be
+corrected before running. Plans never change the team on FPL.
 
 Live controls (re-predict an open gameweek now, force results collection,
 clear caches, set a model's weight or turn it off, turn FPL Data enrichment

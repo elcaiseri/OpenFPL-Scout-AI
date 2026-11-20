@@ -216,6 +216,20 @@ page and every route with 404.
 | POST | `/api/admin/models/reset` | Remove every runtime model override |
 | POST | `/api/admin/enrichment` | Turn FPL Data enrichment on or off |
 | POST | `/api/admin/simulate` | Sandbox: re-select the squad with custom weights, locks, exclusions, club limit and availability |
+| GET | `/api/admin/managers/{entry_id}/plan-context` | Estimated free transfers (with how), selling prices, bank, budget and chips for planning (409 once the gameweek's deadline has passed) |
+| POST | `/api/admin/optimize` | Plan `transfers` (over `horizon` 1–5 gameweeks, default 3, one plan per transfer count up to `max_transfers`, 4-point hits beyond `free_transfers`), a `wildcard` (5 gameweeks) or a `freehit` (1 gameweek) |
+
+The optimizer maximises each gameweek's best legal XI plus captain (plus a
+tenth of the bench) within the budget, the positional quotas and three per
+club, using scipy's mixed-integer solver. A manager's budget is the bank
+plus the squad's selling value. Free transfers and selling prices are
+estimated from public history: one free transfer a gameweek, at most five
+banked, hits counted from `event_transfers_cost`, Wildcard and Free Hit weeks
+keeping banked transfers; selling prices follow FPL's sell-on rule from the
+latest purchase price outside Free Hit weeks. Both can be overridden. After
+the first planned gameweek doubtful players count as fit, while players
+ruled out stay at zero. Public picks reflect the last deadline, so transfers
+already made for the coming gameweek are not seen.
 
 Runtime changes last until the service restarts and are recorded in the
 timeline. Explanations re-run the live ensemble on the rows the models saw:

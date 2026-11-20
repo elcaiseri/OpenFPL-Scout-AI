@@ -16,7 +16,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,13 +24,14 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src import insights
+from src import insights, optimizer
 from src import auth as auth_module
 from src.auth import verify_api_key
 from src.features import MODEL_FEATURES
 from src.logger import get_logger
 from src.observability import LogBuffer, RequestMetrics, process_snapshot
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
+from src.transfers import currently_available
 
 logger = get_logger(__name__)
 
@@ -934,3 +935,212 @@ def _simulate(request: SimulationRequest) -> Dict[str, Any]:
 @router.post("/simulate", summary="Sandbox: re-select the squad under what-if settings")
 async def admin_simulate(request: SimulationRequest):
     return await _run(_simulate, request)
+
+
+
+# ----------------------------------------------------------------------
+# My team: transfer, Wildcard and Free Hit planning (never changes a team)
+# ----------------------------------------------------------------------
+
+PLAN_CAVEATS = [
+    "Official FPL publishes a squad only after each deadline, so transfers already "
+    "made for the coming gameweek are not included.",
+    "Selling prices and free transfers are estimated from public history; FPL's own "
+    "numbers can differ slightly.",
+    "Prices are today's; price changes over the horizon are not predicted.",
+]
+
+
+def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, Any]:
+    """Everything the optimiser needs about a manager, from public data."""
+    scout = _scout()
+    client = scout.official_client
+    resolved = _resolve_gameweek(scout, gameweek)
+    if not scout.data_archive.gameweek_is_open(client, resolved):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"GW{resolved} is past its deadline, so its transfers are closed; "
+                f"plan from GW{client.next_gameweek()}."
+            ),
+        )
+    manager = client.mapped_manager(entry_id)
+    current_event = manager.get("current_event")
+    picks_gameweek = min(resolved, int(current_event)) if current_event else 0
+    if picks_gameweek < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="This manager has no published squad yet (it appears after the first deadline).",
+        )
+    picks = client.mapped_manager_picks(entry_id, picks_gameweek)
+    history = client.manager_history(entry_id)
+    chips = history.get("chips", []) or []
+    transfers = client.mapped_manager_transfers(entry_id)
+    official = _official_players(scout)
+    started_event = manager.get("started_event")
+
+    squad_ids = [int(pick["element"]) for pick in picks.get("picks", [])]
+    start_prices: Dict[int, Optional[float]] = {}
+    for player_id in squad_ids:
+        try:
+            rows = client.mapped_player_summary(player_id).get("history", [])
+        except Exception:  # A departed player has no summary.
+            rows = []
+        first = next(
+            (
+                row
+                for row in sorted(rows, key=lambda item: item.get("gameweek") or 0)
+                if started_event is None or (row.get("gameweek") or 0) >= int(started_event)
+            ),
+            None,
+        )
+        start_prices[player_id] = first.get("price") if first else None
+    bought = optimizer.purchase_prices(squad_ids, transfers, chips, started_event, start_prices)
+
+    squad = []
+    for pick in picks.get("picks", []):
+        player_id = int(pick["element"])
+        details = official.get(player_id, {})
+        now = details.get("price")
+        purchase = bought[player_id]["price"]
+        squad.append(
+            {
+                "id": player_id,
+                "web_name": details.get("web_name") or (pick.get("player") or {}).get("web_name"),
+                "team_name": details.get("team_name"),
+                "element_type": details.get("element_type"),
+                "position": insights.POSITION_SHORT.get(int(details.get("element_type") or 0), "?"),
+                "pick_position": int(pick.get("position") or 0),
+                "is_captain": bool(pick.get("is_captain")),
+                "is_vice_captain": bool(pick.get("is_vice_captain")),
+                "price": now,
+                "purchase_price": purchase,
+                "purchase_source": bought[player_id]["source"],
+                "selling_price": optimizer.selling_price(purchase, now),
+                "status": details.get("status"),
+                "news": details.get("news") or "",
+                "can_select": details.get("can_select"),
+            }
+        )
+    bank = manager.get("last_deadline_bank")
+    bank = float(bank) if bank is not None else 0.0
+    squad_value = round(sum(float(row["selling_price"] or 0) for row in squad), 1)
+    return {
+        "entry_id": entry_id,
+        "team_name": manager.get("name"),
+        "gameweek": resolved,
+        "picks_gameweek": picks_gameweek,
+        "transfers_open": True,
+        "bank": round(bank, 1),
+        "squad_value": squad_value,
+        "budget": round(bank + squad_value, 1),
+        "squad": sorted(squad, key=lambda row: row["pick_position"]),
+        "free_transfers": optimizer.estimate_free_transfers(
+            history.get("current", []), chips, started_event, resolved
+        ),
+        "chips": optimizer.chip_status(chips, resolved),
+        "caveats": PLAN_CAVEATS,
+    }
+
+
+@router.get(
+    "/managers/{entry_id}/plan-context",
+    summary="Estimated free transfers, selling prices and budget for planning",
+)
+async def admin_plan_context(
+    entry_id: int, gameweek: Optional[int] = Query(None, ge=1, le=38)
+):
+    return await _run(lambda: _json(_manager_plan_context(entry_id, gameweek)))
+
+
+class OptimizeRequest(BaseModel):
+    entry_id: int = Field(..., ge=1)
+    gameweek: Optional[int] = Field(None, ge=1, le=38)
+    mode: Literal["transfers", "wildcard", "freehit"] = "transfers"
+    horizon: Optional[int] = Field(None, ge=1, le=5)
+    free_transfers: Optional[int] = Field(None, ge=0, le=5)
+    bank: Optional[float] = Field(None, ge=0, le=100)
+    max_transfers: Optional[int] = Field(None, ge=0, le=15)
+
+
+HORIZONS = {"wildcard": 5, "freehit": 1}
+
+
+def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
+    scout = _scout()
+    context = _manager_plan_context(request.entry_id, request.gameweek)
+    start = context["gameweek"]
+    horizon = HORIZONS.get(request.mode, request.horizon or 3)
+    gameweeks = [gameweek for gameweek in range(start, start + horizon) if gameweek <= 38]
+
+    def predict(gameweek: int) -> pd.DataFrame:
+        return scout.get_official_predictions(
+            gameweek, collect_results=False, allow_stale=False
+        )
+
+    points, identity, notes = optimizer.horizon_points(predict, gameweeks)
+    official = _official_players(scout)
+    squad_by_id = {row["id"]: row for row in context["squad"]}
+    ids = sorted(set(points.index) | set(squad_by_id))
+    rows = []
+    for player_id in ids:
+        details = official.get(player_id, {})
+        known = identity.loc[player_id] if player_id in identity.index else None
+        element_type = insights.position_code(
+            known["element_type"] if known is not None else details.get("element_type")
+        )
+        if element_type not in optimizer.SQUAD_QUOTAS:
+            continue
+        in_squad = player_id in squad_by_id
+        price = details.get("price")
+        if price is None and not in_squad:
+            continue
+        rows.append(
+            {
+                "id": player_id,
+                "web_name": details.get("web_name") or (known["web_name"] if known is not None else None),
+                "team_name": details.get("team_name") or (known["team_name"] if known is not None else None),
+                "element_type": element_type,
+                "price": price,
+                "cost": squad_by_id[player_id]["selling_price"] if in_squad else price,
+                "buyable": bool(currently_available(details)) if details else False,
+                "availability_factor": None,
+                "news": details.get("news") or "",
+                **{
+                    gameweek: float(points.at[player_id, gameweek])
+                    if player_id in points.index
+                    else 0.0
+                    for gameweek in gameweeks
+                },
+            }
+        )
+    players = pd.DataFrame(rows)
+    players["cost"] = players["cost"].fillna(players["price"]).fillna(0.0)
+    free_transfers = request.free_transfers
+    if free_transfers is None:
+        free_transfers = context["free_transfers"].get("free_transfers")
+    bank = context["bank"] if request.bank is None else float(request.bank)
+    result = optimizer.plan(
+        players,
+        gameweeks,
+        mode=request.mode,
+        current_ids=list(squad_by_id),
+        bank=bank,
+        free_transfers=free_transfers,
+        max_transfers=request.max_transfers,
+    )
+    return _json(
+        {
+            **result,
+            "entry_id": request.entry_id,
+            "start_gameweek": start,
+            "horizon": len(gameweeks),
+            "free_transfers_estimate": context["free_transfers"].get("free_transfers"),
+            "notes": notes + context["caveats"],
+        }
+    )
+
+
+@router.post("/optimize", summary="Plan transfers, a Wildcard or a Free Hit for a manager")
+async def admin_optimize(request: OptimizeRequest):
+    return await _run(_optimize, request)

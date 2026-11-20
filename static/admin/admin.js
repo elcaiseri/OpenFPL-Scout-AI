@@ -1026,6 +1026,46 @@ const ui = {
         return ui.table(items, keys.map((key) => ({ key, label: key.replace(/_/g, " "), num: typeof items[0][key] === "number" })), { pageSize: options.pageSize || 25 });
     },
 
+    /* Split a squad into pitch rows (GK, DEF, MID, FWD starters) and bench, keeping order. */
+    pitchRows(players, startingIds) {
+        const starting = new Set((startingIds || []).map(Number));
+        const rows = { GK: [], DEF: [], MID: [], FWD: [] };
+        const bench = [];
+        (players || []).forEach((player) => {
+            const position = utils.positionName(player.element_type ?? player.position);
+            if (starting.has(Number(player.id)) && rows[position]) rows[position].push(player);
+            else bench.push(player);
+        });
+        return { rows: ["GK", "DEF", "MID", "FWD"].map((position) => rows[position]), bench };
+    },
+
+    /* A pitch of player buttons. options: startingIds, value(player), title(player), onClick(player). */
+    pitch(players, options = {}) {
+        const { rows, bench } = ui.pitchRows(players, options.startingIds);
+        const value = options.value || ((player) => player.expected_points);
+        const card = (player) => {
+            const factor = player.availability_factor;
+            const doubtful = utils.isNumber(factor) && factor < 1;
+            return h("button", {
+                class: `pitch-player${player.new ? " is-new" : ""}`,
+                type: "button",
+                title: options.title ? options.title(player) : player.news || "",
+                onClick: () => (options.onClick ? options.onClick(player) : drawer.open(player.id, player.web_name)),
+            },
+            player.role ? h("span", { class: `badge ${player.role === "vice" ? "vice" : ""}` }, player.role === "captain" ? "C" : "V") : null,
+            player.new ? h("span", { class: "badge new" }, "IN") : null,
+            h("strong", null, player.web_name || `#${player.id}`),
+            h("span", { class: "small muted" }, player.team_name || ""),
+            h("span", { class: "xp" }, `${utils.fmt(value(player), 2)} xP`),
+            doubtful ? h("span", { class: `small ${factor > 0 ? "warn" : "out"}` }, factor > 0 ? `${utils.fmtPct(factor)} fit` : "out") : null,
+            player.projection_missing ? h("span", { class: "small out" }, "no projection") : null,
+            utils.isNumber(player.actual_points) ? h("span", { class: "small" }, `${utils.fmtInt(player.actual_points)} pts`) : null);
+        };
+        return h("div", { class: "pitch" },
+            rows.map((row) => h("div", { class: "pitch-row" }, row.map(card))),
+            h("div", { class: "bench" }, bench.map(card)));
+    },
+
     fdr(value, label) {
         const level = Math.max(1, Math.min(5, Math.round(Number(value) || 3)));
         return h("span", { class: `fdr fdr-${level}`, title: `Fixture difficulty ${value ?? "unknown"}` }, label);
@@ -1983,23 +2023,7 @@ views.squad = {
     pitch(target, squad) {
         clear(target);
         const lineup = squad.lineup || {};
-        const starting = new Set((lineup.starting_ids || []).map(Number));
-        const players = squad.squad || [];
-        const byPosition = { Goalkeeper: [], Defender: [], Midfielder: [], Forward: [] };
-        const bench = [];
-        players.forEach((player) => {
-            if (starting.has(Number(player.id))) (byPosition[player.element_type] || bench).push(player);
-            else bench.push(player);
-        });
-        const card = (player) => h("button", { class: "pitch-player", type: "button", onClick: () => drawer.open(player.id, player.web_name), title: player.decision_reason || "" },
-            player.role ? h("span", { class: `badge ${player.role === "vice" ? "vice" : ""}` }, player.role === "captain" ? "C" : "V") : null,
-            h("strong", null, player.web_name),
-            h("span", { class: "small muted" }, player.team_name),
-            h("span", { class: "xp" }, `${utils.fmt(player.expected_points, 2)} xP`),
-            utils.isNumber(player.actual_points) ? h("span", { class: "small" }, `${utils.fmtInt(player.actual_points)} pts`) : null);
-        const pitch = h("div", { class: "pitch" },
-            ["Goalkeeper", "Defender", "Midfielder", "Forward"].map((position) => h("div", { class: "pitch-row" }, byPosition[position].map(card))),
-            h("div", { class: "bench" }, bench.map(card)));
+        const pitch = ui.pitch(squad.squad || [], { startingIds: lineup.starting_ids, title: (player) => player.decision_reason || "" });
         target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
             `Formation ${lineup.formation || "–"} · XI ${utils.fmt(lineup.starting_points, 2)} + captain = ${utils.fmt(lineup.projected_total, 2)} projected · 15-man total ${utils.fmt(squad.projected_squad_total, 2)}`,
             squad.actual ? ` · actual so far ${utils.fmt(squad.actual.total, 0)} (XI ${utils.fmt(squad.actual.starting_xi, 0)} + captain ${utils.fmt(squad.actual.captain_bonus, 0)})` : ""), pitch);
@@ -2102,13 +2126,18 @@ views.myteam = {
         body.append(grid);
         const profile = ui.card("Manager", `/api/fpl/managers/${entryId}`, { span: 4 });
         const rating = ui.card("AI rating", `/api/scout/team-rating · GW${state.gameweek}`, { span: 8 });
-        const moves = ui.card("Suggested transfers", "Up to three single transfers within your bank, best first");
+        const pitchCard = ui.card("Your squad", `Latest published picks, projected for GW${state.gameweek}`, { span: 6 });
+        const optimizeCard = ui.card("Optimize", "Transfers with your free transfers, or a Wildcard or Free Hit. Plans only: nothing changes on FPL.", { span: 6 });
+        const planCard = ui.card("Optimizer plan", "POST /api/admin/optimize");
+        const moves = ui.card("Suggested transfers", "Quick view: up to three single transfers for this gameweek, best first");
         const squad = ui.card("Your squad against the AI", "Projections for the selected gameweek");
         const picks = ui.card("Published picks", "/api/fpl/managers/{id}/gameweeks/{gw}/picks", { span: 5 });
         const history = ui.card("Season history", "/api/fpl/managers/{id}/history", { span: 7 });
         const transfers = ui.card("Transfer history", "/api/fpl/managers/{id}/transfers", { span: 6 });
         const leagues = ui.card("Leagues and cups", "Classic and head-to-head standings, matches and cup status", { span: 6 });
-        [profile, rating, moves, squad, picks, history, transfers, leagues].forEach((card) => grid.append(card.root));
+        [profile, rating, pitchCard, optimizeCard, planCard, moves, squad, picks, history, transfers, leagues].forEach((card) => grid.append(card.root));
+        clear(planCard.body).append(h("p", { class: "empty" }, "Choose a mode in Optimize and run it."));
+        ui.fill(optimizeCard, (target) => optimizerView.controls(target, entryId, planCard));
 
         const managerPromise = api.get(`/api/fpl/managers/${entryId}`);
         const ratingPromise = api.get("/api/scout/team-rating", { entry_id: entryId, gameweek: state.gameweek }, { timeoutMs: CONFIG.slowTimeoutMs });
@@ -2153,10 +2182,11 @@ views.myteam = {
             if (over.length) target.append(h("p", { class: "notes" }, `Over the club limit: ${over.map(([club, count]) => `${club} (${count})`).join(", ")}. Your next transfer out must come from one of them.`));
             views.myteam.moves(moves.body, result);
             views.myteam.squad(squad.body, result);
+            views.myteam.pitch(pitchCard.body, result);
             ui.fill(picks, (picksTarget) => views.myteam.picks(picksTarget, entryId, result.picks_gameweek));
         }).catch(() => null);
         ratingPromise.catch((error) => {
-            [moves, squad].forEach((card) => clear(card.body).append(ui.errorBox(error)));
+            [moves, squad, pitchCard].forEach((card) => clear(card.body).append(ui.errorBox(error)));
             ui.fill(picks, async (picksTarget) => {
                 const manager = await managerPromise;
                 return views.myteam.picks(picksTarget, entryId, Math.min(state.gameweek, (manager.data || {}).current_event || state.gameweek));
@@ -2313,6 +2343,16 @@ views.myteam = {
         }
     },
 
+    pitch(target, result) {
+        const players = (result.squad || []).slice().sort((a, b) => a.pick_position - b.pick_position);
+        const starting = players.filter((player) => player.pick_position <= 11).map((player) => player.id);
+        const projected = utils.sum(players.map((player) => (player.expected_points || 0) * (player.multiplier || 0)));
+        clear(target).append(
+            h("p", { class: "small secondary", style: { marginTop: 0 } },
+                `Picks from GW${result.picks_gameweek} · projected ${utils.fmt(projected, 2)} with your captain and bench as picked`),
+            ui.pitch(players, { startingIds: starting }));
+    },
+
     squad(target, result) {
         clear(target).append(ui.table(result.squad || [], [
             { key: "pick_position", label: "Slot", num: true },
@@ -2344,6 +2384,183 @@ views.myteam = {
             { key: "player", label: "Player", value: (row) => (row.player || {}).web_name, render: (row) => `${(row.player || {}).web_name || row.element}${row.is_captain ? " (C)" : row.is_vice_captain ? " (V)" : ""}` },
             { key: "multiplier", label: "×", num: true },
         ], { sortKey: "position", sortDir: "asc", footer: false }));
+    },
+};
+
+/* ---------- My team optimizer ---------- */
+const optimizerView = {
+    MODES: {
+        transfers: { label: "Transfers", detail: "Use your free transfers (hits cost 4 points each)" },
+        wildcard: { label: "Wildcard", detail: "Best squad for the next 5 gameweeks within your budget" },
+        freehit: { label: "Free Hit", detail: "Best squad for this gameweek only; your squad returns afterwards" },
+    },
+    mode: "transfers",
+
+    async controls(target, entryId, planCard) {
+        const context = await api.get(`/api/admin/managers/${entryId}/plan-context`, data.gameweekQuery(), { timeoutMs: CONFIG.slowTimeoutMs });
+        clear(target);
+        const estimate = context.free_transfers || {};
+        const estimated = estimate.unlimited ? 15 : estimate.free_transfers ?? 1;
+        const inputs = {
+            free: h("input", { type: "number", min: 0, max: 5, step: 1, value: Math.min(5, estimated), style: { width: "72px" }, "aria-label": "Free transfers", id: "opt-free" }),
+            bank: h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.fmt(context.bank, 1).replace(/,/g, ""), style: { width: "88px" }, "aria-label": "Bank in £m", id: "opt-bank" }),
+            horizon: h("select", { "aria-label": "Gameweeks to plan for", id: "opt-horizon" }, [1, 2, 3, 4, 5].map((value) => h("option", { value, selected: value === 3 ? true : null }, `${value} GW${value > 1 ? "s" : ""}`))),
+            max: h("select", { "aria-label": "Most transfers to consider", id: "opt-max" }, [0, 1, 2, 3, 4, 5, 6, 7, 8].map((value) => h("option", { value, selected: value === Math.min(8, Math.min(5, estimated) + 2) ? true : null }, `${value}`))),
+        };
+        const chips = (context.chips && context.chips.chips) || {};
+        const chipNote = h("p", { class: "small muted", style: { margin: 0 } });
+        const transferOnly = h("div", { class: "row" },
+            h("label", { class: "small row", style: { gap: "6px" } }, "Plan over", inputs.horizon),
+            h("label", { class: "small row", style: { gap: "6px" } }, "Up to", inputs.max, "transfers"));
+        const switcher = h("div", { class: "segmented", role: "tablist", "aria-label": "Optimizer mode" });
+        const description = h("p", { class: "small secondary", style: { margin: 0 } });
+        const renderMode = () => {
+            clear(switcher);
+            Object.entries(optimizerView.MODES).forEach(([key, mode]) => {
+                const label = key === "wildcard" ? `${mode.label} · 5 GWs` : key === "freehit" ? `${mode.label} · GW${context.gameweek}` : mode.label;
+                switcher.append(h("button", {
+                    type: "button", role: "tab", "aria-selected": optimizerView.mode === key ? "true" : "false",
+                    onClick: () => { optimizerView.mode = key; renderMode(); },
+                }, label));
+            });
+            description.textContent = optimizerView.MODES[optimizerView.mode].detail;
+            transferOnly.hidden = optimizerView.mode !== "transfers";
+            const chip = chips[optimizerView.mode];
+            chipNote.textContent = chip && !chip.available_this_half
+                ? `${optimizerView.MODES[optimizerView.mode].label} already played this half (GW${chip.played.join(", GW")}), so this is a what-if.`
+                : chip ? `${optimizerView.MODES[optimizerView.mode].label} looks available this half (${context.chips.half}, estimate).` : "";
+        };
+        renderMode();
+
+        const trail = (estimate.trail || []).map((row) => h("li", null,
+            `GW${row.gameweek}: ${row.note}${row.available !== undefined ? ` (had ${row.available})` : ""} → ${row.available_next} for the next gameweek`));
+        target.append(
+            switcher, description,
+            h("div", { class: "row", style: { marginTop: "10px" } },
+                h("label", { class: "small row", style: { gap: "6px" } }, "Free transfers", inputs.free),
+                chip(estimate.unlimited ? "unlimited before the first deadline" : `estimated ${estimated}`, "aqua"),
+                h("label", { class: "small row", style: { gap: "6px" } }, "Bank £m", inputs.bank)),
+            transferOnly,
+            chipNote,
+            h("div", { class: "btn-row", style: { marginTop: "12px" } },
+                h("button", { class: "btn primary", type: "button", id: "opt-run", onClick: () => optimizerView.run(entryId, inputs, planCard) }, "Optimize")),
+            h("p", { class: "small secondary" }, `Budget £${utils.fmt(context.budget, 1)}m = bank £${utils.fmt(context.bank, 1)}m + squad selling value £${utils.fmt(context.squad_value, 1)}m. Squad from GW${context.picks_gameweek}; planning GW${context.gameweek}.`),
+            h("details", null, h("summary", { class: "small" }, "How free transfers were estimated"),
+                h("p", { class: "small muted" }, estimate.note || ""), h("ul", { class: "small secondary" }, trail)),
+            h("details", null, h("summary", { class: "small" }, "Estimated selling prices"),
+                ui.table(context.squad || [], [
+                    { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, h("span", { class: "sub" }, `${row.team_name || ""} · ${row.position}`)) },
+                    { key: "purchase_price", label: "Bought", num: true, digits: 1, title: "Estimated purchase price" },
+                    { key: "price", label: "Now", num: true, digits: 1 },
+                    { key: "selling_price", label: "Sells for", num: true, digits: 1 },
+                    { key: "purchase_source", label: "From", render: (row) => h("span", { class: "small muted" }, row.purchase_source) },
+                ], { footer: false, sortKey: "selling_price" })),
+            h("ul", { class: "small muted", style: { paddingLeft: "18px", marginBottom: 0 } }, (context.caveats || []).map((line) => h("li", null, line))));
+    },
+
+    async run(entryId, inputs, planCard) {
+        const body = {
+            entry_id: entryId,
+            gameweek: state.gameweek,
+            mode: optimizerView.mode,
+            free_transfers: Math.max(0, Math.min(5, Number(inputs.free.value) || 0)),
+            bank: Math.max(0, Number(inputs.bank.value) || 0),
+        };
+        if (optimizerView.mode === "transfers") {
+            body.horizon = Number(inputs.horizon.value) || 3;
+            body.max_transfers = Number(inputs.max.value);
+        }
+        const label = optimizerView.MODES[optimizerView.mode].label;
+        clear(planCard.body).append(h("p", { class: "muted" }, `${label}: projecting the gameweeks and solving… (the first run of a horizon can take a few seconds)`));
+        await ui.fill(planCard, async (target) => {
+            const result = await api.post("/api/admin/optimize", body, undefined, { timeoutMs: CONFIG.slowTimeoutMs });
+            optimizerView.results(target, result);
+        });
+    },
+
+    gameweekLabel(result) {
+        const gameweeks = result.gameweeks || [];
+        return gameweeks.length > 1 ? `GW${gameweeks[0]}–${gameweeks[gameweeks.length - 1]}` : `GW${gameweeks[0]}`;
+    },
+
+    results(target, result) {
+        clear(target);
+        const holder = h("div", { class: "stack" });
+        if (result.mode === "transfers") {
+            target.append(h("h3", { class: "small muted", style: { margin: "0 0 6px" } },
+                `Options over ${optimizerView.gameweekLabel(result)} with ${result.free_transfers ?? "unlimited"} free transfer${result.free_transfers === 1 ? "" : "s"}: click one to see it`));
+            const options = result.plans.map((plan, index) => ({ ...plan, index }));
+            const table = ui.table(options, [
+                { key: "transfers", label: "Transfers", num: true, render: (row) => h("span", null, row.transfers === 0 ? "0 (roll)" : `${row.transfers}`, row.index === result.best_index ? " " : null, row.index === result.best_index ? chip("best", "lime") : null) },
+                { key: "hits", label: "Hits", num: true, render: (row) => (row.feasible ? (row.hits ? `${row.hits} (−${utils.fmt(row.hit_cost, 0)})` : "0") : "–") },
+                { key: "projected_total", label: "Projected", num: true, digits: 2 },
+                { key: "net_total", label: "After hits", num: true, digits: 2 },
+                { key: "net_gain", label: "Net gain", num: true, render: (row) => (row.feasible ? utils.fmtSigned(row.net_gain, 2) : row.reason) },
+                { key: "bank_after", label: "Bank after", num: true, digits: 1 },
+            ], { footer: false, sort: false, onRowClick: (row) => row.feasible && optimizerView.plan(holder, result, result.plans[row.index]) });
+            target.append(table);
+        }
+        target.append(holder);
+        optimizerView.plan(holder, result, result.plans[result.best_index]);
+        if ((result.notes || []).length) target.append(h("ul", { class: "small muted", style: { paddingLeft: "18px" } }, result.notes.map((note) => h("li", null, note))));
+    },
+
+    plan(holder, result, plan) {
+        clear(holder);
+        const baseline = result.baseline || {};
+        const names = Object.fromEntries((plan.squad || []).map((player) => [player.id, player.web_name]));
+        const label = optimizerView.gameweekLabel(result);
+        const heading = result.mode === "transfers"
+            ? `Showing the ${plan.transfers === 0 ? "roll (no transfer)" : `${plan.transfers}-transfer`} plan${plan.index === result.best_index || result.plans[result.best_index] === plan ? ", the best after hits" : ""}`
+            : `${optimizerView.MODES[result.mode].label} squad for ${label}`;
+        holder.append(h("h3", { style: { margin: "12px 0 0", fontSize: "15px" } }, heading));
+        holder.append(ui.tiles([
+            { label: `Projected, ${label}`, value: utils.fmt(plan.projected_total, 1), detail: `current squad ${utils.fmt(baseline.projected_total, 1)}` },
+            { label: "Net gain", value: utils.fmtSigned(plan.net_gain, 2), detail: plan.hits ? `after ${plan.hits} hit${plan.hits > 1 ? "s" : ""} (−${utils.fmt(plan.hit_cost, 0)})` : "no hits" },
+            { label: result.mode === "transfers" ? "Transfers" : "Players changed", value: `${plan.transfers}`, detail: result.mode === "transfers" ? `${result.free_transfers ?? "unlimited"} free` : "free with the chip" },
+            { label: "Bank after", value: `£${utils.fmt(plan.bank_after, 1)}m`, detail: `budget £${utils.fmt(result.budget, 1)}m` },
+        ]));
+        const moves = plan.moves || [];
+        if (moves.length) {
+            holder.append(h("h3", { class: "small muted", style: { margin: "4px 0 0" } }, `Moves (points over ${label})`));
+            moves.forEach((move) => {
+                const panel = h("div");
+                holder.append(h("div", { class: "card", style: { background: "var(--surface-2)" } },
+                    h("div", { class: "row" },
+                        h("strong", null, `${move.out.web_name} → ${move.in.web_name}`),
+                        chip(move.in.position),
+                        chip(`${utils.fmtSigned(move.gain, 2)} pts`, move.gain >= 0 ? "lime" : ""),
+                        chip(`sell £${utils.fmt(move.out.cost, 1)}m · buy £${utils.fmt(move.in.cost, 1)}m`),
+                        h("span", { class: "spacer" }),
+                        h("button", { class: "btn small", type: "button", onClick: () => views.myteam.explainMove(panel, move) }, "Explain this move")),
+                    h("p", { class: "small secondary", style: { margin: "6px 0 0" } },
+                        `${move.out.web_name} (${move.out.team_name}) ${move.out.points.map((value) => utils.fmt(value, 1)).join(" / ")} → ${move.in.web_name} (${move.in.team_name}) ${move.in.points.map((value) => utils.fmt(value, 1)).join(" / ")} projected per gameweek.`),
+                    panel));
+            });
+        } else {
+            holder.append(h("p", null, statusBadge("good", result.mode === "transfers" ? "Rolling the transfer is the best option." : "Your current squad is already the best within this budget.")));
+        }
+        const first = (plan.lineups || [])[0] || {};
+        const grid = h("div", { class: "split" });
+        const pitchHolder = h("div", null, h("h3", { class: "small muted", style: { margin: "0 0 6px" } }, `Planned squad · GW${first.gameweek} XI, captain ${names[first.captain_id] || "–"}`));
+        grid.append(pitchHolder);
+        const tableHolder = h("div");
+        grid.append(tableHolder);
+        holder.append(grid);
+        pitchHolder.append(ui.pitch(plan.squad || [], { startingIds: first.starting_ids, value: (player) => (player.points || [])[0] }));
+        tableHolder.append(h("h3", { class: "small muted", style: { margin: "0 0 6px" } }, "Each gameweek: best XI, captain and points"));
+        tableHolder.append(ui.table(plan.lineups || [], [
+            { key: "gameweek", label: "GW", num: true },
+            { key: "captain_id", label: "Captain", render: (row) => names[row.captain_id] || "–" },
+            { key: "points", label: "XI + captain", num: true, digits: 2 },
+            { key: "bench_points", label: "Bench", num: true, digits: 2 },
+        ], { footer: false, sortKey: "gameweek", sortDir: "asc" }));
+        tableHolder.append(h("h3", { class: "small muted", style: { margin: "12px 0 6px" } }, "Squad"));
+        tableHolder.append(ui.table(plan.squad || [], [
+            { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, row.new ? " " : null, row.new ? chip("IN", "aqua") : null, h("span", { class: "sub" }, `${row.team_name} · ${row.position}`)) },
+            { key: "cost", label: "£", num: true, digits: 1, title: "Selling price for players you keep, price for new ones" },
+            { key: "total", label: `xP ${label}`, num: true, digits: 2 },
+        ], { footer: false, sortKey: "total", onRowClick: (row) => drawer.open(row.id, row.web_name) }));
     },
 };
 
@@ -3223,6 +3440,8 @@ const ADMIN_ENDPOINTS = [
     { method: "POST", path: "/api/admin/models/reset", summary: "Live: reset model overrides" },
     { method: "POST", path: "/api/admin/enrichment", summary: "Live: FPL Data enrichment on/off", body: { enabled: true } },
     { method: "POST", path: "/api/admin/simulate", summary: "Sandbox simulation", body: { gameweek: null, weights: {}, exclude_ids: [], lock_ids: [], max_per_club: 3, availability_overrides: {} } },
+    { method: "GET", path: "/api/admin/managers/{entry_id}/plan-context", summary: "Free transfers, selling prices and budget (estimates)", query: ["gameweek"] },
+    { method: "POST", path: "/api/admin/optimize", summary: "Plan transfers, a Wildcard or a Free Hit", body: { entry_id: 1, gameweek: null, mode: "transfers", horizon: 3, free_transfers: null, bank: null, max_transfers: null } },
 ];
 
 views.explorer = {
@@ -3356,7 +3575,7 @@ views.explorer = {
 /* Bootstrap                                                           */
 /* ------------------------------------------------------------------ */
 
-const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, drawer, h, s, clear };
+const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, optimizerView, drawer, h, s, clear };
 if (typeof window !== "undefined") window.OpenFPLAdmin = OpenFPLAdmin;
 if (typeof document !== "undefined" && typeof document.addEventListener === "function" && document.getElementById && document.getElementById("app")) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => app.start());

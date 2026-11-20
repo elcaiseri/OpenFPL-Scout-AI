@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ from src.data_archive import DataArchive
 from src.features import MODEL_FEATURES
 from src.official_fpl import OfficialFPLClient
 from src.scout import FPLScout
-from tests.test_frozen_forecasts import BEFORE_GW3_DEADLINE, FakeFPL
+from tests.test_frozen_forecasts import BEFORE_GW3_DEADLINE, FakeFPL, FakeResponse
 
 TOKEN = "dashboard-token"
 
@@ -298,3 +299,132 @@ class AdminApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManagerFPL(FakeFPL):
+    """FakeFPL plus one public manager (entry 77) who picked a legal squad."""
+
+    ENTRY = 77
+
+    def __init__(self):
+        super().__init__()
+        clubs = Counter()
+        quotas = {1: 2, 2: 5, 3: 5, 4: 3}
+        self.squad = []
+        for player in self.elements:
+            position = player["element_type"]
+            if quotas[position] and clubs[player["team"]] < 3:
+                self.squad.append(player["id"])
+                quotas[position] -= 1
+                clubs[player["team"]] += 1
+        self.bought = self.squad[3]
+
+    def manager_payloads(self):
+        entry = self.ENTRY
+        return {
+            f"entry/{entry}/": {
+                "id": entry, "name": "Test XI", "player_first_name": "Test",
+                "player_last_name": "Manager", "current_event": 2, "started_event": 1,
+                "last_deadline_bank": 15, "last_deadline_value": 750, "favourite_team": None,
+                "leagues": {"classic": [], "h2h": []},
+            },
+            f"entry/{entry}/history/": {
+                "current": [
+                    {"event": 1, "event_transfers": 0, "event_transfers_cost": 0},
+                    {"event": 2, "event_transfers": 1, "event_transfers_cost": 0},
+                ],
+                "chips": [], "past": [],
+            },
+            f"entry/{entry}/transfers/": [
+                {"element_in": self.bought, "element_in_cost": 45, "element_out": 90,
+                 "element_out_cost": 50, "event": 2, "time": "2026-08-21T10:00:00Z"},
+            ],
+            f"entry/{entry}/event/2/picks/": {
+                "active_chip": None, "automatic_subs": [], "entry_history": {"event": 2, "bank": 15},
+                "picks": [
+                    {"element": player_id, "position": index + 1, "multiplier": 2 if index == 0 else 1 if index < 11 else 0,
+                     "is_captain": index == 0, "is_vice_captain": index == 1}
+                    for index, player_id in enumerate(self.squad)
+                ],
+            },
+        }
+
+    def get(self, url, timeout):
+        path = url.split("/api/", 1)[1]
+        payloads = self.manager_payloads()
+        if path in payloads:
+            return FakeResponse(json.loads(json.dumps(payloads[path])))
+        return super().get(url, timeout)
+
+
+class OptimizerApiTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.now = [BEFORE_GW3_DEADLINE]
+        self.fpl = ManagerFPL()
+        self.client = OfficialFPLClient(session=self.fpl)
+        archive = DataArchive(Path(directory.name), configured_season="2026-2027", clock=lambda: self.now[0])
+        models = {"goals": GoalsModel(3.0), "steady": GoalsModel(2.0)}
+        self.scout = FPLScout(
+            {
+                "inference": {"minimum_successful_models": 1},
+                "fpl_data_inference": {"enabled": False},
+                "models": {name: {"path": name} for name in models},
+            },
+            model_loader=models.__getitem__,
+            official_client=self.client,
+            data_archive=archive,
+        )
+        for patcher in (
+            patch("main.scout", self.scout, create=True),
+            patch("src.auth.VALID_API_KEYS", {TOKEN}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_plan_routes_are_private(self):
+        for path in ("/api/admin/managers/{entry_id}/plan-context", "/api/admin/optimize"):
+            route = next(item for item in admin_routes() if item.path == path)
+            self.assertTrue(_uses_bearer_auth(route.dependant))
+        self.assertNotIn("/api/admin/optimize", app.openapi()["paths"])
+
+    def test_plan_context_estimates_transfers_prices_and_budget(self):
+        status, _, context = request("GET", "/api/admin/managers/77/plan-context?gameweek=3")
+        self.assertEqual(status, 200, context)
+        self.assertEqual(context["picks_gameweek"], 2)
+        self.assertEqual(context["free_transfers"]["free_transfers"], 1)
+        self.assertEqual(context["bank"], 1.5)
+        bought = next(row for row in context["squad"] if row["id"] == self.fpl.bought)
+        # Bought at 4.5, now 5.0: sells for 4.5 + half of the 0.5 rise, rounded down.
+        self.assertEqual((bought["purchase_price"], bought["selling_price"]), (4.5, 4.7))
+        self.assertAlmostEqual(context["budget"], 1.5 + 14 * 5.0 + 4.7, places=6)
+        self.assertEqual(len(context["squad"]), 15)
+
+    def test_every_mode_returns_a_legal_plan(self):
+        for mode, horizon in (("transfers", 2), ("freehit", None), ("wildcard", None)):
+            body = {"entry_id": 77, "gameweek": 3, "mode": mode}
+            if horizon:
+                body.update(horizon=horizon, max_transfers=2)
+            status, _, result = request("POST", "/api/admin/optimize", body=body)
+            self.assertEqual(status, 200, (mode, result))
+            expected = {"transfers": [3, 4], "freehit": [3], "wildcard": [3, 4, 5, 6, 7]}[mode]
+            self.assertEqual(result["gameweeks"], expected)
+            plan = result["plans"][result["best_index"]]
+            squad = plan["squad"]
+            self.assertEqual(Counter(player["position"] for player in squad), Counter({"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}))
+            self.assertLessEqual(max(Counter(player["team_name"] for player in squad).values()), 3)
+            self.assertLessEqual(plan["spent"], result["budget"] + 1e-9)
+            if mode == "transfers":
+                self.assertEqual([item["transfers"] for item in result["plans"]], [0, 1, 2])
+                self.assertEqual(result["plans"][2]["hits"], 1)
+            if mode == "wildcard":
+                # FakeFPL publishes fixtures up to GW4 only.
+                self.assertTrue(any("GW5" in note for note in result["notes"]))
+
+    def test_closed_gameweeks_cannot_be_planned(self):
+        self.now[0] = self.now[0].replace(day=30)
+        status, _, data = request("GET", "/api/admin/managers/77/plan-context?gameweek=3")
+        self.assertEqual(status, 409, data)
+        status, _, data = request("POST", "/api/admin/optimize", body={"entry_id": 77, "gameweek": 3})
+        self.assertEqual(status, 409, data)

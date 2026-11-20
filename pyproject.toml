@@ -16,6 +16,9 @@ dependencies = [
     "pydantic>=2.6.2",
     "python-dotenv>=1.0.0",
     "aiofiles>=23.1.0",
+    # Squad optimisation (scipy.optimize.milp). Already in the image through
+    # scikit-learn, which the trained models need.
+    "scipy>=1.9",
 ]
 
 [dependency-groups]

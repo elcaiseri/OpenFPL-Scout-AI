@@ -419,3 +419,17 @@ pre.code { white-space: pre-wrap; word-break: break-all; }
 .btn.endpoint { display: grid; gap: 2px; width: 100%; text-align: left; white-space: normal; border-radius: 8px; overflow-wrap: anywhere; }
 .btn.endpoint .sub { display: block; color: var(--muted); font-weight: 400; }
 .slider-row > span:first-child, .slider-row > button:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Optimizer */
+.segmented { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 999px; background: var(--ink-900); border: 1px solid var(--line); margin-bottom: 8px; }
+.segmented button { appearance: none; border: 0; background: transparent; color: var(--text-2); padding: 6px 12px; border-radius: 999px; font: 600 13px var(--font); cursor: pointer; }
+.segmented button:hover { color: var(--text); background: var(--surface-2); }
+.segmented button[aria-selected=true] { background: var(--lime); color: #12051a; }
+.pitch-player .badge.new { background: var(--aqua); color: #04121a; }
+.pitch-player.is-new { outline: 1px solid var(--aqua); }
+.pitch-player .warn { color: #ffd166; }
+.pitch-player .out { color: #ff8f8f; }
+details > summary { cursor: pointer; color: var(--text-2); margin: 8px 0 4px; }
+@media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}

@@ -155,3 +155,17 @@ test('service health only degrades on server errors, not rejected requests', () 
     assert.equal(app.healthOf({ ...base, last_inference: { failed_models: { mlp: 'boom' } } }).kind, 'warning');
     assert.equal(app.healthOf({ ...base, models: { enabled: 2, minimum_successful: 3 } }).kind, 'critical');
 });
+
+test('pitch rows group starters by position and keep the bench order', () => {
+    const { ui } = loadAdmin(async () => response({}));
+    const players = [
+        { id: 1, element_type: 1 }, { id: 2, element_type: 'Defender' }, { id: 3, element_type: 'Defender' },
+        { id: 4, element_type: 2 }, { id: 5, position: 'MID' }, { id: 6, element_type: 3 }, { id: 7, element_type: 3 },
+        { id: 8, element_type: 3 }, { id: 9, element_type: 4 }, { id: 10, element_type: 4 }, { id: 11, element_type: 3 },
+        { id: 14, element_type: 2 }, { id: 12, element_type: 1 }, { id: 15, element_type: 4 }, { id: 13, element_type: 3 }
+    ];
+    const { rows, bench } = ui.pitchRows(players, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    const plain = value => JSON.parse(JSON.stringify(value));
+    assert.deepEqual(plain(rows.map(row => row.map(player => player.id))), [[1], [2, 3, 4], [5, 6, 7, 8, 11], [9, 10]]);
+    assert.deepEqual(plain(bench.map(player => player.id)), [14, 12, 15, 13]);
+});
