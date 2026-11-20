@@ -217,7 +217,10 @@ page and every route with 404.
 | POST | `/api/admin/enrichment` | Turn FPL Data enrichment on or off |
 | POST | `/api/admin/simulate` | Sandbox: re-select the squad with custom weights, locks, exclusions, club limit and availability |
 | GET | `/api/admin/managers/{entry_id}/plan-context` | Estimated free transfers (with how), selling prices, bank, budget and chips for planning (409 once the gameweek's deadline has passed) |
-| POST | `/api/admin/optimize` | Plan `transfers` (over `horizon` 1–5 gameweeks, default 3, one plan per transfer count up to `max_transfers`, 4-point hits beyond `free_transfers`), a `wildcard` (5 gameweeks) or a `freehit` (1 gameweek) |
+| POST | `/api/admin/optimize` | Plan `transfers` (over `horizon` 1–5 gameweeks, default 3, one plan per transfer count up to `max_transfers`, 4-point hits beyond `free_transfers`), a `wildcard` (5 gameweeks) or a `freehit` (1 gameweek), from the published squad or a `draft`, honouring `overrides` (locks, bans, own availability and xP) |
+| POST | `/api/admin/managers/{entry_id}/team` | A manager's working squad (`draft`: picks, chip, free transfers, bank override, purchase prices) and `overrides`: the working and published ratings, rule checks, transfers, bank and hits, expected points with autosubs, lineup and bench advice, captaincy options, transfer suggestions, and news and price pressure per player. A draft needs an open gameweek (409 otherwise) |
+| POST | `/api/admin/managers/{entry_id}/outlook` | For the next `horizon` gameweeks (1–8, default 5): the squad's fixtures, difficulty and projected points, and what Bench Boost, Triple Captain and Free Hit would add each week, with the best available week |
+| GET | `/api/admin/managers/{entry_id}/review` | A played `gameweek` (default the latest): points, captain against the best captain in hindsight, bench, the best XI in hindsight, transfers that week and since (with hits), and the archived forecast against actual points |
 
 The optimizer maximises each gameweek's best legal XI plus captain (plus a
 tenth of the bench) within the budget, the positional quotas and three per
@@ -229,7 +232,22 @@ keeping banked transfers; selling prices follow FPL's sell-on rule from the
 latest purchase price outside Free Hit weeks. Both can be overridden. After
 the first planned gameweek doubtful players count as fit, while players
 ruled out stay at zero. Public picks reflect the last deadline, so transfers
-already made for the coming gameweek are not seen.
+already made for the coming gameweek are not seen unless the manager adds
+them as a working squad.
+
+The working squad and personal overrides are kept in the owner's browser
+(localStorage) and sent with each request; the server stores neither. Incoming
+players are bought at today's price and outgoing ones sold at their estimated
+selling price; hits are counted beyond the free transfers unless a Wildcard
+or Free Hit is set. An own availability replaces FPL's chance of playing (a
+player ruled out is re-projected as fit with the sandbox) and applies to every
+planned gameweek; an own xP % scales the projection. Expected points with
+autosubs treat each player's availability as his chance of playing (zero
+without a fixture), bring bench players on in order when the formation stays
+legal, and pass the armband to the vice; the result is exact over up to ten
+uncertain players and sampled with a fixed seed beyond that. Price pressure is
+net transfers this gameweek as a share of estimated owners (a heuristic:
+FPL's price algorithm is not public).
 
 Runtime changes last until the service restarts and are recorded in the
 timeline. Explanations re-run the live ensemble on the rows the models saw:
