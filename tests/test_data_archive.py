@@ -604,3 +604,33 @@ class DataArchiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardArchiveHelperTests(unittest.TestCase):
+    """Read helpers and the forced results collection used by the dashboard."""
+
+    def test_forced_collection_skips_the_cooldown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = FakeOfficialClient()
+            archive = DataArchive(Path(directory), configured_season="2026-2027")
+            self.assertEqual(archive.collect_results(client)["status"], "saved")
+            self.assertEqual(archive.collect_results(client)["status"], "throttled")
+            self.assertEqual(archive.collect_results(client, force=True)["status"], "saved")
+
+    def test_archived_history_restores_capture_time_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = FakeOfficialClient()
+            archive = DataArchive(Path(directory), configured_season="2026-2027")
+            target = Path(directory) / "2026-2027" / "enriched" / "history" / "before_gw_03.csv"
+            target.parent.mkdir(parents=True)
+            pd.DataFrame(
+                {"id": [1], "gameweek": [3], "selected_by_percent": [None], "selected_by_percent_at_capture": [12.5]}
+            ).to_csv(target, index=False)
+
+            history = archive.archived_history(client, 3)
+
+            self.assertEqual(float(history["selected_by_percent"].iloc[0]), 12.5)
+            self.assertIsNone(archive.archived_history(client, 2))
+            inventory = archive.inventory(client)
+            self.assertEqual(inventory["season"], "2026-2027")
+            self.assertEqual([item["gameweek"] for item in inventory["gameweeks"]], [3])

@@ -1,6 +1,6 @@
 # OpenFPL Scout AI Team API
 
-Version: 6.4.0
+Version: 7.0.0
 
 OpenFPL Scout AI Team generates player projections and a positional 15-player squad.
 The public official Fantasy Premier League API remains the authoritative
@@ -189,6 +189,79 @@ A double-gameweek player's `opponent_team_name` joins both opponents
 venue; with one home and one away match it is `null` and each opponent carries
 its venue (`"Chelsea (H) / Tottenham (A)"`).
 
+### Owner dashboard (private)
+
+The `/admin` page and the routes below are for the service owner. Every route
+needs a bearer token, sends `Cache-Control: no-store`, and is hidden from the
+OpenAPI schema and `GET /api`. Set `OPENFPL_ADMIN_ENABLED=false` to answer the
+page and every route with 404.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/admin/overview` | Service, process, gameweek, model, cache, archive, request and upstream summary |
+| GET | `/api/admin/models` | Per-model status and feature contract, agreement, feature coverage and enrichment |
+| GET | `/api/admin/predictions` | Every player's projection, each model's projection, the 5-match inputs and the selection decision |
+| GET | `/api/admin/players/{player_id}/explain` | Input effects against a typical player in his position, fixture sensitivity and the selection reasoning |
+| GET | `/api/admin/squad` | The AI squad with the reason for every pick, cut-offs, near misses and the best XI |
+| GET | `/api/admin/accuracy` | Archived forecasts of played gameweeks against official points (`played_only`) |
+| GET | `/api/admin/timeline` | Prediction runs, what changed in the squad and why, and admin actions |
+| GET | `/api/admin/logs` | Recent log records (`level`, `q`, `logger`, `limit`) |
+| GET | `/api/admin/metrics` | Per-route requests and latency, official FPL calls and cache, in-memory state |
+| GET | `/api/admin/archive` | Files the season archive holds per gameweek |
+| GET | `/api/admin/config` | Effective configuration and environment flags (never secrets) |
+| POST | `/api/admin/predictions/recompute` | Predict an open gameweek again now (409 for a frozen one) |
+| POST | `/api/admin/archive/collect` | Collect official results, optionally skipping the cooldown (`force`) |
+| POST | `/api/admin/cache/clear` | Clear the official response, fixture and live forecast caches |
+| POST | `/api/admin/models/{name}` | Set a model's runtime `weight` or `enabled` flag (409 below `minimum_successful_models`) |
+| POST | `/api/admin/models/reset` | Remove every runtime model override |
+| POST | `/api/admin/enrichment` | Turn FPL Data enrichment on or off |
+| POST | `/api/admin/simulate` | Sandbox: re-select the squad with custom weights, locks, exclusions, club limit and availability |
+| GET | `/api/admin/managers/{entry_id}/plan-context` | Estimated free transfers (with how), selling prices, bank, budget and chips for planning (409 once the gameweek's deadline has passed) |
+| POST | `/api/admin/optimize` | Plan `transfers` (over `horizon` 1–5 gameweeks, default 3, one plan per transfer count up to `max_transfers`, 4-point hits beyond `free_transfers`), a `wildcard` (5 gameweeks) or a `freehit` (1 gameweek), from the published squad or a `draft`, honouring `overrides` (locks, bans, own availability and xP) |
+| POST | `/api/admin/managers/{entry_id}/team` | A manager's working squad (`draft`: picks, chip, free transfers, bank override, purchase prices) and `overrides`: the working and published ratings, rule checks, transfers, bank and hits, expected points with autosubs, lineup and bench advice, captaincy options, transfer suggestions, and news and price pressure per player. A draft needs an open gameweek (409 otherwise) |
+| POST | `/api/admin/managers/{entry_id}/outlook` | For the next `horizon` gameweeks (1–8, default 5): the squad's fixtures, difficulty and projected points, and what Bench Boost, Triple Captain and Free Hit would add each week, with the best available week |
+| GET | `/api/admin/managers/{entry_id}/review` | A played `gameweek` (default the latest): points, captain against the best captain in hindsight, bench, the best XI in hindsight, transfers that week and since (with hits), and the archived forecast against actual points |
+
+The optimizer maximises each gameweek's best legal XI plus captain (plus a
+tenth of the bench) within the budget, the positional quotas and three per
+club, using scipy's mixed-integer solver. A manager's budget is the bank
+plus the squad's selling value. Free transfers and selling prices are
+estimated from public history: one free transfer a gameweek, at most five
+banked, hits counted from `event_transfers_cost`, Wildcard and Free Hit weeks
+keeping banked transfers; selling prices follow FPL's sell-on rule from the
+latest purchase price outside Free Hit weeks. Both can be overridden. After
+the first planned gameweek doubtful players count as fit, while players
+ruled out stay at zero. Public picks reflect the last deadline, so transfers
+already made for the coming gameweek are not seen unless the manager adds
+them as a working squad.
+
+The working squad and personal overrides are kept in the owner's browser
+(localStorage) and sent with each request; the server stores neither. Incoming
+players are bought at today's price and outgoing ones sold at their estimated
+selling price; hits are counted beyond the free transfers unless a Wildcard
+or Free Hit is set. An own availability replaces FPL's chance of playing (a
+player ruled out is re-projected as fit with the sandbox) and applies to every
+planned gameweek; an own xP % scales the projection. Expected points with
+autosubs treat each player's availability as his chance of playing (zero
+without a fixture), bring bench players on in order when the formation stays
+legal, and pass the armband to the vice; the result is exact over up to ten
+uncertain players and sampled with a fixed seed beyond that. Price pressure is
+net transfers this gameweek as a share of estimated owners (a heuristic:
+FPL's price algorithm is not public).
+
+Runtime changes last until the service restarts and are recorded in the
+timeline. Explanations re-run the live ensemble on the rows the models saw:
+in memory for gameweeks this instance predicted, otherwise rebuilt from the
+archived pre-gameweek history (or current official history) with current
+availability, and then marked `approximate`.
+
+Each forecast's `inference` metadata now also records `model_predictions`
+(every model's projection per player, on the served scale) and
+`feature_coverage` (which inputs had data). Both are archived with the
+forecast, so each model's accuracy can be checked once its gameweek is played.
+Runtime model overrides are recorded in the archived model versions, so a
+forecast made with them is never restored after a restart.
+
 ## Response
 
 ```json
@@ -196,7 +269,7 @@ its venue (`"Chelsea (H) / Tottenham (A)"`).
   "scout_team": [],
   "player_points": [],
   "gameweek": 1,
-  "version": "6.4.0",
+  "version": "7.0.0",
   "source": "official-fpl+fpl-data",
   "frozen": true,
   "forecast_captured_at": "2026-08-29T09:58:12+00:00",

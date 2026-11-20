@@ -6,12 +6,13 @@ import copy
 import os
 import re
 import time
+from collections import OrderedDict, deque
 from concurrent.futures import Future
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set, Tuple
 
 import joblib
 import numpy as np
@@ -148,6 +149,43 @@ class _LiveForecast:
     stale_until: float
 
 
+@dataclass
+class ModelInputs:
+    """The exact rows a gameweek's models saw, kept for explanations.
+
+    ``players`` has one row per player: identity, the 5-match feature
+    averages, fixture context (``_fixtures``) and availability.
+    ``fixture_rows`` has one row per fixture played and ``model_input`` is
+    those rows in the model's feature order. ``approximate`` is set when the
+    rows were rebuilt later, with current rather than historical
+    availability.
+    """
+
+    gameweek: int
+    players: pd.DataFrame
+    fixture_rows: pd.DataFrame
+    model_input: pd.DataFrame
+    built_at: str
+    origin: str
+    approximate: bool = False
+    feature_coverage: Dict[str, List[str]] = field(default_factory=dict)
+
+
+@dataclass
+class ModelRun:
+    """Every configured model's raw predictions for some feature rows."""
+
+    matrix: np.ndarray
+    names: List[str]
+    weights: List[float]
+    failures: Dict[str, str]
+    disabled: List[str]
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _copy_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
     """A copy a request may change without touching the cached forecast."""
     copied = predictions.copy()
@@ -238,6 +276,9 @@ class FPLScout:
                 "inference.prediction_cache_ttl_seconds"
             )
         self._live_forecasts: Dict[int, _LiveForecast] = {}
+        # The forecast an availability change dropped, kept until the next
+        # prediction of that gameweek so the decision log can diff them.
+        self._previous_forecasts: Dict[int, pd.DataFrame] = {}
         # A prediction under way, which other requests for its gameweek wait
         # for. It always runs in the thread of the request that started it.
         self._pending_forecasts: Dict[int, Future] = {}
@@ -281,6 +322,7 @@ class FPLScout:
         self.fpl_data_start_gameweek = int(fpl_data_config.get("start_gameweek", 2))
         if self.fpl_data_start_gameweek < 2:
             raise ValueError("fpl_data_inference.start_gameweek must be at least 2")
+        self._fpl_data_config = dict(fpl_data_config)
         self.fpl_data_provider = fpl_data_provider
         self.data_archive = data_archive or DataArchive.from_config(self.config)
         self.last_data_enrichment: Dict[str, Any] = {
@@ -288,24 +330,17 @@ class FPLScout:
             "status": "not-attempted",
         }
         if self.fpl_data_enabled and self.fpl_data_provider is None:
-            self.fpl_data_provider = FPLDataHistoryProvider(
-                season_value=self.fpl_data_season,
-                local_path=_mounted_data_path(fpl_data_config.get("local_path")),
-                runtime_cache_path=_mounted_data_path(
-                    fpl_data_config.get("runtime_cache_path")
-                ),
-                refresh_ttl_seconds=int(
-                    fpl_data_config.get("refresh_ttl_seconds", 21600)
-                ),
-                minimum_match_ratio=float(
-                    fpl_data_config.get("minimum_match_ratio", 0.8)
-                ),
-                max_gameweek_lag=int(fpl_data_config.get("max_gameweek_lag", 1)),
-                timeout_seconds=float(fpl_data_config.get("timeout_seconds", 60)),
-                permission_status=self.fpl_data_permission_status,
-                acknowledge_permission_pending=self.fpl_data_permission_acknowledged,
-                local_only=self.fpl_data_local_only,
-            )
+            self.fpl_data_provider = self._build_fpl_data_provider()
+
+        # Owner-dashboard state. Runtime overrides last until restart; the
+        # decision log and model inputs live in memory on this instance.
+        self.weight_overrides: Dict[str, float] = {}
+        self.disabled_models: Set[str] = set()
+        self._model_inputs: "OrderedDict[int, ModelInputs]" = OrderedDict()
+        self.model_inputs_capacity = 4
+        self.forecast_events: Deque[Dict[str, Any]] = deque(maxlen=200)
+        self._repredict_reasons: Dict[int, str] = {}
+        self.last_inference: Optional[Dict[str, Any]] = None
 
         if self.history_window < 1:
             raise ValueError("inference.history_window must be at least 1")
@@ -342,6 +377,23 @@ class FPLScout:
                 if getattr(self.fpl_data_provider, "remote_download_allowed", False)
                 else "disabled (local imports only)",
             )
+
+    def _build_fpl_data_provider(self) -> FPLDataHistoryProvider:
+        fpl_data_config = self._fpl_data_config
+        return FPLDataHistoryProvider(
+            season_value=self.fpl_data_season,
+            local_path=_mounted_data_path(fpl_data_config.get("local_path")),
+            runtime_cache_path=_mounted_data_path(
+                fpl_data_config.get("runtime_cache_path")
+            ),
+            refresh_ttl_seconds=int(fpl_data_config.get("refresh_ttl_seconds", 21600)),
+            minimum_match_ratio=float(fpl_data_config.get("minimum_match_ratio", 0.8)),
+            max_gameweek_lag=int(fpl_data_config.get("max_gameweek_lag", 1)),
+            timeout_seconds=float(fpl_data_config.get("timeout_seconds", 60)),
+            permission_status=self.fpl_data_permission_status,
+            acknowledge_permission_pending=self.fpl_data_permission_acknowledged,
+            local_only=self.fpl_data_local_only,
+        )
 
     def _load_models(self, model_loader: Callable[[str], Any]) -> List[ModelArtifact]:
         model_config = self.config.get("models")
@@ -516,15 +568,43 @@ class FPLScout:
         result["availability_factor"] = availability_factor(result)
         return result
 
-    def _predict_ensemble(
-        self, features: pd.DataFrame
-    ) -> tuple[np.ndarray, Dict[str, Any]]:
+    def effective_weights(self) -> Dict[str, float]:
+        """Each enabled model's weight, after runtime overrides."""
+        return {
+            artifact.name: float(self.weight_overrides.get(artifact.name, artifact.weight))
+            for artifact in self.model_artifacts
+            if artifact.name not in self.disabled_models
+        }
+
+    def _run_models(
+        self,
+        features: pd.DataFrame,
+        weights: Optional[Mapping[str, float]] = None,
+        disabled: Optional[Set[str]] = None,
+    ) -> ModelRun:
+        """Run every enabled model; failures are recorded, not raised.
+
+        ``weights`` and ``disabled`` default to the runtime overrides, so the
+        live service and the dashboard's sandbox share one code path.
+        """
+        disabled = set(self.disabled_models if disabled is None else disabled)
         predictions: List[np.ndarray] = []
-        weights: List[float] = []
+        used_weights: List[float] = []
         successful_models: List[str] = []
         failures: Dict[str, str] = {}
+        skipped: List[str] = []
 
         for artifact in self.model_artifacts:
+            if artifact.name in disabled:
+                skipped.append(artifact.name)
+                continue
+            if weights is not None and artifact.name in weights:
+                weight = float(weights[artifact.name])
+            else:
+                weight = float(self.weight_overrides.get(artifact.name, artifact.weight))
+            if not np.isfinite(weight) or weight <= 0:
+                skipped.append(artifact.name)
+                continue
             try:
                 values = np.asarray(artifact.estimator.predict(features), dtype=float)
                 values = values.reshape(-1)
@@ -541,30 +621,54 @@ class FPLScout:
                 continue
 
             predictions.append(values)
-            weights.append(artifact.weight)
+            used_weights.append(weight)
             successful_models.append(artifact.name)
 
-        if len(predictions) < self.minimum_successful_models:
+        matrix = (
+            np.vstack(predictions)
+            if predictions
+            else np.empty((0, len(features)), dtype=float)
+        )
+        return ModelRun(matrix, successful_models, used_weights, failures, skipped)
+
+    def _ensemble_from_run(
+        self, run: ModelRun, minimum: Optional[int] = None
+    ) -> tuple[np.ndarray, Dict[str, Any]]:
+        """Combine a model run into the clipped weighted ensemble."""
+        required = self.minimum_successful_models if minimum is None else minimum
+        enabled = len(self.model_artifacts) - len(run.disabled)
+        if len(run.names) < min(required, max(enabled, 1)) or not run.names:
             raise InferenceError(
-                f"Only {len(predictions)} of {len(self.model_artifacts)} models "
-                f"succeeded; required {self.minimum_successful_models}. "
-                f"Failures: {failures}"
+                f"Only {len(run.names)} of {len(self.model_artifacts)} models "
+                f"succeeded; required {required}. "
+                f"Failures: {run.failures}"
             )
 
-        prediction_matrix = np.vstack(predictions)
-        ensemble = np.average(prediction_matrix, axis=0, weights=np.asarray(weights))
+        ensemble = np.average(run.matrix, axis=0, weights=np.asarray(run.weights))
+        ensemble = self._clip(ensemble)
+        diagnostics = {
+            "successful_models": list(run.names),
+            "failed_models": dict(run.failures),
+            "weights": dict(zip(run.names, run.weights)),
+            "mean_model_spread": float(run.matrix.std(axis=0).mean())
+            if run.matrix.size
+            else 0.0,
+        }
+        if run.disabled:
+            diagnostics["disabled_models"] = list(run.disabled)
+        return ensemble, diagnostics
+
+    def _clip(self, values: np.ndarray) -> np.ndarray:
         if self.clip_min is not None or self.clip_max is not None:
             lower = -np.inf if self.clip_min is None else float(self.clip_min)
             upper = np.inf if self.clip_max is None else float(self.clip_max)
-            ensemble = np.clip(ensemble, lower, upper)
+            values = np.clip(values, lower, upper)
+        return values
 
-        diagnostics = {
-            "successful_models": successful_models,
-            "failed_models": failures,
-            "weights": dict(zip(successful_models, weights)),
-            "mean_model_spread": float(prediction_matrix.std(axis=0).mean()),
-        }
-        return ensemble, diagnostics
+    def _predict_ensemble(
+        self, features: pd.DataFrame
+    ) -> tuple[np.ndarray, Dict[str, Any]]:
+        return self._ensemble_from_run(self._run_models(features))
 
     def _output_columns(self, *extra: str) -> List[str]:
         return list(
@@ -660,17 +764,46 @@ class FPLScout:
         players, fixture_rows, model_input = self._build_model_input(
             normalized, resolved_gameweek, availability
         )
-        ensemble, diagnostics = self._predict_ensemble(model_input)
+        # Before ``expected_points`` (also an input: FPL's own xP average) is
+        # replaced by the projection below.
+        input_players = players.copy()
+        run = self._run_models(model_input)
+        ensemble, diagnostics = self._ensemble_from_run(run)
         diagnostics["strategy"] = "model-ensemble"
-        match_points = (
-            pd.Series(ensemble, index=fixture_rows["_player_row"].to_numpy())
-            .groupby(level=0)
-            .sum()
-            .reindex(range(len(players)), fill_value=0.0)
-            .to_numpy()
-        )
-        players["expected_points"] = (
-            match_points * players["availability_factor"].to_numpy()
+        availability_values = players["availability_factor"].to_numpy()
+        match_points = self._player_points(ensemble, fixture_rows, len(players))
+        players["expected_points"] = match_points * availability_values
+        coverage = self._feature_coverage(model_input)
+        diagnostics["feature_coverage"] = coverage
+        try:
+            # Each model's projection on the served scale, so the dashboard
+            # (and the archive, through this metadata) can judge every model.
+            diagnostics["model_predictions"] = {
+                "ids": [int(value) for value in pd.to_numeric(players["id"]).tolist()],
+                "points": {
+                    name: [
+                        round(float(value), 3)
+                        for value in self._player_points(
+                            self._clip(run.matrix[index]), fixture_rows, len(players)
+                        )
+                        * availability_values
+                    ]
+                    for index, name in enumerate(run.names)
+                },
+            }
+        except Exception as error:  # Diagnostics must never fail inference.
+            logger.warning("Could not record per-model predictions: %s", error)
+        self._remember_inputs(
+            ModelInputs(
+                gameweek=resolved_gameweek,
+                players=input_players,
+                fixture_rows=fixture_rows,
+                model_input=model_input,
+                built_at=_utc_now(),
+                origin="prediction",
+                approximate=False,
+                feature_coverage=coverage,
+            )
         )
 
         output_columns = self._output_columns("fixture_count", "availability_factor")
@@ -687,6 +820,41 @@ class FPLScout:
             ", ".join(diagnostics["successful_models"]),
         )
         return result
+
+    @staticmethod
+    def _player_points(
+        values: np.ndarray, fixture_rows: pd.DataFrame, player_count: int
+    ) -> np.ndarray:
+        """Sum per-fixture values into one value per player (0 for blanks)."""
+        return (
+            pd.Series(values, index=fixture_rows["_player_row"].to_numpy())
+            .groupby(level=0)
+            .sum()
+            .reindex(range(player_count), fill_value=0.0)
+            .to_numpy()
+        )
+
+    @staticmethod
+    def _feature_coverage(model_input: pd.DataFrame) -> Dict[str, List[str]]:
+        return {
+            "populated": [
+                feature
+                for feature in MODEL_FEATURES
+                if feature in model_input and model_input[feature].notna().any()
+            ],
+            "missing": [
+                feature
+                for feature in MODEL_FEATURES
+                if feature not in model_input or model_input[feature].isna().all()
+            ],
+        }
+
+    def _remember_inputs(self, inputs: ModelInputs) -> None:
+        with self._forecast_lock:
+            self._model_inputs[inputs.gameweek] = inputs
+            self._model_inputs.move_to_end(inputs.gameweek)
+            while len(self._model_inputs) > self.model_inputs_capacity:
+                self._model_inputs.popitem(last=False)
 
     @staticmethod
     def _has_usable_pre_gameweek_data(data: pd.DataFrame) -> bool:
@@ -918,6 +1086,9 @@ class FPLScout:
         with self._forecast_lock:
             if self._live_forecasts.get(gameweek) is cached:
                 del self._live_forecasts[gameweek]
+                self._repredict_reasons[gameweek] = "availability-change"
+                # Kept so the next prediction can say what moved.
+                self._previous_forecasts[gameweek] = cached.predictions
         return None
 
     def _current_bootstrap(self) -> Any:
@@ -1000,15 +1171,30 @@ class FPLScout:
             if owner:
                 pending = Future()
                 self._pending_forecasts[gameweek] = pending
+                previous = (
+                    cached.predictions
+                    if cached is not None
+                    else self._previous_forecasts.pop(gameweek, None)
+                )
+                trigger = self._repredict_reasons.pop(
+                    gameweek, "expired" if cached is not None else "first"
+                )
         if not owner:
             return pending.result()
+        started = time.perf_counter()
         try:
             predictions = self._predict_live(gameweek)
         except BaseException as error:
             with self._forecast_lock:
                 self._pending_forecasts.pop(gameweek, None)
             pending.set_exception(error)
+            self._record_forecast_event(
+                gameweek, trigger, started, error=error, previous=previous
+            )
             raise
+        self._record_forecast_event(
+            gameweek, trigger, started, predictions=predictions, previous=previous
+        )
         # Stored as it stops being pending, so no request in between starts
         # the same prediction again.
         with self._forecast_lock:
@@ -1028,8 +1214,13 @@ class FPLScout:
         return predictions
 
     def _model_versions(self) -> Dict[str, Dict[str, Any]]:
-        """The configured models, as each archived forecast records them."""
-        return {
+        """The configured models, as each archived forecast records them.
+
+        Runtime overrides from the owner dashboard are recorded too, so a
+        forecast made with them is never restored after a restart (when the
+        overrides are gone).
+        """
+        versions = {
             name: {
                 key: value
                 for key, value in metadata.items()
@@ -1038,6 +1229,341 @@ class FPLScout:
             for name, metadata in self.config.get("models", {}).items()
             if isinstance(metadata, Mapping)
         }
+        for name, entry in versions.items():
+            if name in self.weight_overrides:
+                entry["weight_override"] = float(self.weight_overrides[name])
+            if name in self.disabled_models:
+                entry["disabled"] = True
+        return versions
+
+    # ------------------------------------------------------------------
+    # Owner dashboard: decision log, runtime control and sandbox.
+    # ------------------------------------------------------------------
+
+    def _record_forecast_event(
+        self,
+        gameweek: int,
+        trigger: str,
+        started: float,
+        *,
+        predictions: Optional[pd.DataFrame] = None,
+        error: Optional[BaseException] = None,
+        previous: Optional[pd.DataFrame] = None,
+    ) -> None:
+        """Append one prediction run to the decision log. Never raises."""
+        try:
+            event: Dict[str, Any] = {
+                "type": "prediction",
+                "at": _utc_now(),
+                "gameweek": int(gameweek),
+                "trigger": trigger,
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
+            }
+            if error is not None:
+                event.update(status="failed", error=str(error))
+            else:
+                attrs = predictions.attrs if predictions is not None else {}
+                inference = attrs.get("inference", {}) or {}
+                enrichment = inference.get("data_enrichment", {}) or {}
+                event.update(
+                    status="ok",
+                    strategy=inference.get("strategy"),
+                    successful_models=inference.get("successful_models", []),
+                    failed_models=inference.get("failed_models", {}),
+                    disabled_models=inference.get("disabled_models", []),
+                    weights=inference.get("weights", {}),
+                    mean_model_spread=inference.get("mean_model_spread"),
+                    source=attrs.get("source"),
+                    frozen=bool(attrs.get("frozen", False)),
+                    enrichment_status=enrichment.get("status"),
+                    archive_status=(attrs.get("archive") or {}).get("status"),
+                    players=int(len(predictions)) if predictions is not None else 0,
+                )
+                if previous is not None and predictions is not None:
+                    from src.insights import forecast_diff
+
+                    event["changes"] = forecast_diff(
+                        previous,
+                        predictions,
+                        self.select_optimal_team,
+                        current_players=self._current_player_details(),
+                    )
+                self.last_inference = {
+                    key: event.get(key)
+                    for key in (
+                        "at",
+                        "gameweek",
+                        "duration_ms",
+                        "strategy",
+                        "successful_models",
+                        "failed_models",
+                        "disabled_models",
+                        "weights",
+                        "mean_model_spread",
+                        "enrichment_status",
+                    )
+                }
+                self.last_inference["feature_coverage"] = inference.get(
+                    "feature_coverage"
+                )
+            self.forecast_events.append(event)
+        except Exception as problem:  # The log must never break inference.
+            logger.warning("Could not record the GW%d prediction event: %s", gameweek, problem)
+
+    def record_admin_event(self, action: str, **details: Any) -> Dict[str, Any]:
+        """Audit one owner-dashboard action in the decision log."""
+        event = {"type": "admin", "at": _utc_now(), "action": action, **details}
+        self.forecast_events.append(event)
+        logger.warning("Admin action %s: %s", action, details)
+        return event
+
+    def _current_player_details(self) -> Dict[int, Dict[str, Any]]:
+        mapped_players = getattr(self.official_client, "mapped_players", None)
+        if not callable(mapped_players):
+            return {}
+        try:
+            return {int(player["id"]): player for player in mapped_players()}
+        except Exception:
+            return {}
+
+    def live_forecast_state(self) -> List[Dict[str, Any]]:
+        """Each cached live forecast's age and remaining fresh/stale time."""
+        now = self.clock()
+        with self._forecast_lock:
+            cached = dict(self._live_forecasts)
+            pending = set(self._pending_forecasts)
+        state = []
+        for gameweek in sorted(set(cached) | pending):
+            forecast = cached.get(gameweek)
+            entry: Dict[str, Any] = {"gameweek": gameweek, "pending": gameweek in pending}
+            if forecast is not None:
+                entry.update(
+                    fresh=now < forecast.fresh_until,
+                    fresh_for_seconds=round(max(0.0, forecast.fresh_until - now), 1),
+                    stale_for_seconds=round(max(0.0, forecast.stale_until - now), 1),
+                    age_seconds=round(
+                        max(0.0, now - (forecast.fresh_until - self.prediction_cache_ttl)),
+                        1,
+                    ),
+                    players=int(len(forecast.predictions)),
+                    restored=(forecast.predictions.attrs.get("archive") or {}).get(
+                        "status"
+                    )
+                    == "restored",
+                )
+            state.append(entry)
+        return state
+
+    def invalidate_live_forecasts(self, gameweek: Optional[int] = None) -> int:
+        """Drop cached live forecasts so the next request predicts again."""
+        with self._forecast_lock:
+            targets = (
+                list(self._live_forecasts)
+                if gameweek is None
+                else [gameweek] if gameweek in self._live_forecasts else []
+            )
+            for target in targets:
+                forecast = self._live_forecasts.pop(target)
+                self._previous_forecasts[target] = forecast.predictions
+                self._repredict_reasons[target] = "manual"
+                self._availability_checked.pop(target, None)
+        return len(targets)
+
+    def clear_fixture_cache(self) -> int:
+        with self._fixture_cache_lock:
+            count = len(self._fixture_cache)
+            self._fixture_cache.clear()
+        return count
+
+    def model_state(self) -> List[Dict[str, Any]]:
+        """Each model's configured and effective weight and enabled flag."""
+        return [
+            {
+                "name": artifact.name,
+                "configured_weight": artifact.weight,
+                "weight_override": self.weight_overrides.get(artifact.name),
+                "effective_weight": float(
+                    self.weight_overrides.get(artifact.name, artifact.weight)
+                ),
+                "enabled": artifact.name not in self.disabled_models,
+            }
+            for artifact in self.model_artifacts
+        ]
+
+    def set_model_override(
+        self,
+        name: str,
+        *,
+        weight: Optional[float] = None,
+        enabled: Optional[bool] = None,
+    ) -> List[Dict[str, Any]]:
+        """Change one model's runtime weight or enabled flag (until restart).
+
+        Raises KeyError for an unknown model and ValueError for a weight that
+        is not positive or a change that leaves fewer enabled models than
+        ``minimum_successful_models``.
+        """
+        names = {artifact.name for artifact in self.model_artifacts}
+        if name not in names:
+            raise KeyError(name)
+        if weight is not None:
+            weight = float(weight)
+            if not np.isfinite(weight) or weight <= 0:
+                raise ValueError("A model weight must be a positive number")
+        disabled = set(self.disabled_models)
+        if enabled is True:
+            disabled.discard(name)
+        elif enabled is False:
+            disabled.add(name)
+        if len(names) - len(disabled) < self.minimum_successful_models:
+            raise ValueError(
+                f"At least {self.minimum_successful_models} models must stay "
+                "enabled (inference.minimum_successful_models)"
+            )
+        with self._forecast_lock:
+            if weight is not None:
+                self.weight_overrides[name] = weight
+            self.disabled_models = disabled
+        self.invalidate_live_forecasts()
+        return self.model_state()
+
+    def reset_model_overrides(self) -> List[Dict[str, Any]]:
+        with self._forecast_lock:
+            self.weight_overrides = {}
+            self.disabled_models = set()
+        self.invalidate_live_forecasts()
+        return self.model_state()
+
+    def set_enrichment_enabled(self, enabled: bool) -> Dict[str, Any]:
+        """Turn FPL Data enrichment on or off until restart."""
+        enabled = bool(enabled)
+        if enabled and self.fpl_data_provider is None:
+            self.fpl_data_provider = self._build_fpl_data_provider()
+        self.fpl_data_enabled = enabled
+        self.invalidate_live_forecasts()
+        return {
+            "enabled": self.fpl_data_enabled,
+            "remote_downloads_allowed": bool(
+                getattr(self.fpl_data_provider, "remote_download_allowed", False)
+            ),
+        }
+
+    def gameweek_is_frozen(self, gameweek: int) -> bool:
+        """Whether the gameweek's deadline has passed (its forecast is final)."""
+        return not self.data_archive.gameweek_is_open(self.official_client, gameweek)
+
+    def recompute(self, gameweek: Optional[int] = None) -> pd.DataFrame:
+        """Predict an open gameweek again now, replacing its cached forecast.
+
+        A gameweek past its deadline is never re-predicted: its forecast is
+        frozen by design. Raises ValueError for one.
+        """
+        resolved_gameweek = int(gameweek or self.official_client.next_gameweek())
+        if self.gameweek_is_frozen(resolved_gameweek):
+            raise ValueError(
+                f"GW{resolved_gameweek} is past its deadline; its forecast is frozen"
+            )
+        self.invalidate_live_forecasts(resolved_gameweek)
+        with self._forecast_lock:
+            self._repredict_reasons[resolved_gameweek] = "manual"
+        return self._served(self._predict_once(resolved_gameweek), refresh_due=False)
+
+    def model_inputs(self, gameweek: int) -> ModelInputs:
+        """The rows the models saw for a gameweek, rebuilding them if needed.
+
+        A gameweek predicted by this instance is answered from memory. Others
+        are rebuilt from the archived pre-gameweek history (the exact input),
+        or else from current official history, with current availability;
+        those are marked ``approximate``. Raises ValueError at the GW1 cold
+        start, which uses no model inputs.
+        """
+        gameweek = int(gameweek)
+        with self._forecast_lock:
+            cached = self._model_inputs.get(gameweek)
+            if cached is not None:
+                self._model_inputs.move_to_end(gameweek)
+                return cached
+        history: Optional[pd.DataFrame] = None
+        origin = "official"
+        archived_history = getattr(self.data_archive, "archived_history", None)
+        if callable(archived_history):
+            try:
+                history = archived_history(self.official_client, gameweek)
+            except Exception as error:
+                logger.warning("Could not read archived GW%d history: %s", gameweek, error)
+            if history is not None and not history.empty:
+                origin = "archive"
+        if history is None or history.empty:
+            history = self.official_client.player_history(gameweek)
+        normalized = normalize_fpl_columns(history)
+        if self._uses_cold_start(normalized, gameweek):
+            raise ValueError(
+                "GW1 uses the ownership cold start; no model inputs exist yet"
+            )
+        players, fixture_rows, model_input = self._build_model_input(
+            normalized, gameweek, self._official_availability()
+        )
+        inputs = ModelInputs(
+            gameweek=gameweek,
+            players=players,
+            fixture_rows=fixture_rows,
+            model_input=model_input,
+            built_at=_utc_now(),
+            origin=origin,
+            approximate=True,
+            feature_coverage=self._feature_coverage(model_input),
+        )
+        self._remember_inputs(inputs)
+        return inputs
+
+    def predict_from_inputs(
+        self,
+        inputs: ModelInputs,
+        *,
+        weights: Optional[Mapping[str, float]] = None,
+        disabled: Optional[Set[str]] = None,
+        availability_overrides: Optional[Mapping[int, float]] = None,
+    ) -> pd.DataFrame:
+        """Sandbox predictions from stored inputs; touches no cache or archive."""
+        players = inputs.players.copy()
+        if availability_overrides:
+            ids = pd.to_numeric(players["id"], errors="coerce")
+            for player_id, value in availability_overrides.items():
+                players.loc[ids == int(player_id), "availability_factor"] = float(
+                    min(1.0, max(0.0, value))
+                )
+        run = self._run_models(inputs.model_input, weights=weights, disabled=disabled)
+        ensemble, diagnostics = self._ensemble_from_run(run, minimum=1)
+        diagnostics["strategy"] = "model-ensemble"
+        availability_values = players["availability_factor"].to_numpy(dtype=float)
+        players["expected_points"] = (
+            self._player_points(ensemble, inputs.fixture_rows, len(players))
+            * availability_values
+        )
+        diagnostics["model_predictions"] = {
+            "ids": [int(value) for value in pd.to_numeric(players["id"]).tolist()],
+            "points": {
+                name: [
+                    round(float(value), 3)
+                    for value in self._player_points(
+                        self._clip(run.matrix[index]),
+                        inputs.fixture_rows,
+                        len(players),
+                    )
+                    * availability_values
+                ]
+                for index, name in enumerate(run.names)
+            },
+        }
+        output_columns = self._output_columns("fixture_count", "availability_factor")
+        for column in output_columns:
+            if column not in players.columns:
+                players[column] = np.nan
+        result = players[output_columns].copy()
+        result.attrs["gameweek"] = inputs.gameweek
+        result.attrs["inference"] = diagnostics
+        result.attrs["sandbox"] = True
+        return result
 
     def _predict_live(self, gameweek: int) -> pd.DataFrame:
         """Predict a gameweek from current official history, then archive it."""

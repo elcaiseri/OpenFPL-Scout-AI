@@ -193,18 +193,25 @@ class DataArchive:
         self.last_result = result
         return result
 
-    def collect_results(self, official_client: Any) -> dict[str, Any]:
+    def collect_results(
+        self, official_client: Any, *, force: bool = False
+    ) -> dict[str, Any]:
         """Archive official results without a prediction, once per interval.
 
         Serving a frozen forecast skips inference, which is what normally
         collects results. This keeps the training archive complete, including
         after the final deadline, when every request is served frozen.
+        ``force`` (the owner dashboard) skips the interval.
         """
         if not self.enabled:
             return {"status": "disabled"}
         with self._lock:
             now = self.clock()
-            if self._results_due_at is not None and now < self._results_due_at:
+            if (
+                not force
+                and self._results_due_at is not None
+                and now < self._results_due_at
+            ):
                 return {"status": "throttled"}
             self._results_due_at = now + self.results_interval
         try:
@@ -689,6 +696,148 @@ class DataArchive:
             metadata["captured_at_utc"],
         )
         return frozen
+
+    # ------------------------------------------------------------------
+    # Read-only helpers for the owner dashboard.
+    # ------------------------------------------------------------------
+
+    def season_root(self, official_client: Any) -> Path:
+        return self.root_path / self._season_name(official_client.bootstrap())
+
+    def inventory(self, official_client: Any) -> dict[str, Any]:
+        """Which files the season archive holds for each gameweek."""
+        result: dict[str, Any] = {
+            **self.status(),
+            "season": None,
+            "gameweeks": [],
+            "total_files": 0,
+            "total_bytes": 0,
+        }
+        if not self.enabled:
+            return result
+        bootstrap = official_client.bootstrap()
+        season = self._season_name(bootstrap)
+        season_root = self.root_path / season
+        result["season"] = season
+        result["exists"] = season_root.is_dir()
+        if season_root.is_dir():
+            files = [path for path in season_root.rglob("*") if path.is_file()]
+            result["total_files"] = len(files)
+            result["total_bytes"] = sum(path.stat().st_size for path in files)
+        deadlines = {
+            int(event["id"]): event.get("deadline_time")
+            for event in bootstrap.get("events", [])
+        }
+
+        def describe(path: Path) -> Optional[dict[str, Any]]:
+            if not path.is_file():
+                return None
+            stat = path.stat()
+            return {
+                "bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(
+                    stat.st_mtime, timezone.utc
+                ).isoformat(),
+            }
+
+        for gameweek in sorted(deadlines):
+            name = f"gw_{gameweek:02d}"
+            files = {
+                "metadata": describe(season_root / "metadata" / f"{name}.json"),
+                "predictions": describe(season_root / "predictions" / f"{name}.csv"),
+                "squad": describe(season_root / "squads" / f"{name}.json"),
+                "live": describe(season_root / "official" / "live" / f"{name}.json"),
+                "player_stats": describe(
+                    season_root / "official" / "player-stats" / f"{name}.csv"
+                ),
+                "enriched_history": describe(
+                    season_root / "enriched" / "history" / f"before_{name}.csv"
+                ),
+            }
+            if not any(files.values()):
+                continue
+            entry: dict[str, Any] = {
+                "gameweek": gameweek,
+                "deadline_time": deadlines[gameweek],
+                "files": files,
+            }
+            if files["metadata"]:
+                try:
+                    with self._lock:
+                        metadata = self._read_metadata(
+                            season_root / "metadata" / f"{name}.json"
+                        )
+                    entry.update(
+                        captured_at=metadata.get("captured_at_utc"),
+                        freeze_method=(metadata.get("freeze") or {}).get("method"),
+                        source=metadata.get("source"),
+                        strategy=(metadata.get("inference") or {}).get("strategy"),
+                        has_model_predictions=bool(
+                            (metadata.get("inference") or {}).get("model_predictions")
+                        ),
+                        rows=metadata.get("rows"),
+                    )
+                except (OSError, ValueError) as error:
+                    entry["metadata_error"] = str(error)
+            result["gameweeks"].append(entry)
+        return result
+
+    def archived_history(
+        self, official_client: Any, gameweek: int
+    ) -> Optional[pd.DataFrame]:
+        """The (enriched) history a gameweek's archived forecast was made from.
+
+        Played rows were archived without ``selected_by_percent`` (see
+        ``training_safe_history``); the capture-time value, which is what the
+        models saw, is restored so the inputs can be rebuilt exactly.
+        """
+        if not self.enabled:
+            return None
+        path = (
+            self.season_root(official_client)
+            / "enriched"
+            / "history"
+            / f"before_gw_{int(gameweek):02d}.csv"
+        )
+        if not path.is_file():
+            return None
+        history = pd.read_csv(path)
+        if "selected_by_percent_at_capture" in history.columns:
+            history["selected_by_percent"] = history["selected_by_percent_at_capture"]
+        return history
+
+    def archived_forecast(
+        self, official_client: Any, gameweek: int
+    ) -> Optional[pd.DataFrame]:
+        """A gameweek's archived forecast, whatever its deadline.
+
+        For a closed gameweek this is the frozen forecast users were served;
+        for an open one, the latest pre-deadline capture. The attrs carry the
+        metadata's inference diagnostics and capture time.
+        """
+        if not self.enabled:
+            return None
+        metadata_path = (
+            self.season_root(official_client)
+            / "metadata"
+            / f"gw_{int(gameweek):02d}.json"
+        )
+        with self._lock:
+            metadata = self._read_metadata(metadata_path)
+        forecast = metadata.get("forecast")
+        if (
+            metadata.get("prediction_gameweek") != int(gameweek)
+            or not isinstance(forecast, Mapping)
+            or not {"columns", "data"} <= set(forecast)
+        ):
+            return None
+        served = self._served_forecast(metadata, int(gameweek))
+        served.attrs["frozen"] = bool(metadata.get("freeze")) or not self.gameweek_is_open(
+            official_client, int(gameweek)
+        )
+        served.attrs["forecast_captured_at"] = metadata.get("captured_at_utc")
+        served.attrs["models"] = metadata.get("models", {})
+        return served
 
     @staticmethod
     def _read_metadata(metadata_path: Path) -> dict[str, Any]:
