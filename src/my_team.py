@@ -719,15 +719,20 @@ def best_bench_order(
     """The bench order (keeper first) with the most expected points."""
     keepers = [pid for pid in bench if _position(players.get(pid, {})) == 1]
     outfield = [pid for pid in bench if _position(players.get(pid, {})) != 1]
-    best_order: Optional[List[int]] = None
-    best_result: Optional[Dict[str, Any]] = None
-    # The current order is tried first, so ties keep it.
+    best_key: Optional[Tuple[Any, ...]] = None
+    best_order: List[int] = []
+    best_result: Dict[str, Any] = {}
     for order in itertools.permutations(outfield):
         candidate = keepers + list(order)
         result = expected_with_autosubs(players, _picks_from(starters, candidate, captain, vice, players), chip)
-        if best_result is None or result["expected_points"] > best_result["expected_points"] + 1e-9:
-            best_order, best_result = candidate, result
-    assert best_order is not None and best_result is not None
+        # Equal expectations (nobody flagged) favour the higher projections
+        # first: a late withdrawal brings on the likeliest points.
+        key = (
+            round(result["expected_points"], 6),
+            tuple(float(_number(players.get(pid, {}).get("expected_points"), 0.0)) for pid in order),
+        )
+        if best_key is None or key > best_key:
+            best_key, best_order, best_result = key, candidate, result
     return best_order, best_result
 
 
@@ -798,7 +803,7 @@ def lineup_advice(
         if current_outfield != outfield and not promoted:
             line += f" {label(first)} first: {use.get(first, 0.0):.0%} chance he comes on."
         reasons.append(line)
-    if not result["uncertain"] and not any(use.values()):
+    if not any(_chance(players.get(pid, {})) < 1 for pid in xi):
         reasons.append("No starter is flagged, so the bench order only matters if someone misses out late.")
     return {
         "picks": advised,

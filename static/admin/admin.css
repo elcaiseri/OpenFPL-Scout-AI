@@ -433,3 +433,23 @@ details > summary { cursor: pointer; color: var(--text-2); margin: 8px 0 4px; }
 @media (max-width: 640px) {
     .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }
+
+/* My team: working squad editor */
+.pitch-player.is-selected { outline: 2px solid var(--lime); background: rgba(11, 4, 16, .95); }
+.pitch-player.is-banned { opacity: .6; }
+.pitch-player .tag-lock, .tag-lock { color: var(--aqua); }
+.pitch-player .tag-own, .tag-own { color: #ff9ad0; }
+.action-panel { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line-strong); }
+.action-panel .btn[aria-pressed=true] { background: rgba(200,255,50,.14); border-color: rgba(200,255,50,.5); color: var(--lime); }
+.pick-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 280px; overflow: auto; }
+.btn.pick { text-align: left; }
+.btn.pick .xp { color: var(--lime); font-weight: 600; }
+.btn.pick .warn { color: #ffd166; }
+.btn.pick .out { color: #ff8f8f; }
+table.ticker td.ticker-cell { min-width: 92px; text-align: right; vertical-align: top; }
+table.ticker .xp { color: var(--lime); margin-top: 3px; font-variant-numeric: tabular-nums; }
+table.ticker tfoot th, table.ticker tfoot td { border-top: 1px solid var(--line-strong); font-weight: 600; }
+table.ticker tfoot th { position: static; background: transparent; }
+/* Sentences told with a status icon wrap; short table badges stay on one line. */
+.card-body p > .status, .card-body li > .status { white-space: normal; align-items: flex-start; }
+.card-body p > .status svg, .card-body li > .status svg { margin-top: 1px; }

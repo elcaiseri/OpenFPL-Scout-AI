@@ -169,3 +169,162 @@ test('pitch rows group starters by position and keep the bench order', () => {
     assert.deepEqual(plain(rows.map(row => row.map(player => player.id))), [[1], [2, 3, 4], [5, 6, 7, 8, 11], [9, 10]]);
     assert.deepEqual(plain(bench.map(player => player.id)), [14, 12, 15, 13]);
 });
+
+/* A working squad of 15: ids 1-15 in FPL slot order (1-4-4-2, bench GK, DEF, MID, FWD). */
+const LAYOUT = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 1, 2, 3, 4];
+function publishedTeam() {
+    return {
+        entry_id: 77,
+        gameweek: 12,
+        picks_gameweek: 11,
+        published_picks: LAYOUT.map((_, index) => ({ id: index + 1, position: index + 1, is_captain: index === 5, is_vice_captain: index === 6 })),
+        squad: LAYOUT.map((position, index) => ({ id: index + 1, web_name: `P${index + 1}`, team_name: `Club ${index + 1}`, element_type: position, price: 5.0 })),
+    };
+}
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const order = (value) => plain([...value.picks].sort((a, b) => a.position - b.position).map((pick) => pick.id));
+
+test('a working squad starts from the published picks and survives storage', () => {
+    const admin = loadAdmin(async () => response({}));
+    const { draft } = admin;
+    const value = draft.fromPublished(publishedTeam());
+    assert.equal(value.gameweek, 12);
+    assert.equal(value.base_picks_gameweek, 11);
+    assert.equal(draft.formationOk(value), true);
+    assert.equal(draft.formation(value), '4-4-2');
+    draft.save(77, value);
+    const loaded = draft.load(77);
+    assert.deepEqual(order(loaded), order(value));
+    assert.ok(loaded.updated_at);
+    admin.context.localStorage.setItem('openfpl.admin.draft.v1.78', '{"version":1,"picks":"broken"}');
+    assert.equal(draft.load(78), null);
+    draft.clear(77);
+    assert.equal(draft.load(77), null);
+});
+
+test('substitutions keep a legal formation and pass the armband on', () => {
+    const { draft } = loadAdmin(async () => response({}));
+    const value = draft.fromPublished(publishedTeam());
+    // The captain (P6, MID) comes off for the bench defender (P13): 5-3-2 is legal.
+    const swapped = draft.swap(value, 6, 13);
+    assert.equal(swapped.error, undefined);
+    const picks = Object.fromEntries(swapped.draft.picks.map((pick) => [pick.id, pick]));
+    assert.ok(picks[13].position <= 11 && picks[13].is_captain);
+    assert.ok(picks[6].position > 11 && !picks[6].is_captain);
+    assert.equal(draft.formation(swapped.draft), '5-3-2');
+    assert.deepEqual(order(value), Array.from({ length: 15 }, (_, index) => index + 1)); // input untouched
+    // A keeper only swaps with the keeper; a 3rd forward off for a defender breaks 1+ FWD? no: 2 FWD start.
+    assert.match(draft.swap(value, 1, 13).error, /goalkeeper/);
+    assert.equal(draft.swap(value, 1, 12).error, undefined);
+    const noForward = draft.swap(draft.swap(value, 10, 13).draft, 11, 14);
+    assert.match(noForward.error, /illegal formation/);
+    assert.match(draft.swap(value, 2, 3).error, /already in the starting XI/);
+});
+
+test('bench order, armband and chip edits', () => {
+    const { draft } = loadAdmin(async () => response({}));
+    const value = draft.fromPublished(publishedTeam());
+    const moved = draft.moveBench(value, 15, -1).draft;
+    assert.deepEqual(order(moved).slice(11), [12, 13, 15, 14]);
+    assert.match(draft.moveBench(value, 13, -1).error, /end of the bench/);
+    assert.match(draft.moveBench(value, 12, 1).error, /outfield/);
+    const benchSwap = draft.swap(value, 13, 15).draft;
+    assert.deepEqual(order(benchSwap).slice(11), [12, 15, 14, 13]);
+
+    const captain = draft.setRole(value, 7, 'is_captain').draft; // the vice becomes captain
+    const roles = (item) => plain(item.picks.filter((pick) => pick.is_captain || pick.is_vice_captain).map((pick) => [pick.id, pick.is_captain ? 'C' : 'V']).sort());
+    assert.deepEqual(roles(captain), [[6, 'V'], [7, 'C']]);
+    assert.deepEqual(roles(draft.setRole(value, 9, 'is_vice_captain').draft), [[6, 'C'], [9, 'V']]);
+    assert.match(draft.setRole(value, 13, 'is_captain').error, /starter/);
+    assert.equal(draft.setChip(value, '3xc').draft.chip, '3xc');
+    assert.equal(draft.setChip(value, 'nonsense').draft.chip, null);
+    assert.equal(draft.setPurchasePrice(value, 3, 4.55).draft.purchase_prices[3], 4.6);
+    assert.equal(draft.setPurchasePrice(draft.setPurchasePrice(value, 3, 4.5).draft, 3, null).draft.purchase_prices[3], undefined);
+});
+
+test('transfers chain, undo and are sent as plain picks', () => {
+    const { draft } = loadAdmin(async () => response({}));
+    const value = draft.fromPublished(publishedTeam());
+    const striker = { id: 101, web_name: 'New', team_name: 'Club X', element_type: 4, price: 7.5 };
+    const one = draft.transfer(value, 10, striker).draft;
+    assert.ok(one.picks.some((pick) => pick.id === 101));
+    assert.deepEqual(plain(one.transfers), [{ out: 10, in: 101 }]);
+    assert.match(draft.transfer(one, 11, striker).error, /already in your squad/);
+    assert.match(draft.transfer(value, 2, striker).error, /same position/);
+    // Selling the new striker for another one keeps a single transfer from P10.
+    const chained = draft.transfer(one, 101, { id: 102, web_name: 'Other', element_type: 'FWD', price: 6 }).draft;
+    assert.deepEqual(plain(chained.transfers), [{ out: 10, in: 102 }]);
+    const undone = draft.undoTransfer(chained, 102).draft;
+    assert.deepEqual(plain(undone.transfers), []);
+    assert.deepEqual(order(undone), order(value));
+    assert.match(draft.undoTransfer(value, 5).error, /isn't a transfer/);
+
+    const request = draft.toRequest(draft.setField(one, 'free_transfers', 2).draft);
+    assert.deepEqual(Object.keys(request).sort(), ['bank_override', 'chip', 'free_transfers', 'picks', 'purchase_prices']);
+    assert.equal(request.free_transfers, 2);
+    assert.deepEqual(Object.keys(request.picks[0]).sort(), ['id', 'is_captain', 'is_vice_captain', 'position']);
+});
+
+test('a working squad expires with its deadline or once FPL shows the team', () => {
+    const { draft } = loadAdmin(async () => response({}));
+    const value = draft.fromPublished(publishedTeam());
+    assert.equal(draft.expire(value, { nextOpen: 12, picksGameweek: 11 }), null);
+    assert.match(draft.expire(value, { nextOpen: 13 }), /GW12 deadline has passed/);
+    assert.match(draft.expire(value, { picksGameweek: 12 }), /FPL now shows your GW12 team/);
+    assert.equal(draft.expire(null, { nextOpen: 40 }), null);
+});
+
+test('export and import round trip, and foreign files are refused', () => {
+    const { draft } = loadAdmin(async () => response({}));
+    const value = draft.fromPublished(publishedTeam());
+    const text = draft.exportJson(value, { 5: { lock: true, web_name: 'P5' }, 9: { junk: 1 } });
+    const back = draft.importJson(text);
+    assert.deepEqual(order(back.draft), order(value));
+    assert.deepEqual(plain(back.overrides), { 5: { lock: true, web_name: 'P5' } });
+    assert.throws(() => draft.importJson('{"kind":"something-else"}'), /isn't an OpenFPL/);
+    assert.throws(() => draft.importJson(JSON.stringify({ kind: 'openfpl-working-squad', draft: { version: 1 } })), /damaged/);
+});
+
+test('personal overrides: locks exclude bans, availability expires with its gameweek', () => {
+    const { overrides } = loadAdmin(async () => response({}));
+    let all = overrides.set({}, 5, { lock: true, web_name: 'P5' }, 12);
+    all = overrides.set(all, 5, { ban: true }, 12);
+    assert.deepEqual(plain(all[5]), { ban: true, web_name: 'P5' });
+    all = overrides.set(all, 7, { availability: 150, xp_pct: 80 }, 12);
+    assert.deepEqual(plain(all[7]), { availability: 100, xp_pct: 80, set_for_gw: 12 });
+    all = overrides.set(all, 8, { xp_pct: 100 }, 12);
+    all = overrides.set(all, 8, { xp_pct: null }, 12);
+    assert.equal(all[8], undefined); // nothing left to keep
+    assert.deepEqual(plain(overrides.toRequest(all)), {
+        5: { lock: false, ban: true, availability: null, xp_pct: null },
+        7: { lock: false, ban: false, availability: 100, xp_pct: 80 },
+    });
+    const same = overrides.expire(all, 12);
+    assert.deepEqual(plain(same.expired), []);
+    const later = overrides.expire(all, 13);
+    assert.deepEqual(plain(later.expired), [{ id: 7, availability: 100, set_for_gw: 12 }]);
+    assert.deepEqual(plain(later.overrides[7]), { xp_pct: 80, set_for_gw: 12 });
+    assert.equal(overrides.remove(all, 5)[5], undefined);
+    assert.ok(all[5], 'remove returns a copy');
+});
+
+test('alerts list what changed since the last snapshot', () => {
+    const { alerts } = loadAdmin(async () => response({}));
+    const before = [
+        { id: 1, web_name: 'A', status: 'a', news: '', chance_of_playing_next_round: null, price: 7.0 },
+        { id: 2, web_name: 'B', status: 'a', news: '', chance_of_playing_next_round: null, price: 5.5 },
+    ];
+    const snapshot = alerts.snapshot(before, new Date('2026-11-01T10:00:00Z'));
+    assert.equal(snapshot.at, '2026-11-01T10:00:00.000Z');
+    const after = [
+        { ...before[0], status: 'd', news: 'Knock - 75% chance of playing', chance_of_playing_next_round: 75 },
+        { ...before[1], price: 5.6 },
+        { id: 3, web_name: 'New', status: 'a', news: '', price: 6.0 },
+    ];
+    const changes = plain(alerts.diff(snapshot, after));
+    assert.deepEqual(changes.map((item) => [item.id, item.kind]), [[1, 'news'], [1, 'status'], [1, 'chance'], [2, 'price']]);
+    assert.equal(changes[1].text, 'A: available → doubtful');
+    assert.equal(changes[2].text, 'A: chance of playing no flag → 75%');
+    assert.equal(changes[3].delta, 0.1);
+    assert.deepEqual(plain(alerts.diff(null, after)), []);
+});

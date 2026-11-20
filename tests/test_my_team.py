@@ -303,7 +303,7 @@ class AdviceTests(unittest.TestCase):
         )
         picks = make_picks(captain=7, vice=8)
         order, result = my_team.best_bench_order(players, list(range(1, 12)), [12, 13, 14, 15], 7, 8)
-        self.assertEqual(order, [12, 15, 13, 14])
+        self.assertEqual(order, [12, 15, 14, 13])  # then the higher projection
         brute = max(
             my_team.expected_with_autosubs(
                 players, my_team._picks_from(list(range(1, 12)), [12, *perm], 7, 8, players)

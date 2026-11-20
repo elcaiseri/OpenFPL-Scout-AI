@@ -1039,26 +1039,32 @@ const ui = {
         return { rows: ["GK", "DEF", "MID", "FWD"].map((position) => rows[position]), bench };
     },
 
-    /* A pitch of player buttons. options: startingIds, value(player), title(player), onClick(player). */
+    /* A pitch of player buttons. options: startingIds, value(player), unit, title(player), onClick(player), selectedId. */
     pitch(players, options = {}) {
         const { rows, bench } = ui.pitchRows(players, options.startingIds);
         const value = options.value || ((player) => player.expected_points);
+        const unit = options.unit || "xP";
         const card = (player) => {
             const factor = player.availability_factor;
             const doubtful = utils.isNumber(factor) && factor < 1;
+            const selected = options.selectedId !== undefined && options.selectedId === player.id;
             return h("button", {
-                class: `pitch-player${player.new ? " is-new" : ""}`,
+                class: `pitch-player${player.new ? " is-new" : ""}${selected ? " is-selected" : ""}${player.banned ? " is-banned" : ""}`,
                 type: "button",
                 title: options.title ? options.title(player) : player.news || "",
+                "aria-pressed": options.selectedId !== undefined ? String(selected) : null,
                 onClick: () => (options.onClick ? options.onClick(player) : drawer.open(player.id, player.web_name)),
             },
             player.role ? h("span", { class: `badge ${player.role === "vice" ? "vice" : ""}` }, player.role === "captain" ? "C" : "V") : null,
             player.new ? h("span", { class: "badge new" }, "IN") : null,
             h("strong", null, player.web_name || `#${player.id}`),
             h("span", { class: "small muted" }, player.team_name || ""),
-            h("span", { class: "xp" }, `${utils.fmt(value(player), 2)} xP`),
+            h("span", { class: "xp" }, player.pending ? "…" : `${utils.fmt(value(player), unit === "pts" ? 0 : 2)} ${unit}`),
             doubtful ? h("span", { class: `small ${factor > 0 ? "warn" : "out"}` }, factor > 0 ? `${utils.fmtPct(factor)} fit` : "out") : null,
             player.projection_missing ? h("span", { class: "small out" }, "no projection") : null,
+            player.locked ? h("span", { class: "small tag-lock" }, "locked") : null,
+            player.banned ? h("span", { class: "small out" }, "banned") : null,
+            player.overridden ? h("span", { class: "small tag-own" }, "your view") : null,
             utils.isNumber(player.actual_points) ? h("span", { class: "small" }, `${utils.fmtInt(player.actual_points)} pts`) : null);
         };
         return h("div", { class: "pitch" },
@@ -1359,6 +1365,14 @@ const app = {
         pill.className = `pill ${health.kind}`;
         pill.textContent = health.label;
         pill.title = `Updated ${utils.timeAgo(overview.generated_at)}`;
+    },
+
+    setGameweek(gameweek) {
+        state.gameweek = Number(gameweek) || state.gameweek;
+        const select = typeof document !== "undefined" && document.getElementById ? document.getElementById("gw-select") : null;
+        if (select) select.value = String(state.gameweek);
+        app.updateDeadline();
+        app.render();
     },
 
     selectTab(tab) {
@@ -2085,10 +2099,350 @@ views.squad = {
     },
 };
 
+/* ---------- My team: working squad, overrides and alerts (this browser only) ---------- */
+
+/* A working squad: the published picks plus edits FPL cannot see yet. Pure
+ * operations return { draft } or { draft, error } and never mutate input. */
+const draft = {
+    PREFIX: "openfpl.admin.draft.v1.",
+    VERSION: 1,
+    CHIPS: { bboost: "Bench Boost", "3xc": "Triple Captain", freehit: "Free Hit", wildcard: "Wildcard" },
+
+    load(entryId) {
+        try {
+            const value = JSON.parse(storage.get("localStorage", draft.PREFIX + entryId) || "null");
+            return draft.valid(value) ? value : null;
+        } catch (error) {
+            return null;
+        }
+    },
+    save(entryId, value) {
+        return storage.set("localStorage", draft.PREFIX + entryId, JSON.stringify({ ...value, updated_at: new Date().toISOString() }));
+    },
+    clear(entryId) {
+        storage.remove("localStorage", draft.PREFIX + entryId);
+    },
+    valid(value) {
+        return Boolean(value && value.version === draft.VERSION && Number.isInteger(value.gameweek)
+            && Array.isArray(value.picks) && value.picks.length <= 20
+            && value.picks.every((pick) => pick && Number.isInteger(pick.id) && Number.isInteger(pick.position))
+            && value.players && typeof value.players === "object");
+    },
+    positionCode(value) {
+        if (typeof value === "number") return value;
+        return { GK: 1, DEF: 2, MID: 3, FWD: 4, Goalkeeper: 1, Defender: 2, Midfielder: 3, Forward: 4 }[value] || 0;
+    },
+    info(player) {
+        return {
+            web_name: player.web_name || `#${player.id}`,
+            team_name: player.team_name || null,
+            element_type: draft.positionCode(player.element_type ?? player.position),
+            price: utils.isNumber(player.price) ? player.price : null,
+        };
+    },
+    fromPublished(team) {
+        const players = {};
+        (team.squad || []).forEach((row) => { if (!row.unknown) players[row.id] = draft.info(row); });
+        return {
+            version: draft.VERSION,
+            entry_id: team.entry_id,
+            gameweek: team.gameweek,
+            base_picks_gameweek: team.picks_gameweek,
+            picks: (team.published_picks || []).map((pick) => ({
+                id: pick.id, position: pick.position, is_captain: Boolean(pick.is_captain), is_vice_captain: Boolean(pick.is_vice_captain),
+            })),
+            transfers: [],
+            chip: null,
+            free_transfers: null,
+            bank_override: null,
+            purchase_prices: {},
+            players,
+        };
+    },
+    copy(value) {
+        return JSON.parse(JSON.stringify(value));
+    },
+    position(value, id) {
+        return draft.positionCode((value.players[id] || {}).element_type);
+    },
+    sorted(value) {
+        return [...value.picks].sort((a, b) => a.position - b.position);
+    },
+    starters(value) {
+        return draft.sorted(value).filter((pick) => pick.position <= 11);
+    },
+    bench(value) {
+        return draft.sorted(value).filter((pick) => pick.position > 11);
+    },
+    formationOk(value) {
+        const starters = draft.starters(value);
+        const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        starters.forEach((pick) => { counts[draft.position(value, pick.id)] = (counts[draft.position(value, pick.id)] || 0) + 1; });
+        return starters.length === 11 && counts[1] === 1 && counts[2] >= 3 && counts[3] >= 2 && counts[4] >= 1;
+    },
+    formation(value) {
+        const counts = { 2: 0, 3: 0, 4: 0 };
+        draft.starters(value).forEach((pick) => { const code = draft.position(value, pick.id); if (counts[code] !== undefined) counts[code] += 1; });
+        return `${counts[2]}-${counts[3]}-${counts[4]}`;
+    },
+    /* FPL's slot order: starters GK→FWD, then the bench keeper, then subs in order. */
+    normalize(value) {
+        const starters = draft.starters(value).sort((a, b) => draft.position(value, a.id) - draft.position(value, b.id));
+        const bench = draft.bench(value);
+        const keepers = bench.filter((pick) => draft.position(value, pick.id) === 1);
+        const others = bench.filter((pick) => draft.position(value, pick.id) !== 1);
+        [...starters, ...keepers, ...others].forEach((pick, index) => { pick.position = index + 1; });
+        return value;
+    },
+    swap(value, firstId, secondId) {
+        if (firstId === secondId) return { draft: value, error: "Pick two different players." };
+        const next = draft.copy(value);
+        const first = next.picks.find((pick) => pick.id === firstId);
+        const second = next.picks.find((pick) => pick.id === secondId);
+        if (!first || !second) return { draft: value, error: "Both players must be in your squad." };
+        const firstStarts = first.position <= 11;
+        const secondStarts = second.position <= 11;
+        const keeper = (pick) => draft.position(next, pick.id) === 1;
+        if (firstStarts && secondStarts) return { draft: value, error: "Both are already in the starting XI." };
+        if (!firstStarts && !secondStarts) {
+            if (keeper(first) || keeper(second)) return { draft: value, error: "The bench goalkeeper always sits first on the bench." };
+            [first.position, second.position] = [second.position, first.position];
+            return { draft: draft.normalize(next) };
+        }
+        const starter = firstStarts ? first : second;
+        const sub = firstStarts ? second : first;
+        if (keeper(starter) !== keeper(sub)) return { draft: value, error: "A goalkeeper can only swap with the other goalkeeper." };
+        [starter.position, sub.position] = [sub.position, starter.position];
+        // A benched captain or vice hands the armband to the player coming in.
+        ["is_captain", "is_vice_captain"].forEach((key) => {
+            if (starter[key]) {
+                starter[key] = false;
+                sub[key] = true;
+            }
+        });
+        if (!draft.formationOk(next)) return { draft: value, error: "That leaves an illegal formation (the XI needs 1 GK, 3+ DEF, 2+ MID and 1+ FWD)." };
+        return { draft: draft.normalize(next) };
+    },
+    moveBench(value, id, delta) {
+        const next = draft.copy(value);
+        const outfield = draft.bench(next).filter((pick) => draft.position(next, pick.id) !== 1);
+        const index = outfield.findIndex((pick) => pick.id === id);
+        const target = index + delta;
+        if (index < 0) return { draft: value, error: "Only outfield substitutes can be reordered." };
+        if (target < 0 || target >= outfield.length) return { draft: value, error: "Already at that end of the bench." };
+        [outfield[index].position, outfield[target].position] = [outfield[target].position, outfield[index].position];
+        return { draft: draft.normalize(next) };
+    },
+    setRole(value, id, key) {
+        const next = draft.copy(value);
+        const pick = next.picks.find((item) => item.id === id);
+        if (!pick) return { draft: value, error: "That player is not in your squad." };
+        if (pick.position > 11) return { draft: value, error: "Only a starter can wear the armband: bring him into the XI first." };
+        const other = key === "is_captain" ? "is_vice_captain" : "is_captain";
+        const holder = next.picks.find((item) => item[key]);
+        if (holder && holder.id === id) return { draft: value };
+        const swapping = pick[other];
+        next.picks.forEach((item) => { item[key] = false; });
+        pick[key] = true;
+        if (swapping) {
+            pick[other] = false;
+            if (holder) holder[other] = true;
+        }
+        return { draft: next };
+    },
+    transfer(value, outId, player) {
+        const next = draft.copy(value);
+        const pick = next.picks.find((item) => item.id === outId);
+        if (!pick) return { draft: value, error: "That player is not in your squad." };
+        if (next.picks.some((item) => item.id === player.id)) return { draft: value, error: `${player.web_name || "He"} is already in your squad.` };
+        const incoming = draft.info(player);
+        if (draft.position(next, outId) !== incoming.element_type) return { draft: value, error: "A transfer must replace a player in the same position." };
+        pick.id = player.id;
+        next.players[player.id] = incoming;
+        next.transfers = next.transfers || [];
+        const chained = next.transfers.find((item) => item.in === outId);
+        if (chained && chained.out === player.id) next.transfers = next.transfers.filter((item) => item !== chained);
+        else if (chained) chained.in = player.id;
+        else next.transfers.push({ out: outId, in: player.id });
+        return { draft: next };
+    },
+    undoTransfer(value, inId) {
+        const record = (value.transfers || []).find((item) => item.in === inId);
+        if (!record) return { draft: value, error: "That isn't a transfer made here." };
+        const original = value.players[record.out];
+        if (!original) return { draft: value, error: "The original player is unknown; reset to published instead." };
+        return draft.transfer(value, inId, { id: record.out, ...original });
+    },
+    setChip(value, chip) {
+        const next = draft.copy(value);
+        next.chip = draft.CHIPS[chip] ? chip : null;
+        return { draft: next };
+    },
+    setField(value, key, fieldValue) {
+        const next = draft.copy(value);
+        next[key] = fieldValue;
+        return { draft: next };
+    },
+    setPurchasePrice(value, id, price) {
+        const next = draft.copy(value);
+        next.purchase_prices = { ...(next.purchase_prices || {}) };
+        if (utils.isNumber(price)) next.purchase_prices[id] = Math.round(price * 10) / 10;
+        else delete next.purchase_prices[id];
+        return { draft: next };
+    },
+    /* Why a stored draft no longer applies, or null while it does. */
+    expire(value, { nextOpen, picksGameweek } = {}) {
+        if (!value) return null;
+        if (utils.isNumber(nextOpen) && value.gameweek < nextOpen) return `the GW${value.gameweek} deadline has passed`;
+        if (utils.isNumber(picksGameweek) && picksGameweek >= value.gameweek) return `FPL now shows your GW${value.gameweek} team`;
+        return null;
+    },
+    toRequest(value) {
+        return {
+            picks: value.picks.map(({ id, position, is_captain: captain, is_vice_captain: vice }) => ({ id, position, is_captain: Boolean(captain), is_vice_captain: Boolean(vice) })),
+            chip: value.chip || null,
+            free_transfers: utils.isNumber(value.free_transfers) ? value.free_transfers : null,
+            bank_override: utils.isNumber(value.bank_override) ? value.bank_override : null,
+            purchase_prices: value.purchase_prices || {},
+        };
+    },
+    exportJson(value, personal) {
+        return JSON.stringify({ kind: "openfpl-working-squad", version: 1, exported_at: new Date().toISOString(), draft: value || null, overrides: personal || {} }, null, 2);
+    },
+    importJson(text) {
+        const value = JSON.parse(text);
+        if (!value || value.kind !== "openfpl-working-squad") throw new Error("This isn't an OpenFPL working-squad file.");
+        if (value.draft && !draft.valid(value.draft)) throw new Error("The working squad in this file is damaged.");
+        return { draft: value.draft || null, overrides: overrides.clean(value.overrides || {}) };
+    },
+};
+
+/* A manager's own view of players: locks, bans, availability and xP %. */
+const overrides = {
+    PREFIX: "openfpl.admin.overrides.v1.",
+    load(entryId) {
+        try {
+            return overrides.clean(JSON.parse(storage.get("localStorage", overrides.PREFIX + entryId) || "{}"));
+        } catch (error) {
+            return {};
+        }
+    },
+    save(entryId, value) {
+        return storage.set("localStorage", overrides.PREFIX + entryId, JSON.stringify(value));
+    },
+    clamp(value, low, high) {
+        return Math.min(high, Math.max(low, value));
+    },
+    clean(value) {
+        const result = {};
+        Object.entries(value || {}).forEach(([key, item]) => {
+            const id = Number(key);
+            if (!Number.isInteger(id) || id < 1 || !item || typeof item !== "object") return;
+            const entry = {};
+            if (item.lock) entry.lock = true;
+            else if (item.ban) entry.ban = true;
+            if (utils.isNumber(item.availability)) entry.availability = overrides.clamp(item.availability, 0, 100);
+            if (utils.isNumber(item.xp_pct)) entry.xp_pct = overrides.clamp(item.xp_pct, 0, 200);
+            if (typeof item.web_name === "string") entry.web_name = item.web_name.slice(0, 60);
+            if (Number.isInteger(item.set_for_gw)) entry.set_for_gw = item.set_for_gw;
+            if (entry.lock || entry.ban || "availability" in entry || "xp_pct" in entry) result[id] = entry;
+        });
+        return result;
+    },
+    set(all, id, patch, gameweek) {
+        const entry = { ...(all[id] || {}), ...patch };
+        if (patch.lock) delete entry.ban;
+        if (patch.ban) delete entry.lock;
+        ["availability", "xp_pct"].forEach((key) => { if (key in patch && !utils.isNumber(patch[key])) delete entry[key]; });
+        if (utils.isNumber(patch.availability)) entry.set_for_gw = gameweek;
+        return overrides.clean({ ...all, [id]: entry });
+    },
+    remove(all, id) {
+        const next = { ...all };
+        delete next[id];
+        return next;
+    },
+    /* Availability is about one gameweek: drop it once that gameweek is past. */
+    expire(all, gameweek) {
+        const expired = [];
+        const next = {};
+        Object.entries(all).forEach(([id, item]) => {
+            const entry = { ...item };
+            if ("availability" in entry && Number.isInteger(entry.set_for_gw) && entry.set_for_gw < gameweek) {
+                expired.push({ id: Number(id), web_name: entry.web_name, availability: entry.availability, set_for_gw: entry.set_for_gw });
+                delete entry.availability;
+            }
+            next[id] = entry;
+        });
+        return { overrides: overrides.clean(next), expired };
+    },
+    toRequest(all) {
+        const result = {};
+        Object.entries(all).forEach(([id, item]) => {
+            result[id] = { lock: Boolean(item.lock), ban: Boolean(item.ban), availability: item.availability ?? null, xp_pct: item.xp_pct ?? null };
+        });
+        return result;
+    },
+};
+
+/* What changed for the squad since the manager last looked. */
+const alerts = {
+    PREFIX: "openfpl.admin.seen.v1.",
+    STATUS: { a: "available", d: "doubtful", i: "injured", s: "suspended", u: "unavailable", n: "not in the squad" },
+    load(entryId) {
+        try {
+            const value = JSON.parse(storage.get("localStorage", alerts.PREFIX + entryId) || "null");
+            return value && value.players ? value : null;
+        } catch (error) {
+            return null;
+        }
+    },
+    save(entryId, snapshot) {
+        return storage.set("localStorage", alerts.PREFIX + entryId, JSON.stringify(snapshot));
+    },
+    snapshot(squad, now = new Date()) {
+        const players = {};
+        (squad || []).forEach((row) => {
+            if (!row || row.unknown) return;
+            players[row.id] = {
+                web_name: row.web_name,
+                status: row.status ?? null,
+                news: row.news || "",
+                chance: row.chance_of_playing_next_round ?? null,
+                price: utils.isNumber(row.price) ? row.price : null,
+            };
+        });
+        return { at: now.toISOString(), players };
+    },
+    diff(previous, squad) {
+        if (!previous || !previous.players) return [];
+        const changes = [];
+        const status = (code) => alerts.STATUS[code] || code || "unknown";
+        const chance = (value) => (utils.isNumber(value) ? `${value}%` : "no flag");
+        (squad || []).forEach((row) => {
+            const before = previous.players[row.id];
+            if (!before || row.unknown) return;
+            const name = row.web_name || before.web_name;
+            const news = row.news || "";
+            if ((before.news || "") !== news) changes.push({ id: row.id, web_name: name, kind: "news", text: news ? `${name}: ${news}` : `${name}: news cleared` });
+            if ((before.status ?? null) !== (row.status ?? null)) changes.push({ id: row.id, web_name: name, kind: "status", text: `${name}: ${status(before.status)} → ${status(row.status)}` });
+            const nowChance = row.chance_of_playing_next_round ?? null;
+            if ((before.chance ?? null) !== nowChance) changes.push({ id: row.id, web_name: name, kind: "chance", text: `${name}: chance of playing ${chance(before.chance)} → ${chance(nowChance)}` });
+            if (utils.isNumber(before.price) && utils.isNumber(row.price) && Math.abs(before.price - row.price) > 1e-9) {
+                changes.push({ id: row.id, web_name: name, kind: "price", delta: Math.round((row.price - before.price) * 10) / 10, text: `${name}: £${utils.fmt(before.price, 1)}m → £${utils.fmt(row.price, 1)}m` });
+            }
+        });
+        return changes;
+    },
+};
+
 /* ---------- My team ---------- */
 views.myteam = {
+    SECTIONS: [["squad", "Squad"], ["plan", "Plan"], ["review", "Review"], ["leagues", "Leagues"]],
+    SECTION_KEY: "openfpl.admin.myteam.section",
+
     async render(main, context) {
-        main.append(sectionTitle("My team", "Your FPL squad scored against the AI, with every suggested move explained"));
+        main.append(sectionTitle("My team", "Your FPL squad as it really is: add the changes FPL can't see yet, then rate, advise, plan and review it"));
         const saved = storage.get("localStorage", CONFIG.storageKeys.entry) || "";
         const input = h("input", { type: "text", inputmode: "numeric", pattern: "[0-9]*", placeholder: "FPL team ID", value: saved, style: { width: "160px" }, "aria-label": "FPL team ID" });
         const recent = (() => {
@@ -2122,174 +2476,925 @@ views.myteam = {
 
     load(body, entryId, context) {
         clear(body);
-        const grid = h("div", { class: "grid" });
-        body.append(grid);
-        const profile = ui.card("Manager", `/api/fpl/managers/${entryId}`, { span: 4 });
-        const rating = ui.card("AI rating", `/api/scout/team-rating · GW${state.gameweek}`, { span: 8 });
-        const pitchCard = ui.card("Your squad", `Latest published picks, projected for GW${state.gameweek}`, { span: 6 });
-        const optimizeCard = ui.card("Optimize", "Transfers with your free transfers, or a Wildcard or Free Hit. Plans only: nothing changes on FPL.", { span: 6 });
-        const planCard = ui.card("Optimizer plan", "POST /api/admin/optimize");
-        const moves = ui.card("Suggested transfers", "Quick view: up to three single transfers for this gameweek, best first");
-        const squad = ui.card("Your squad against the AI", "Projections for the selected gameweek");
-        const picks = ui.card("Published picks", "/api/fpl/managers/{id}/gameweeks/{gw}/picks", { span: 5 });
-        const history = ui.card("Season history", "/api/fpl/managers/{id}/history", { span: 7 });
-        const transfers = ui.card("Transfer history", "/api/fpl/managers/{id}/transfers", { span: 6 });
-        const leagues = ui.card("Leagues and cups", "Classic and head-to-head standings, matches and cup status", { span: 6 });
-        [profile, rating, pitchCard, optimizeCard, planCard, moves, squad, picks, history, transfers, leagues].forEach((card) => grid.append(card.root));
-        clear(planCard.body).append(h("p", { class: "empty" }, "Choose a mode in Optimize and run it."));
-        ui.fill(optimizeCard, (target) => optimizerView.controls(target, entryId, planCard));
+        const loaded = overrides.load(entryId);
+        const session = {
+            entryId,
+            context,
+            team: null,
+            draft: draft.load(entryId),
+            overrides: loaded,
+            expired: [],
+            editing: false,
+            selected: null,
+            swapping: null,
+            picking: null,
+            outlookStale: true,
+            loaded: {},
+            requestId: 0,
+            section: views.myteam.SECTIONS.some(([key]) => key === storage.get("localStorage", views.myteam.SECTION_KEY)) ? storage.get("localStorage", views.myteam.SECTION_KEY) : "squad",
+            cards: {},
+        };
+        views.myteam.session = session;
+        session.scheduleRefresh = utils.debounce(() => views.myteam.refresh(session), 400);
+        const card = (key, title, subtitle, span) => { session.cards[key] = ui.card(title, subtitle, { span }); return session.cards[key].root; };
 
-        const managerPromise = api.get(`/api/fpl/managers/${entryId}`);
-        const ratingPromise = api.get("/api/scout/team-rating", { entry_id: entryId, gameweek: state.gameweek }, { timeoutMs: CONFIG.slowTimeoutMs });
+        const top = h("div", { class: "grid" },
+            card("profile", "Manager", `/api/fpl/managers/${entryId}`, 4),
+            card("status", "Working squad", "Changes FPL can't see yet, saved in this browser only", 8));
+        const switcher = h("div", { class: "segmented", role: "tablist", "aria-label": "My team sections" });
+        const sections = {
+            squad: h("div", { class: "grid" },
+                card("rating", "AI rating", "POST /api/admin/managers/{id}/team · working squad against the published one", 5),
+                card("pitch", "Your squad", "Click a player to explain him, or Edit to change your squad", 7),
+                card("advice", "Lineup & bench advisor", "Best XI, bench order and armband, with autosubs", 6),
+                card("captaincy", "Captaincy", "Armband options with model range, minutes risk and ownership", 6),
+                card("alerts", "News & prices", "Since your last visit, current flags and price pressure", 6),
+                card("personal", "Personal settings", "Locks, bans and your own availability or xP", 6),
+                card("moves", "Suggested transfers", "Up to three single transfers for this gameweek, best first", 12),
+                card("squadTable", "Your squad against the AI", "Projections for the selected gameweek", 12)),
+            plan: h("div", { class: "grid" },
+                card("optimize", "Optimize", "Transfers with your free transfers, or a Wildcard or Free Hit. Plans only: nothing changes on FPL.", 6),
+                card("chips", "Chip planner", "POST /api/admin/managers/{id}/outlook · what each chip adds, week by week", 6),
+                card("plan", "Optimizer plan", "POST /api/admin/optimize", 12),
+                card("ticker", "Fixture ticker", "Fixtures, difficulty and projected points for your squad", 12)),
+            review: h("div", { class: "grid" },
+                card("review", "Gameweek review", "GET /api/admin/managers/{id}/review · your decisions against hindsight", 12),
+                card("picks", "Published picks", "/api/fpl/managers/{id}/gameweeks/{gw}/picks", 5),
+                card("history", "Season history", "/api/fpl/managers/{id}/history", 7),
+                card("transfers", "Transfer history", "/api/fpl/managers/{id}/transfers", 12)),
+            leagues: h("div", { class: "grid" },
+                card("leagues", "Leagues and cups", "Classic and head-to-head standings, matches and cup status", 12)),
+        };
+        session.sections = sections;
+        session.switcher = switcher;
+        add(body, top, switcher, Object.values(sections));
+        clear(session.cards.plan.body).append(h("p", { class: "empty" }, "Choose a mode in Optimize and run it."));
 
-        ui.fill(profile, async (target) => {
-            const [manager, regions] = await Promise.all([managerPromise, data.regions().catch(() => null)]);
-            const record = manager.data || {};
-            const region = ((regions && regions.results) || []).find((item) => item.id === record.player_region_id);
-            clear(target).append(ui.kv([
-                ["Team", record.name],
-                ["Manager", `${record.player_first_name || ""} ${record.player_last_name || ""}`.trim()],
-                ["Region", (region && region.name) || record.player_region_name || "–"],
-                ["Favourite club", record.favourite_team ? record.favourite_team.name : "–"],
-                ["Overall points", utils.fmtInt(record.summary_overall_points)],
-                ["Overall rank", utils.fmtInt(record.summary_overall_rank)],
-                ["GW points · rank", `${utils.fmtInt(record.summary_event_points)} · ${utils.fmtInt(record.summary_event_rank)}`],
-                ["Squad value · bank", `£${utils.fmt(record.last_deadline_value, 1)}m · £${utils.fmt(record.last_deadline_bank, 1)}m`],
-                ["Current gameweek", record.current_event],
-                ["Seasons played", record.years_active],
-            ]));
+        session.managerPromise = api.get(`/api/fpl/managers/${entryId}`);
+        session.managerPromise.catch(() => null);
+        ui.fill(session.cards.profile, (target) => views.myteam.profile(target, session));
+        views.myteam.show(session, session.section);
+        views.myteam.refresh(session);
+    },
+
+    show(session, key) {
+        session.section = key;
+        storage.set("localStorage", views.myteam.SECTION_KEY, key);
+        clear(session.switcher);
+        views.myteam.SECTIONS.forEach(([name, label]) => {
+            session.switcher.append(h("button", {
+                type: "button", role: "tab", "aria-selected": name === key ? "true" : "false",
+                onClick: () => views.myteam.show(session, name),
+            }, label));
         });
+        Object.entries(session.sections).forEach(([name, node]) => { node.hidden = name !== key; });
+        if (key === "plan" && session.team) views.myteam.loadPlan(session);
+        if (key === "review" && !session.loaded.review) views.myteam.loadReview(session);
+        if (key === "leagues" && !session.loaded.leagues) {
+            session.loaded.leagues = true;
+            ui.fill(session.cards.leagues, (target) => views.myteam.leagues(target, session));
+        }
+    },
 
-        ui.fill(rating, async (target) => {
-            const result = await ratingPromise;
-            if (!context.alive()) return;
-            clear(target);
-            target.append(h("div", { class: "headline" },
-                h("span", { class: "big" }, `${result.rating}`),
-                h("span", { class: "secondary" }, `/ 100 · grade ${result.grade}`),
-                chip(`${utils.fmt(result.projected_points, 2)} projected vs AI ${utils.fmt(result.ai_projected_points, 2)}`),
-                result.frozen ? chip("Frozen forecast", "aqua") : chip("Live forecast", "lime"),
-                chip(`Picks from GW${result.picks_gameweek}`)));
-            charts.hbars(target, [
-                { label: "Starting XI (of 80)", value: result.components.starting_xi },
-                { label: "Captaincy (of 10)", value: result.components.captaincy },
-                { label: "Availability (of 10)", value: result.components.availability },
-            ], { format: (value) => utils.fmt(value, 1), valueLabel: "Points" });
-            target.append(h("div", { class: "split" },
-                h("div", null, h("h3", { class: "small muted" }, "Strengths"), h("ul", { class: "reasons" }, (result.strengths || []).map((item) => h("li", null, item)))),
-                h("div", null, h("h3", { class: "small muted" }, "Risks"), h("ul", { class: "reasons" }, (result.risks || []).map((item) => h("li", null, item))))));
-            const over = Object.entries(result.clubs_over_limit || {});
-            if (over.length) target.append(h("p", { class: "notes" }, `Over the club limit: ${over.map(([club, count]) => `${club} (${count})`).join(", ")}. Your next transfer out must come from one of them.`));
-            views.myteam.moves(moves.body, result);
-            views.myteam.squad(squad.body, result);
-            views.myteam.pitch(pitchCard.body, result);
-            ui.fill(picks, (picksTarget) => views.myteam.picks(picksTarget, entryId, result.picks_gameweek));
-        }).catch(() => null);
-        ratingPromise.catch((error) => {
-            [moves, squad, pitchCard].forEach((card) => clear(card.body).append(ui.errorBox(error)));
-            ui.fill(picks, async (picksTarget) => {
-                const manager = await managerPromise;
-                return views.myteam.picks(picksTarget, entryId, Math.min(state.gameweek, (manager.data || {}).current_event || state.gameweek));
+    async profile(target, session) {
+        const [manager, regions] = await Promise.all([session.managerPromise, data.regions().catch(() => null)]);
+        const record = manager.data || {};
+        session.manager = record;
+        const region = ((regions && regions.results) || []).find((item) => item.id === record.player_region_id);
+        clear(target).append(ui.kv([
+            ["Team", record.name],
+            ["Manager", `${record.player_first_name || ""} ${record.player_last_name || ""}`.trim()],
+            ["Region", (region && region.name) || record.player_region_name || "–"],
+            ["Favourite club", record.favourite_team ? record.favourite_team.name : "–"],
+            ["Overall points · rank", `${utils.fmtInt(record.summary_overall_points)} · ${utils.fmtInt(record.summary_overall_rank)}`],
+            ["GW points · rank", `${utils.fmtInt(record.summary_event_points)} · ${utils.fmtInt(record.summary_event_rank)}`],
+            ["Squad value · bank", `£${utils.fmt(record.last_deadline_value, 1)}m · £${utils.fmt(record.last_deadline_bank, 1)}m`],
+            ["Current gameweek", record.current_event],
+        ]));
+    },
+
+    /* The draft that applies to the gameweek on screen, if any. */
+    activeDraft(session) {
+        const team = session.team;
+        return session.draft && team && session.draft.gameweek === team.gameweek ? session.draft : null;
+    },
+
+    requestBody(session) {
+        const body = { gameweek: state.gameweek, overrides: overrides.toRequest(session.overrides) };
+        if (session.draft && session.draft.gameweek === state.gameweek) body.draft = draft.toRequest(session.draft);
+        return body;
+    },
+
+    async refresh(session) {
+        if (!session.context.alive()) return;
+        const id = ++session.requestId;
+        const body = views.myteam.requestBody(session);
+        const dependent = ["rating", "pitch", "advice", "captaincy", "alerts", "moves", "squadTable"];
+        dependent.forEach((key) => session.cards[key].root.classList.add("loading"));
+        try {
+            const team = await api.post(`/api/admin/managers/${session.entryId}/team`, body, undefined, { timeoutMs: CONFIG.slowTimeoutMs });
+            if (id !== session.requestId || !session.context.alive()) return;
+            const reason = draft.expire(session.draft, {
+                nextOpen: team.next_open_gameweek,
+                picksGameweek: session.draft && session.draft.gameweek === team.gameweek ? team.picks_gameweek : null,
             });
-        });
-
-        ui.fill(history, async (target) => {
-            const response = await api.get(`/api/fpl/managers/${entryId}/history`);
-            const payload = response.data || {};
-            const current = payload.current || [];
-            clear(target);
-            const average = (gameweek) => (state.eventsById[gameweek] || {}).average_entry_score;
-            target.append(h("h3", { class: "small muted", style: { margin: "0 0 4px" } }, "Points per gameweek"));
-            charts.lines(target, [
-                { name: "You", color: CONFIG.series[0], points: current.map((row) => ({ x: row.event, y: row.points })) },
-                { name: "Average manager", color: CONFIG.series[1], points: current.map((row) => ({ x: row.event, y: average(row.event) ?? null })) },
-            ], { format: (value) => utils.fmtInt(value), yMin: 0 });
-            target.append(h("h3", { class: "small muted", style: { margin: "12px 0 4px" } }, "Overall rank (higher is better)"));
-            charts.lines(target, [{ name: "Overall rank", color: CONFIG.series[0], points: current.map((row) => ({ x: row.event, y: row.overall_rank })) }], { invert: true, format: (value) => utils.fmtInt(value), height: 180 });
-            const chips = payload.chips || [];
-            target.append(h("div", { class: "chips", style: { margin: "10px 0" } }, chips.length ? chips.map((item) => chip(`${item.name} · GW${item.event}`, "aqua")) : h("span", { class: "muted small" }, "No chips played yet")));
-            target.append(ui.table(current.slice().reverse(), [
-                { key: "event", label: "GW", num: true },
-                { key: "points", label: "Pts", num: true },
-                { key: "points_on_bench", label: "Bench", num: true },
-                { key: "event_transfers", label: "Transfers", num: true },
-                { key: "event_transfers_cost", label: "Hits", num: true },
-                { key: "overall_rank", label: "Overall rank", num: true },
-                { key: "value", label: "Value", num: true, render: (row) => utils.fmt((row.value || 0) / 10, 1) },
-            ], { footer: false, pageSize: 10 }));
-            const past = payload.past || [];
-            if (past.length) {
-                target.append(h("h3", { class: "small muted", style: { margin: "12px 0 4px" } }, "Past seasons"));
-                target.append(ui.autoTable(past.slice().reverse(), { keys: ["season_name", "total_points", "rank"] }));
-            }
-        });
-
-        ui.fill(transfers, async (target) => {
-            const response = await api.get(`/api/fpl/managers/${entryId}/transfers`, { limit: 100 });
-            clear(target).append(ui.table(response.results || [], [
-                { key: "event", label: "GW", num: true },
-                { key: "out", label: "Out", value: (row) => (row.player_out || {}).web_name || row.element_out_id, render: (row) => `${(row.player_out || {}).web_name || row.element_out_id} (£${utils.fmt(row.element_out_cost, 1)})` },
-                { key: "in", label: "In", value: (row) => (row.player_in || {}).web_name || row.element_in_id, render: (row) => `${(row.player_in || {}).web_name || row.element_in_id} (£${utils.fmt(row.element_in_cost, 1)})` },
-                { key: "time", label: "When", render: (row) => utils.dateTime(row.time) },
-            ], { sortKey: "event", pageSize: 15, empty: "No transfers made yet." }));
-            target.append(h("p", { class: "small muted" }, `${response.total ?? 0} transfers this season.`));
-        });
-
-        ui.fill(leagues, async (target) => {
-            const manager = await managerPromise;
-            const record = manager.data || {};
-            const classic = ((record.leagues || {}).classic || []).map((league) => ({ ...league, kind: "classic" }));
-            const h2h = ((record.leagues || {}).h2h || []).map((league) => ({ ...league, kind: "h2h" }));
-            const all = [...classic, ...h2h];
-            clear(target);
-            if (!all.length) {
-                target.append(h("p", { class: "empty" }, "No leagues found."));
+            if (reason) {
+                draft.clear(session.entryId);
+                session.draft = null;
+                session.editing = false;
+                toast.show(`Your working squad was cleared: ${reason}.`, "info", 9000);
+                views.myteam.refresh(session);
                 return;
             }
-            const output = h("div", { class: "stack", style: { marginTop: "10px" } });
-            const select = h("select", { "aria-label": "League" }, all.map((league, index) => h("option", { value: index }, `${league.kind === "h2h" ? "H2H · " : ""}${league.name}${league.entry_rank ? ` (#${utils.fmtInt(league.entry_rank)})` : ""}`)));
-            const show = async () => {
-                const league = all[Number(select.value)];
-                clear(output).append(h("span", { class: "muted" }, "Loading…"));
-                try {
-                    const blocks = [];
-                    if (league.kind === "classic") {
-                        const standings = await api.get(`/api/fpl/leagues/classic/${league.id}/standings`, { page_standings: 1 });
-                        const results = ((standings.data || {}).standings || {}).results || [];
-                        blocks.push(ui.table(results, [
-                            { key: "rank", label: "#", num: true },
-                            { key: "entry_name", label: "Team", render: (row) => h("span", null, row.entry_name, h("span", { class: "sub" }, row.player_name)) },
-                            { key: "event_total", label: "GW", num: true },
-                            { key: "total", label: "Total", num: true },
-                        ], { sortKey: "rank", sortDir: "asc", pageSize: 25, rowClass: (row) => (Number(row.entry) === entryId ? "in-squad" : "") }));
-                    } else {
-                        const [standings, matches] = await Promise.all([
-                            api.get(`/api/fpl/leagues/h2h/${league.id}/standings`),
-                            api.get(`/api/fpl/leagues/h2h/${league.id}/matches`, { entry_id: entryId }),
-                        ]);
-                        blocks.push(ui.autoTable((((standings.data || {}).standings || {}).results) || [], { keys: ["rank", "entry_name", "player_name", "matches_won", "matches_drawn", "matches_lost", "points_for", "total"] }));
-                        blocks.push(h("h3", { class: "small muted" }, "Your head-to-head matches"));
-                        blocks.push(ui.autoTable(((matches.data || {}).results) || [], { keys: ["event", "entry_1_name", "entry_1_points", "entry_2_points", "entry_2_name", "winner"] }));
-                    }
-                    const cupButton = h("button", { class: "btn small", type: "button" }, "Cup status");
-                    const cupOutput = h("div");
-                    cupButton.addEventListener("click", async () => {
-                        try {
-                            const cup = await api.get(`/api/fpl/leagues/${league.id}/cup-status`);
-                            clear(cupOutput).append(ui.json(cup.data));
-                        } catch (error) {
-                            clear(cupOutput).append(ui.errorBox(error));
-                        }
-                    });
-                    clear(output).append(...blocks, h("div", { class: "row" }, cupButton), cupOutput);
-                } catch (error) {
-                    clear(output).append(ui.errorBox(error, show));
-                }
-            };
-            select.addEventListener("change", show);
-            target.append(select, output);
-            show();
+            const aged = overrides.expire(session.overrides, team.next_open_gameweek || team.gameweek);
+            if (aged.expired.length) {
+                session.overrides = aged.overrides;
+                session.expired = aged.expired;
+                overrides.save(session.entryId, session.overrides);
+                views.myteam.refresh(session);
+                return;
+            }
+            session.team = team;
+            views.myteam.renderSquad(session);
+            session.outlookStale = true;
+            if (session.section === "plan") views.myteam.loadPlan(session);
+        } catch (error) {
+            if (id !== session.requestId || !session.context.alive()) return;
+            if (error.status === 409 && body.draft) {
+                draft.clear(session.entryId);
+                session.draft = null;
+                toast.show(`Your working squad was cleared: ${error.message}`, "info", 9000);
+                views.myteam.refresh(session);
+                return;
+            }
+            ["rating", "pitch", "advice", "captaincy", "moves", "squadTable"].forEach((key) => clear(session.cards[key].body).append(ui.errorBox(error, () => views.myteam.refresh(session))));
+            clear(session.cards.status.body).append(ui.errorBox(error));
+        } finally {
+            if (id === session.requestId) dependent.forEach((key) => session.cards[key].root.classList.remove("loading"));
+        }
+    },
+
+    renderSquad(session) {
+        views.myteam.renderStatus(session);
+        views.myteam.renderRating(session);
+        views.myteam.renderPitch(session);
+        views.myteam.renderAdvice(session);
+        views.myteam.renderCaptaincy(session);
+        views.myteam.renderAlerts(session);
+        views.myteam.renderPersonal(session);
+        views.myteam.moves(session.cards.moves.body, session.team);
+        views.myteam.squad(session.cards.squadTable.body, session.team);
+    },
+
+    /* Apply a draft operation, save it, redraw at once and re-score shortly. */
+    edit(session, operation) {
+        if (!session.team || !session.team.transfers_open) {
+            toast.show("Edits are for a gameweek that is still open.", "error");
+            return false;
+        }
+        const base = views.myteam.activeDraft(session) || draft.fromPublished(session.team);
+        const result = operation(base);
+        if (result.error) {
+            toast.show(result.error, "error");
+            return false;
+        }
+        session.draft = { ...result.draft, updated_at: new Date().toISOString() };
+        draft.save(session.entryId, session.draft);
+        views.myteam.renderPitch(session);
+        views.myteam.renderStatus(session, true);
+        session.scheduleRefresh();
+        return true;
+    },
+
+    setOverride(session, id, patch, name) {
+        session.overrides = overrides.set(session.overrides, id, { ...patch, ...(name ? { web_name: name } : {}) }, (session.team && session.team.gameweek) || state.gameweek);
+        overrides.save(session.entryId, session.overrides);
+        views.myteam.renderPersonal(session);
+        if (session.editing) views.myteam.renderPitch(session);
+        session.scheduleRefresh();
+    },
+
+    reset(session) {
+        draft.clear(session.entryId);
+        session.draft = null;
+        session.selected = null;
+        session.swapping = null;
+        views.myteam.refresh(session);
+    },
+
+    exportFile(session) {
+        const text = draft.exportJson(session.draft, session.overrides);
+        utils.download(`openfpl-working-squad-${session.entryId}.json`, text, "application/json");
+    },
+
+    importFile(session) {
+        const input = h("input", { type: "file", accept: "application/json,.json", style: { display: "none" } });
+        input.addEventListener("change", async () => {
+            const file = input.files && input.files[0];
+            input.remove();
+            if (!file) return;
+            try {
+                const result = draft.importJson(await file.text());
+                if (result.draft && Number(result.draft.entry_id) !== session.entryId) throw new Error(`This file is for team ${result.draft.entry_id}.`);
+                session.draft = result.draft;
+                session.overrides = result.overrides;
+                if (session.draft) draft.save(session.entryId, session.draft);
+                else draft.clear(session.entryId);
+                overrides.save(session.entryId, session.overrides);
+                toast.show("Working squad imported", "success");
+                views.myteam.refresh(session);
+            } catch (error) {
+                toast.show(`Import failed: ${error.message}`, "error", 8000);
+            }
         });
+        document.body.append(input);
+        input.click();
+    },
+
+    renderStatus(session, pending = false) {
+        const card = session.cards.status;
+        const team = session.team;
+        const target = clear(card.body);
+        clear(card.actions);
+        const active = views.myteam.activeDraft(session);
+        const hasOverrides = Object.keys(session.overrides).length > 0;
+        if (active || hasOverrides) card.actions.append(h("button", { class: "btn small ghost", type: "button", onClick: () => views.myteam.exportFile(session) }, "Export"));
+        card.actions.append(h("button", { class: "btn small ghost", type: "button", onClick: () => views.myteam.importFile(session) }, "Import"));
+        if (active) card.actions.append(h("button", { class: "btn small danger", type: "button", onClick: () => views.myteam.reset(session) }, "Reset to published"));
+
+        if (!team.transfers_open) {
+            target.append(h("p", { style: { margin: 0 } }, statusBadge("neutral", `GW${team.gameweek} is closed: this is your published GW${team.picks_gameweek} team.`)));
+            if (session.draft) {
+                target.append(h("p", { class: "small secondary" }, `Your working squad is for GW${session.draft.gameweek}. `,
+                    h("button", { class: "btn small", type: "button", onClick: () => app.setGameweek(session.draft.gameweek) }, `Switch to GW${session.draft.gameweek}`)));
+            } else {
+                target.append(h("p", { class: "small muted" }, `To add changes FPL can't see yet, switch to GW${team.next_open_gameweek}. `,
+                    h("button", { class: "btn small", type: "button", onClick: () => app.setGameweek(team.next_open_gameweek) }, `Switch to GW${team.next_open_gameweek}`)));
+            }
+            return;
+        }
+        if (!active) {
+            target.append(h("p", { style: { margin: 0 } }, statusBadge("good", `Your published team (picks from GW${team.picks_gameweek}), planned for GW${team.gameweek}.`)),
+                h("p", { class: "small secondary" }, "Made transfers, changed the bench or the captain on FPL since the deadline? FPL only shows them after the next deadline, so add them here and every card uses them. ",
+                    h("button", { class: "btn small primary", type: "button", onClick: () => { session.editing = true; views.myteam.renderPitch(session); session.cards.pitch.root.scrollIntoView({ behavior: "smooth", block: "start" }); } }, "Edit your squad")));
+        } else {
+            const changes = team.edited ? team.changes || {} : {};
+            const summary = pending ? ["updating…"] : (changes.summary || []);
+            target.append(h("div", { class: "row" },
+                chip("Edited", "lime"),
+                summary.length ? summary.map((item) => chip(item)) : chip("No changes yet"),
+                h("span", { class: "small muted" }, `saved ${utils.timeAgo(active.updated_at)} · for GW${active.gameweek}`)));
+            const validation = team.validation || {};
+            if (!pending && (validation.errors || []).length) {
+                target.append(h("ul", { class: "reasons small", style: { marginTop: "8px" } }, validation.errors.map((item) => h("li", null, statusBadge("critical", item)))));
+            }
+            if (!pending && (validation.warnings || []).length) {
+                target.append(h("ul", { class: "reasons small", style: { marginTop: "8px" } }, validation.warnings.map((item) => h("li", null, statusBadge("warning", item)))));
+            }
+            if (!pending && changes.transfers && changes.transfers.length) {
+                target.append(h("p", { class: "small secondary", style: { marginBottom: 0 } },
+                    changes.transfers.map((item) => `${(item.out || {}).web_name || "–"} (£${utils.fmt((item.out || {}).sell, 1)}m) → ${(item.in || {}).web_name || "–"} (£${utils.fmt((item.in || {}).buy, 1)}m)`).join(" · "),
+                    ` · bank £${utils.fmt(changes.bank, 1)}m → £${utils.fmt(changes.bank_after, 1)}m`));
+            }
+        }
+        if (session.expired.length) {
+            target.append(h("p", { class: "notes" }, `Your availability for ${session.expired.map((item) => `${item.web_name || `#${item.id}`} (GW${item.set_for_gw})`).join(", ")} expired with its gameweek.`));
+        }
+    },
+
+    renderRating(session) {
+        const team = session.team;
+        const target = clear(session.cards.rating.body);
+        const working = team.rating;
+        const published = team.published_rating;
+        if (!working) {
+            target.append(statusBadge("warning", "The working squad can be rated once it has 15 players with 11 starters."));
+            return;
+        }
+        const changed = team.edited || (team.overrides_applied || []).length > 0;
+        const delta = published ? working.rating - published.rating : null;
+        target.append(h("div", { class: "headline" },
+            h("span", { class: "big" }, `${working.rating}`),
+            h("span", { class: "secondary" }, `/ 100 · grade ${working.grade}`),
+            changed && published ? chip(`published ${published.rating} (${utils.fmtSigned(delta, 0)})`, "aqua") : chip("Published team", "aqua"),
+            team.frozen ? chip("Frozen forecast", "aqua") : chip("Live forecast", "lime")));
+        const expected = team.expected || {};
+        target.append(ui.tiles([
+            { label: "Projected", value: utils.fmt(working.projected_points, 1), detail: `AI ${utils.fmt(working.ai_projected_points, 1)} · with your captain and chip` },
+            { label: "With autosubs", value: utils.fmt(expected.expected_points, 1), detail: `${utils.fmtSigned(expected.autosub_value, 1)} from the bench and vice` },
+            changed && published ? { label: "Published", value: utils.fmt(published.projected_points, 1), detail: `rating ${published.rating}` } : null,
+        ]));
+        charts.hbars(target, [
+            { label: "Starting XI (of 80)", value: working.components.starting_xi },
+            { label: "Captaincy (of 10)", value: working.components.captaincy },
+            { label: "Availability (of 10)", value: working.components.availability },
+        ], { format: (value) => utils.fmt(value, 1), valueLabel: "Points" });
+        target.append(h("div", { class: "split" },
+            h("div", null, h("h3", { class: "small muted" }, "Strengths"), h("ul", { class: "reasons" }, (working.strengths || []).map((item) => h("li", null, item)))),
+            h("div", null, h("h3", { class: "small muted" }, "Risks"), h("ul", { class: "reasons" }, (working.risks || []).map((item) => h("li", null, item))))));
+        const over = Object.entries(team.clubs_over_limit || {});
+        if (over.length) target.append(h("p", { class: "notes" }, `Over the club limit: ${over.map(([club, count]) => `${club} (${count})`).join(", ")}. Your next transfer out must come from one of them.`));
+        if ((team.overrides_applied || []).length) target.append(h("p", { class: "small muted" }, `Includes your own availability or xP for ${team.overrides_applied.length} player${team.overrides_applied.length > 1 ? "s" : ""}. ${team.benchmark}`));
+        (team.notes || []).forEach((note) => target.append(h("p", { class: "notes" }, note)));
+    },
+
+    /* Players for the pitch: the draft's picks (if any) with the latest scores. */
+    pitchPlayers(session) {
+        const team = session.team || {};
+        const rows = Object.fromEntries((team.squad || []).map((row) => [row.id, row]));
+        const active = views.myteam.activeDraft(session);
+        const picks = active ? draft.sorted(active) : [...(team.working_picks || [])].sort((a, b) => a.position - b.position);
+        const incoming = new Set(active ? (active.transfers || []).map((item) => item.in) : []);
+        const players = picks.map((pick) => {
+            const row = rows[pick.id];
+            const info = (active && active.players[pick.id]) || {};
+            const personal = session.overrides[pick.id] || {};
+            return {
+                ...info,
+                ...(row || {}),
+                id: pick.id,
+                pick_position: pick.position,
+                element_type: row ? row.element_type : info.element_type,
+                role: pick.is_captain ? "captain" : pick.is_vice_captain ? "vice" : "",
+                new: incoming.has(pick.id) || Boolean(row && row.new),
+                locked: Boolean(personal.lock),
+                banned: Boolean(personal.ban),
+                pending: !row,
+            };
+        });
+        return { players, startingIds: picks.filter((pick) => pick.position <= 11).map((pick) => pick.id), active };
+    },
+
+    renderPitch(session) {
+        const card = session.cards.pitch;
+        const team = session.team;
+        const target = clear(card.body);
+        clear(card.actions);
+        if (!team) return;
+        const { players, startingIds, active } = views.myteam.pitchPlayers(session);
+        if (team.transfers_open) {
+            card.actions.append(h("button", {
+                class: `btn small${session.editing ? " primary" : ""}`, type: "button", "aria-pressed": session.editing ? "true" : "false",
+                onClick: () => { session.editing = !session.editing; session.selected = null; session.swapping = null; session.picking = null; views.myteam.renderPitch(session); },
+            }, session.editing ? "Done editing" : "Edit squad"));
+        }
+        if (session.editing) {
+            const current = active || {};
+            const chipSelect = h("select", { "aria-label": "Chip for this gameweek" },
+                h("option", { value: "" }, "No chip"),
+                Object.entries(draft.CHIPS).map(([key, label]) => h("option", { value: key, selected: current.chip === key ? true : null }, label)));
+            chipSelect.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setChip(value, chipSelect.value)));
+            const estimate = (team.free_transfers || {}).free_transfers;
+            const free = h("input", { type: "number", min: 0, max: 5, step: 1, value: utils.isNumber(current.free_transfers) ? current.free_transfers : "", placeholder: utils.isNumber(estimate) ? String(estimate) : "∞", style: { width: "64px" }, "aria-label": "Free transfers before your changes" });
+            free.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setField(value, "free_transfers", free.value === "" ? null : Math.max(0, Math.min(5, Math.round(Number(free.value)))))));
+            const bank = h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.isNumber(current.bank_override) ? current.bank_override : "", placeholder: utils.fmt(team.changes ? team.changes.bank_computed : team.bank, 1), style: { width: "80px" }, "aria-label": "Bank override in £m" });
+            bank.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setField(value, "bank_override", bank.value === "" ? null : Math.max(0, Number(bank.value)))));
+            target.append(h("div", { class: "row", style: { marginBottom: "8px" } },
+                h("label", { class: "small row", style: { gap: "6px" } }, "Chip", chipSelect),
+                h("label", { class: "small row", style: { gap: "6px" }, title: "Free transfers you had before the changes below (blank: our estimate)" }, "Free transfers", free),
+                h("label", { class: "small row", style: { gap: "6px" }, title: "Leave blank to use the bank worked out from your transfers" }, "Bank £m", bank),
+                team.changes && team.changes.hits ? chip(`−${team.changes.hit_cost} hit`, "") : null));
+            target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
+                session.swapping ? `Now click the player to swap with ${(players.find((player) => player.id === session.swapping) || {}).web_name || ""} (or click him again to cancel).`
+                    : "Click a player for captaincy, substitutions, bench order, transfers and your own settings."));
+        }
+        const projected = utils.sum(players.map((player) => (player.expected_points || 0) * (player.multiplier || 0)));
+        const expected = team.expected || {};
+        target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
+            `${active ? `Working squad for GW${active.gameweek}` : `Picks from GW${team.picks_gameweek}`} · ${active ? draft.formation(active) : (team.validation || {}).formation || ""} · projected ${utils.fmt(projected, 2)}${utils.isNumber(expected.expected_points) ? ` · ${utils.fmt(expected.expected_points, 2)} with autosubs` : ""}`));
+        target.append(ui.pitch(players, {
+            startingIds,
+            selectedId: session.editing ? session.selected : null,
+            onClick: (player) => views.myteam.onPitchClick(session, player),
+        }));
+        if (session.editing && session.selected) {
+            const player = players.find((item) => item.id === session.selected);
+            if (player) target.append(views.myteam.actionPanel(session, player));
+        }
+    },
+
+    onPitchClick(session, player) {
+        if (!session.editing) {
+            drawer.open(player.id, player.web_name);
+            return;
+        }
+        if (session.swapping) {
+            const from = session.swapping;
+            session.swapping = null;
+            if (from !== player.id) {
+                session.selected = null;
+                views.myteam.edit(session, (value) => draft.swap(value, from, player.id));
+                return;
+            }
+        } else {
+            session.selected = session.selected === player.id ? null : player.id;
+            session.picking = null;
+        }
+        views.myteam.renderPitch(session);
+    },
+
+    actionPanel(session, player) {
+        const team = session.team;
+        const active = views.myteam.activeDraft(session) || draft.fromPublished(team);
+        const pick = active.picks.find((item) => item.id === player.id) || {};
+        const starting = pick.position <= 11;
+        const keeper = draft.position(active, player.id) === 1;
+        const incoming = (active.transfers || []).some((item) => item.in === player.id);
+        const personal = session.overrides[player.id] || {};
+        const row = (team.squad || []).find((item) => item.id === player.id) || {};
+        const panel = h("div", { class: "action-panel" });
+        const button = (label, onClick, options = {}) => h("button", { class: `btn small${options.kind ? ` ${options.kind}` : ""}`, type: "button", disabled: options.disabled ? true : null, title: options.title || null, "aria-pressed": options.pressed === undefined ? null : String(options.pressed), onClick }, label);
+        const run = (operation) => views.myteam.edit(session, operation);
+        panel.append(h("div", { class: "row" },
+            h("strong", null, player.web_name),
+            h("span", { class: "small muted" }, `${player.team_name || ""} · ${utils.positionName(player.element_type)} · ${starting ? `starting (slot ${pick.position})` : `bench ${pick.position - 11}`}`),
+            chip(`${utils.fmt(player.expected_points, 2)} xP`, "lime"),
+            utils.isNumber(row.selling_price) ? chip(`sells £${utils.fmt(row.selling_price, 1)}m`) : null,
+            incoming ? chip("bought here", "aqua") : null));
+        panel.append(h("div", { class: "btn-row", style: { marginTop: "8px" } },
+            button("Captain", () => run((value) => draft.setRole(value, player.id, "is_captain")), { disabled: !starting || pick.is_captain }),
+            button("Vice", () => run((value) => draft.setRole(value, player.id, "is_vice_captain")), { disabled: !starting || pick.is_vice_captain }),
+            button(starting ? "Bench him…" : "Bring him on…", () => { session.swapping = player.id; views.myteam.renderPitch(session); }),
+            !starting && !keeper ? button("Bench ←", () => run((value) => draft.moveBench(value, player.id, -1)), { title: "Earlier on the bench (comes on sooner)" }) : null,
+            !starting && !keeper ? button("Bench →", () => run((value) => draft.moveBench(value, player.id, 1)), { title: "Later on the bench" }) : null,
+            button("Transfer out…", () => { session.picking = session.picking === player.id ? null : player.id; views.myteam.renderPitch(session); }, { pressed: session.picking === player.id }),
+            incoming ? button("Undo transfer", () => { session.selected = null; run((value) => draft.undoTransfer(value, player.id)); }) : null,
+            button("Explain", () => drawer.open(player.id, player.web_name), { kind: "ghost" })));
+        const availability = h("input", { type: "number", min: 0, max: 100, step: 5, value: utils.isNumber(personal.availability) ? personal.availability : "", placeholder: utils.isNumber(row.base_availability_factor ?? row.availability_factor) ? String(Math.round((row.base_availability_factor ?? row.availability_factor) * 100)) : "100", style: { width: "64px" }, "aria-label": `My availability for ${player.web_name} (%)` });
+        availability.addEventListener("change", () => views.myteam.setOverride(session, player.id, { availability: availability.value === "" ? null : Number(availability.value) }, player.web_name));
+        const xp = h("input", { type: "number", min: 0, max: 200, step: 5, value: utils.isNumber(personal.xp_pct) ? personal.xp_pct : "", placeholder: "100", style: { width: "64px" }, "aria-label": `My xP % for ${player.web_name}` });
+        xp.addEventListener("change", () => views.myteam.setOverride(session, player.id, { xp_pct: xp.value === "" ? null : Number(xp.value) }, player.web_name));
+        const personalRow = h("div", { class: "row", style: { marginTop: "8px" } },
+            button(personal.lock ? "Locked" : "Lock", () => views.myteam.setOverride(session, player.id, { lock: !personal.lock }, player.web_name), { pressed: Boolean(personal.lock), title: "Never sold by suggestions or the optimizer" }),
+            button(personal.ban ? "Banned" : "Ban", () => views.myteam.setOverride(session, player.id, { ban: !personal.ban }, player.web_name), { pressed: Boolean(personal.ban), title: "Sold and never bought by the optimizer" }),
+            h("label", { class: "small row", style: { gap: "6px" } }, "My chance %", availability),
+            h("label", { class: "small row", style: { gap: "6px" } }, "My xP %", xp));
+        panel.append(personalRow);
+        if (!player.new && !incoming) {
+            const bought = h("input", { type: "number", min: 3, max: 20, step: 0.1, value: utils.isNumber((active.purchase_prices || {})[player.id]) ? active.purchase_prices[player.id] : "", placeholder: utils.fmt(row.purchase_price, 1), style: { width: "72px" }, "aria-label": `Price you paid for ${player.web_name}` });
+            bought.addEventListener("change", () => run((value) => draft.setPurchasePrice(value, player.id, bought.value === "" ? null : Number(bought.value))));
+            panel.append(h("div", { class: "row small", style: { marginTop: "8px" } },
+                h("label", { class: "row", style: { gap: "6px" }, title: "FPL doesn't publish what you paid; fix our estimate if it's wrong" }, "Bought for £", bought),
+                h("span", { class: "muted" }, row.purchase_source ? `estimate: ${row.purchase_source}` : "")));
+        }
+        if (session.picking === player.id) {
+            const holder = h("div", { style: { marginTop: "10px" } });
+            panel.append(holder);
+            views.myteam.transferPicker(holder, session, player);
+        }
+        return panel;
+    },
+
+    async transferPicker(holder, session, outgoing) {
+        holder.append(h("p", { class: "muted small" }, "Loading players…"));
+        let predictions;
+        try {
+            predictions = await data.predictions();
+        } catch (error) {
+            clear(holder).append(ui.errorBox(error));
+            return;
+        }
+        const team = session.team;
+        const active = views.myteam.activeDraft(session) || draft.fromPublished(team);
+        const position = draft.position(active, outgoing.id);
+        const inSquad = new Set(active.picks.map((pick) => pick.id));
+        const clubs = {};
+        active.picks.forEach((pick) => {
+            if (pick.id === outgoing.id) return;
+            const club = (active.players[pick.id] || {}).team_name;
+            clubs[club] = (clubs[club] || 0) + 1;
+        });
+        const row = (team.squad || []).find((item) => item.id === outgoing.id) || {};
+        const budget = (utils.isNumber(team.bank) ? team.bank : 0) + (utils.isNumber(row.selling_price) ? row.selling_price : (outgoing.price || 0));
+        const candidates = (predictions.players || []).filter((player) => player.element_type === position && !inSquad.has(player.id));
+        const search = h("input", { type: "search", placeholder: `Search ${utils.positionName(position)}s…`, "aria-label": "Search replacements", autocomplete: "off" });
+        const list = h("div", { class: "pick-list" });
+        const draw = () => {
+            const term = search.value.trim().toLowerCase();
+            const shown = candidates.filter((player) => !term || `${player.web_name} ${player.team_name}`.toLowerCase().includes(term)).slice(0, 24);
+            clear(list);
+            shown.forEach((player) => {
+                const full = (clubs[player.team_name] || 0) >= 3;
+                const over = utils.isNumber(player.price) ? player.price - budget : 0;
+                list.append(h("button", {
+                    class: "btn small pick", type: "button", disabled: full ? true : null,
+                    title: full ? `You already have 3 from ${player.team_name}` : player.news || null,
+                    onClick: () => {
+                        session.picking = null;
+                        session.selected = player.id;
+                        views.myteam.edit(session, (value) => draft.transfer(value, outgoing.id, player));
+                    },
+                },
+                h("strong", null, player.web_name),
+                h("span", { class: "muted" }, ` ${player.team_name} · £${utils.fmt(player.price, 1)}m`),
+                h("span", { class: "xp" }, ` ${utils.fmt(player.expected_points, 2)} xP`),
+                utils.isNumber(player.availability_factor) && player.availability_factor < 1 ? h("span", { class: "warn" }, ` ${utils.fmtPct(player.availability_factor)}`) : null,
+                full ? h("span", { class: "out" }, " club full") : over > 0.05 ? h("span", { class: "out" }, ` £${utils.fmt(over, 1)}m over`) : null));
+            });
+            if (!shown.length) list.append(h("span", { class: "muted small" }, "No match"));
+        };
+        search.addEventListener("input", draw);
+        clear(holder).append(h("p", { class: "small secondary", style: { margin: "0 0 6px" } },
+            `Replace ${outgoing.web_name}: £${utils.fmt(budget, 1)}m to spend (bank plus his selling price), best projections first.`), search, list);
+        draw();
+        search.focus();
+    },
+
+    renderAdvice(session) {
+        const team = session.team;
+        const target = clear(session.cards.advice.body);
+        const advice = team.advice;
+        if (!advice) {
+            target.append(h("p", { class: "empty" }, "Advice appears once the working squad is a legal 15."));
+            return;
+        }
+        const current = advice.current_expected || {};
+        const best = advice.expected || {};
+        target.append(h("div", { class: "row" },
+            advice.gain > 0.005 ? chip(`${utils.fmtSigned(advice.gain, 2)} expected`, "lime") : statusBadge("good", "Your lineup is already the best one"),
+            h("span", { class: "small secondary" }, `with autosubs: ${utils.fmt(current.expected_points, 2)} now → ${utils.fmt(best.expected_points, 2)} advised`)));
+        target.append(h("ul", { class: "reasons", style: { marginTop: "8px" } }, (advice.reasons || []).map((item) => h("li", null, item))));
+        const names = Object.fromEntries((team.squad || []).map((row) => [row.id, row.web_name]));
+        const bench = advice.bench_ids || [];
+        const use = best.bench_use || {};
+        target.append(h("p", { class: "small secondary" },
+            `Captain ${names[advice.captain_id] || "–"}, vice ${names[advice.vice_id] || "–"}. Bench: `,
+            bench.map((id, index) => `${index ? ", " : ""}${names[id] || `#${id}`}${utils.isNumber(use[id]) && use[id] > 0 ? ` (${utils.fmtPct(use[id])} to come on)` : ""}`).join(""), "."));
+        if (team.transfers_open && advice.changed) {
+            target.append(h("div", { class: "btn-row" }, h("button", { class: "btn small primary", type: "button", onClick: () => views.myteam.applyAdvice(session) }, "Apply to working squad")));
+        }
+        target.append(h("p", { class: "small muted" }, `${best.method === "sampled" ? `Sampled over ${best.scenarios} scenarios. ` : ""}${best.assumption || ""}`));
+    },
+
+    applyAdvice(session) {
+        const advice = session.team.advice;
+        views.myteam.edit(session, (value) => {
+            const ids = new Set(value.picks.map((pick) => pick.id));
+            if (advice.picks.length !== value.picks.length || advice.picks.some((pick) => !ids.has(pick.id))) {
+                return { draft: value, error: "Your squad changed since this advice; wait for it to update." };
+            }
+            const next = draft.copy(value);
+            next.picks = advice.picks.map((pick) => ({ id: pick.id, position: pick.position, is_captain: pick.is_captain, is_vice_captain: pick.is_vice_captain }));
+            return { draft: next };
+        });
+    },
+
+    renderCaptaincy(session) {
+        const team = session.team;
+        const target = clear(session.cards.captaincy.body);
+        const options = team.captaincy || [];
+        if (!options.length) {
+            target.append(h("p", { class: "empty" }, "No captaincy options until the squad is legal."));
+            return;
+        }
+        target.append(ui.table(options, [
+            { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, row.current_captain ? " " : null, row.current_captain ? chip("C", "lime") : null, row.current_vice ? " " : null, row.current_vice ? chip("V", "aqua") : null, row.starting ? null : chip("bench"), h("span", { class: "sub" }, `${row.team_name || ""} · ${row.position || ""}`)) },
+            { key: "armband_value", label: "Armband", num: true, digits: 2, title: "Expected extra points from the armband, with your vice as cover" },
+            { key: "points_if_plays", label: "If plays", num: true, title: "Projected points if he plays, and his chance of playing", render: (row) => h("span", null, utils.fmt(row.points_if_plays, 1), h("span", { class: "sub" }, `${utils.fmtPct(row.availability)} to play`)) },
+            { key: "model_spread", label: "Models", value: (row) => row.model_spread, title: "Lowest to highest model projection, and the risk it implies", render: (row) => h("span", null, utils.isNumber(row.model_min) ? `${utils.fmt(row.model_min, 1)}–${utils.fmt(row.model_max, 1)}` : "–", h("span", { class: "sub" }, `${row.risk} risk`)) },
+            { key: "ownership", label: "Own %", num: true, render: (row) => h("span", null, utils.fmt(row.ownership, 1), row.ownership_tag ? h("span", { class: "sub" }, row.ownership_tag) : null) },
+            { key: "fixtures", label: "Fixture", sort: false, render: (row) => ui.fixtures((row.fixtures || []).map((fixture) => ({ opponent: fixture.opponent_short || fixture.opponent, home: fixture.home, difficulty: fixture.difficulty }))) },
+            {
+                key: "action", label: "", sort: false,
+                render: (row) => (team.transfers_open && row.starting && !row.current_captain
+                    ? h("button", { class: "btn small", type: "button", title: `Make ${row.web_name} captain in your working squad`, onClick: (event) => { event.stopPropagation(); views.myteam.edit(session, (value) => draft.setRole(value, row.id, "is_captain")); } }, "C")
+                    : ""),
+            },
+        ], { footer: false, sortKey: "armband_value", onRowClick: (row) => drawer.open(row.id, row.web_name) }));
+    },
+
+    renderAlerts(session) {
+        const team = session.team;
+        const target = clear(session.cards.alerts.body);
+        const squad = (team.squad || []).filter((row) => !row.unknown);
+        const previous = alerts.load(session.entryId);
+        if (!previous) {
+            alerts.save(session.entryId, alerts.snapshot(squad));
+            target.append(h("p", { class: "small secondary", style: { marginTop: 0 } }, "Watching your squad from now on: changes to news, status, chance of playing and price show here on your next visit."));
+        } else {
+            const changes = alerts.diff(previous, squad);
+            target.append(h("div", { class: "row" },
+                h("h3", { class: "small muted", style: { margin: 0 } }, `Since ${utils.dateTime(previous.at)}`),
+                h("span", { class: "spacer" }),
+                h("button", { class: "btn small ghost", type: "button", onClick: () => { alerts.save(session.entryId, alerts.snapshot(squad)); views.myteam.renderAlerts(session); } }, "Mark all seen")));
+            target.append(changes.length
+                ? h("ul", { class: "reasons small" }, changes.map((item) => h("li", null, statusBadge(item.kind === "price" ? (item.delta > 0 ? "good" : "serious") : "warning", item.text))))
+                : h("p", { class: "small muted" }, "No changes since then."));
+        }
+        const flagged = squad.filter((row) => (row.status && row.status !== "a") || (utils.isNumber(row.chance_of_playing_next_round) && row.chance_of_playing_next_round < 100));
+        target.append(h("h3", { class: "small muted", style: { margin: "10px 0 4px" } }, "Flags"));
+        target.append(flagged.length
+            ? h("ul", { class: "reasons small" }, flagged.map((row) => h("li", null, statusBadge(utils.isNumber(row.chance_of_playing_next_round) && row.chance_of_playing_next_round > 0 ? "warning" : "critical",
+                `${row.web_name}: ${utils.isNumber(row.chance_of_playing_next_round) ? `${row.chance_of_playing_next_round}% · ` : ""}${row.news || alerts.STATUS[row.status] || row.status}`))))
+            : h("p", { class: "small muted" }, "Nobody in your squad is flagged."));
+        target.append(h("h3", { class: "small muted", style: { margin: "10px 0 4px" } }, "Price pressure (a heuristic: FPL's price algorithm isn't public)"));
+        const priced = squad.map((row) => ({ ...row, pressure: (row.price_pressure || {}).pressure }));
+        target.append(ui.table(priced, [
+            { key: "web_name", label: "Player" },
+            { key: "price", label: "£", num: true, digits: 1 },
+            { key: "gw_change", label: "GW Δ", num: true, value: (row) => (row.price_pressure || {}).change_this_gameweek, render: (row) => utils.fmtSigned((row.price_pressure || {}).change_this_gameweek, 1) },
+            { key: "net", label: "Net transfers", num: true, value: (row) => (row.price_pressure || {}).net_transfers, render: (row) => utils.fmtCompact((row.price_pressure || {}).net_transfers) },
+            { key: "pressure", label: "Of owners", num: true, render: (row) => utils.fmtPct(row.pressure, 1) },
+            { key: "direction", label: "Outlook", value: (row) => (row.price_pressure || {}).direction, render: (row) => {
+                const direction = (row.price_pressure || {}).direction;
+                return direction === "rise likely" ? statusBadge("good", direction) : direction === "fall likely" ? statusBadge("serious", direction) : h("span", { class: "muted" }, direction || "–");
+            } },
+            { key: "sells", label: "Sells now / after rise", sort: false, render: (row) => (row.selling_effect && utils.isNumber(row.selling_effect.now) ? `£${utils.fmt(row.selling_effect.now, 1)} / £${utils.fmt(row.selling_effect.after_rise, 1)}` : "–") },
+        ], { footer: false, sortKey: "pressure", pageSize: 6 }));
+    },
+
+    renderPersonal(session) {
+        const target = clear(session.cards.personal.body);
+        const gameweek = (session.team && session.team.gameweek) || state.gameweek;
+        target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
+            "Locks and bans steer the suggestions and the optimizer; your chance of playing and xP % change the projections everywhere in My team. Your chance of playing is for this gameweek and expires after it."));
+        target.append(ui.playerSearch((player) => views.myteam.setOverride(session, player.id, { xp_pct: 100 }, player.web_name), "Add a player…"));
+        const entries = Object.entries(session.overrides);
+        if (!entries.length) {
+            target.append(h("p", { class: "empty" }, "No personal settings yet. Add a player above, or use Lock, Ban and My chance on the pitch."));
+            return;
+        }
+        const rows = entries.map(([id, item]) => ({ id: Number(id), ...item }));
+        target.append(ui.table(rows, [
+            { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name || `#${row.id}`, utils.isNumber(row.set_for_gw) && utils.isNumber(row.availability) ? h("span", { class: "sub" }, `chance set for GW${row.set_for_gw}`) : null) },
+            { key: "lock", label: "Lock", sort: false, render: (row) => {
+                const box = h("input", { type: "checkbox", checked: row.lock ? true : null, "aria-label": `Lock ${row.web_name || row.id}` });
+                box.addEventListener("change", () => views.myteam.setOverride(session, row.id, { lock: box.checked }));
+                return box;
+            } },
+            { key: "ban", label: "Ban", sort: false, render: (row) => {
+                const box = h("input", { type: "checkbox", checked: row.ban ? true : null, "aria-label": `Ban ${row.web_name || row.id}` });
+                box.addEventListener("change", () => views.myteam.setOverride(session, row.id, { ban: box.checked }));
+                return box;
+            } },
+            { key: "availability", label: "Chance %", sort: false, render: (row) => {
+                const input = h("input", { type: "number", min: 0, max: 100, step: 5, value: utils.isNumber(row.availability) ? row.availability : "", placeholder: "FPL", style: { width: "64px" }, "aria-label": `My chance of playing for ${row.web_name || row.id}` });
+                input.addEventListener("change", () => views.myteam.setOverride(session, row.id, { availability: input.value === "" ? null : Number(input.value) }));
+                return input;
+            } },
+            { key: "xp_pct", label: "xP %", sort: false, render: (row) => {
+                const input = h("input", { type: "number", min: 0, max: 200, step: 5, value: utils.isNumber(row.xp_pct) ? row.xp_pct : "", placeholder: "100", style: { width: "64px" }, "aria-label": `My xP % for ${row.web_name || row.id}` });
+                input.addEventListener("change", () => views.myteam.setOverride(session, row.id, { xp_pct: input.value === "" ? null : Number(input.value) }));
+                return input;
+            } },
+            { key: "remove", label: "", sort: false, render: (row) => h("button", { class: "btn small ghost", type: "button", "aria-label": `Remove ${row.web_name || row.id}`, onClick: () => {
+                session.overrides = overrides.remove(session.overrides, row.id);
+                overrides.save(session.entryId, session.overrides);
+                views.myteam.renderPersonal(session);
+                session.scheduleRefresh();
+            } }, "Remove") },
+        ], { footer: false, sortKey: "web_name", sortDir: "asc" }));
+        target.append(h("p", { class: "small muted" }, `Planning GW${gameweek}.`));
+    },
+
+    /* ---------- Plan section ---------- */
+    loadPlan(session) {
+        ui.fill(session.cards.optimize, (target) => optimizerView.controls(target, session));
+        if (!session.outlookStale) return;
+        session.outlookStale = false;
+        views.myteam.loadOutlook(session);
+    },
+
+    async loadOutlook(session) {
+        const team = session.team;
+        const chipsCard = session.cards.chips;
+        const tickerCard = session.cards.ticker;
+        clear(chipsCard.actions);
+        const horizon = h("select", { "aria-label": "Gameweeks ahead" }, [3, 4, 5, 6, 7, 8].map((value) => h("option", { value, selected: value === (session.horizon || 5) ? true : null }, `${value} GWs`)));
+        horizon.addEventListener("change", () => { session.horizon = Number(horizon.value); views.myteam.loadOutlook(session); });
+        chipsCard.actions.append(horizon);
+        const body = { ...views.myteam.requestBody(session), horizon: session.horizon || 5 };
+        if (!team.transfers_open) {
+            delete body.draft;
+            body.gameweek = team.next_open_gameweek;
+        }
+        clear(chipsCard.body).append(h("p", { class: "muted" }, "Projecting the coming gameweeks… (the first run can take a few seconds)"));
+        clear(tickerCard.body).append(h("p", { class: "muted" }, "Loading fixtures and projections…"));
+        tickerCard.root.classList.add("loading");
+        await ui.fill(chipsCard, async (target) => {
+            const outlook = await api.post(`/api/admin/managers/${session.entryId}/outlook`, body, undefined, { timeoutMs: CONFIG.slowTimeoutMs });
+            if (!session.context.alive()) return;
+            views.myteam.renderChips(target, outlook);
+            views.myteam.renderTicker(tickerCard.body, outlook);
+        }).finally(() => tickerCard.root.classList.remove("loading"));
+        if (chipsCard.body.querySelector(".status.critical")) clear(tickerCard.body).append(h("p", { class: "empty" }, "The outlook could not be loaded."));
+    },
+
+    renderChips(target, outlook) {
+        clear(target);
+        const chips = outlook.chips || {};
+        const best = chips.best || {};
+        const names = { bboost: "Bench Boost", "3xc": "Triple Captain", freehit: "Free Hit" };
+        target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
+            `${outlook.edited ? "Your working squad" : "Your squad"} as it stands, with no further transfers: what each chip would add on top of your best XI and captain. Free Hit uses your £${utils.fmt(outlook.budget, 1)}m budget.`));
+        const cell = (key, row) => {
+            if (!utils.isNumber(row[key])) return "–";
+            const available = (row.available || {})[key] !== false;
+            const isBest = best[key] === row.gameweek;
+            return h("span", { class: available ? null : "muted", title: available ? null : "Already played this half (estimate)" },
+                utils.fmtSigned(row[key], 1), isBest ? " " : null, isBest ? chip("best", "lime") : null, available ? null : " (played)");
+        };
+        target.append(ui.table(chips.gameweeks || [], [
+            { key: "gameweek", label: "GW", num: true, render: (row) => h("span", null, `GW${row.gameweek}`, row.doubles ? " " : null, row.doubles ? chip(`${row.doubles} DGW`, "aqua") : null, row.blanks ? " " : null, row.blanks ? chip(`${row.blanks} blank`) : null) },
+            { key: "base", label: "Best XI + C", num: true, digits: 1 },
+            { key: "bboost", label: names.bboost, num: true, render: (row) => cell("bboost", row) },
+            { key: "3xc", label: names["3xc"], num: true, render: (row) => cell("3xc", row) },
+            { key: "freehit", label: names.freehit, num: true, render: (row) => cell("freehit", row) },
+            { key: "captain_name", label: "Captain" },
+        ], { footer: false, sort: false }));
+        const lines = Object.entries(names).map(([key, label]) => (best[key] ? `${label}: GW${best[key]}` : `${label}: not available in this window`));
+        target.append(h("p", { class: "small secondary" }, `Best week in this window: ${lines.join(" · ")}. Wildcard: run it in Optimize.`));
+        (outlook.notes || []).forEach((note) => target.append(h("p", { class: "small muted" }, note)));
+    },
+
+    renderTicker(target, outlook) {
+        clear(target);
+        const ticker = outlook.ticker || {};
+        const gameweeks = ticker.gameweeks || [];
+        const rows = ticker.rows || [];
+        const head = h("tr", null, h("th", { scope: "col" }, "Player"), gameweeks.map((gameweek) => h("th", { scope: "col", class: "num" }, `GW${gameweek}`)), h("th", { scope: "col", class: "num" }, "Total"), h("th", { scope: "col", class: "num", title: "Average fixture difficulty" }, "FDR"));
+        const body = h("tbody", null, rows.map((row) => h("tr", { class: "clickable", tabindex: 0, onClick: () => drawer.open(row.id, row.web_name) },
+            h("td", null, h("span", null, row.web_name, h("span", { class: "sub" }, `${row.team_name || ""} · ${row.position || ""}`))),
+            row.cells.map((cell) => h("td", { class: "ticker-cell" },
+                cell.fixtures.length ? h("div", { class: "row", style: { gap: "3px", justifyContent: "flex-end" } }, cell.fixtures.map((fixture) => ui.fdr(fixture.difficulty, `${fixture.opponent || "?"} ${fixture.home ? "H" : "A"}`))) : h("span", { class: "muted small" }, "blank"),
+                h("div", { class: "xp small" }, `${utils.fmt(cell.expected_points, 1)} xP`))),
+            h("td", { class: "num" }, utils.fmt(row.total, 1)),
+            h("td", { class: "num" }, utils.fmt(row.difficulty, 1)))));
+        const foot = h("tfoot", null, h("tr", null, h("th", { scope: "row" }, "Best XI + captain"), (ticker.totals || []).map((item) => h("td", { class: "num" }, utils.fmt(item.best_xi, 1))), h("td", { class: "num" }, utils.fmt(utils.sum((ticker.totals || []).map((item) => item.best_xi)), 1)), h("td")));
+        target.append(h("div", { class: "table-wrap" }, h("table", { class: "ticker" }, h("thead", null, head), body, foot)));
+        target.append(h("p", { class: "small muted" }, "Difficulty is FPL's fixture difficulty rating (1 easy – 5 hard). Projections include your own availability and xP settings."));
+    },
+
+    /* ---------- Review section ---------- */
+    async loadReview(session, gameweek) {
+        session.loaded.review = true;
+        const card = session.cards.review;
+        const manager = await session.managerPromise.catch(() => null);
+        const latest = Number((((manager || {}).data) || {}).current_event) || state.gameweek;
+        const chosen = gameweek || latest;
+        clear(card.actions);
+        const select = h("select", { "aria-label": "Gameweek to review" }, Array.from({ length: latest }, (_, index) => latest - index).map((value) => h("option", { value, selected: value === chosen ? true : null }, `GW${value}`)));
+        select.addEventListener("change", () => views.myteam.loadReview(session, Number(select.value)));
+        card.actions.append(select);
+        ui.fill(card, async (target) => {
+            const review = await api.get(`/api/admin/managers/${session.entryId}/review`, { gameweek: chosen }, { timeoutMs: CONFIG.slowTimeoutMs });
+            views.myteam.renderReview(target, review);
+        });
+        ui.fill(session.cards.picks, (target) => views.myteam.picks(target, session.entryId, chosen));
+        if (!gameweek) {
+            ui.fill(session.cards.history, (target) => views.myteam.history(target, session.entryId));
+            ui.fill(session.cards.transfers, (target) => views.myteam.transferHistory(target, session.entryId));
+        }
+    },
+
+    renderReview(target, review) {
+        clear(target);
+        const points = review.points || {};
+        const captain = review.captain || {};
+        const hindsight = review.hindsight || {};
+        const moves = review.transfers || {};
+        target.append(h("div", { class: "row" },
+            review.provisional ? chip("Provisional: still being played", "aqua") : chip("Final", "lime"),
+            review.chip ? chip(draft.CHIPS[review.chip] || review.chip, "aqua") : null,
+            points.matches === false ? h("span", { class: "small muted", title: "Our sum from live points differs from FPL's (bonus or late corrections)" }, `FPL says ${utils.fmtInt(points.official)}, live points add to ${utils.fmt(points.computed, 0)}`) : null));
+        target.append(ui.tiles([
+            { label: "Points", value: utils.fmtInt(points.official ?? points.computed), detail: `${points.hits ? `−${points.hits} hits → ${utils.fmtInt(points.net)} · ` : ""}average ${utils.fmtInt(review.average)} · top ${utils.fmtInt(review.highest)}` },
+            { label: "Captain", value: `${captain.armband_name || "–"} ${utils.fmtInt(captain.points)}×${captain.multiplier || 2}`, detail: captain.cost > 0 ? `${captain.best_name} (${utils.fmtInt(captain.best_points)}) would have added ${utils.fmt(captain.cost, 0)}` : "the best choice in hindsight" },
+            { label: "Bench", value: utils.fmtInt(review.bench ? review.bench.official ?? review.bench.computed : null), detail: "points left on the bench" },
+            { label: "Best XI in hindsight", value: utils.fmt(hindsight.total, 0), detail: utils.isNumber(hindsight.left_on_table) ? `${utils.fmt(hindsight.left_on_table, 0)} more than you scored` : "" },
+            moves.count ? { label: "Transfers", value: utils.fmtSigned(moves.since_net ?? moves.net, 0), detail: `${moves.verdict}${moves.hits ? ` after −${moves.hits}` : ""}${utils.isNumber(moves.since_net) ? " (that week and since)" : ""}` } : null,
+            { label: "Overall rank", value: utils.fmtInt(review.overall_rank), detail: `GW rank ${utils.fmtInt(review.rank)}` },
+        ]));
+        const players = (review.players || []).map((player) => ({ ...player, role: player.role, expected_points: player.points }));
+        const startingIds = players.filter((player) => player.in_final_xi).map((player) => player.id);
+        const grid = h("div", { class: "split" });
+        grid.append(h("div", null,
+            h("h3", { class: "small muted", style: { margin: "0 0 6px" } }, "Your team as it scored (after autosubs)"),
+            ui.pitch(players, { startingIds, value: (player) => player.points, unit: "pts" }),
+            (review.autosubs || []).length ? h("p", { class: "small secondary" }, `Autosubs: ${review.autosubs.map((sub) => `${sub.in_name} for ${sub.out_name}`).join(", ")}`) : null));
+        const side = h("div", { class: "stack", style: { alignContent: "start" } });
+        if (moves.count) {
+            side.append(h("h3", { class: "small muted", style: { margin: 0 } }, moves.free_hit ? "Free Hit moves (the squad reverted after)" : "Transfers that week"));
+            side.append(ui.table(moves.items || [], [
+                { key: "out_name", label: "Out", render: (row) => `${row.out_name} (${utils.fmtInt(row.out_points)})` },
+                { key: "in_name", label: "In", render: (row) => `${row.in_name} (${utils.fmtInt(row.in_points)})` },
+                { key: "delta", label: "That week", num: true, render: (row) => utils.fmtSigned(row.delta, 0) },
+                { key: "since_delta", label: "Since", num: true, render: (row) => utils.fmtSigned(row.since_delta, 0) },
+            ], { footer: false, sort: false }));
+        }
+        const forecast = review.forecast || {};
+        if (forecast.available) {
+            side.append(h("h3", { class: "small muted", style: { margin: 0 } }, `The AI's forecast: ${utils.fmt(forecast.xi_expected, 1)} expected for your XI and captain, ${utils.fmt(forecast.xi_points, 0)} scored`));
+            side.append(ui.table(forecast.players || [], [
+                { key: "web_name", label: "Starter" },
+                { key: "expected_points", label: "xP", num: true, digits: 1 },
+                { key: "points", label: "Pts", num: true, digits: 0 },
+                { key: "difference", label: "Δ", num: true, render: (row) => utils.fmtSigned(row.difference, 1) },
+            ], { footer: false, sortKey: "difference", pageSize: 11, onRowClick: (row) => drawer.open(row.id, row.web_name) }));
+        } else {
+            side.append(h("p", { class: "small muted" }, "No archived forecast for this gameweek, so xP can't be compared."));
+        }
+        grid.append(side);
+        target.append(grid);
+    },
+
+    async history(target, entryId) {
+        const response = await api.get(`/api/fpl/managers/${entryId}/history`);
+        const payload = response.data || {};
+        const current = payload.current || [];
+        clear(target);
+        const average = (gameweek) => (state.eventsById[gameweek] || {}).average_entry_score;
+        target.append(h("h3", { class: "small muted", style: { margin: "0 0 4px" } }, "Points per gameweek"));
+        charts.lines(target, [
+            { name: "You", color: CONFIG.series[0], points: current.map((row) => ({ x: row.event, y: row.points })) },
+            { name: "Average manager", color: CONFIG.series[1], points: current.map((row) => ({ x: row.event, y: average(row.event) ?? null })) },
+        ], { format: (value) => utils.fmtInt(value), yMin: 0 });
+        target.append(h("h3", { class: "small muted", style: { margin: "12px 0 4px" } }, "Overall rank (higher is better)"));
+        charts.lines(target, [{ name: "Overall rank", color: CONFIG.series[0], points: current.map((row) => ({ x: row.event, y: row.overall_rank })) }], { invert: true, format: (value) => utils.fmtInt(value), height: 180 });
+        const chips = payload.chips || [];
+        target.append(h("div", { class: "chips", style: { margin: "10px 0" } }, chips.length ? chips.map((item) => chip(`${item.name} · GW${item.event}`, "aqua")) : h("span", { class: "muted small" }, "No chips played yet")));
+        target.append(ui.table(current.slice().reverse(), [
+            { key: "event", label: "GW", num: true },
+            { key: "points", label: "Pts", num: true },
+            { key: "points_on_bench", label: "Bench", num: true },
+            { key: "event_transfers", label: "Transfers", num: true },
+            { key: "event_transfers_cost", label: "Hits", num: true },
+            { key: "overall_rank", label: "Overall rank", num: true },
+            { key: "value", label: "Value", num: true, render: (row) => utils.fmt((row.value || 0) / 10, 1) },
+        ], { footer: false, pageSize: 10 }));
+        const past = payload.past || [];
+        if (past.length) {
+            target.append(h("h3", { class: "small muted", style: { margin: "12px 0 4px" } }, "Past seasons"));
+            target.append(ui.autoTable(past.slice().reverse(), { keys: ["season_name", "total_points", "rank"] }));
+        }
+    },
+
+    async transferHistory(target, entryId) {
+        const response = await api.get(`/api/fpl/managers/${entryId}/transfers`, { limit: 100 });
+        clear(target).append(ui.table(response.results || [], [
+            { key: "event", label: "GW", num: true },
+            { key: "out", label: "Out", value: (row) => (row.player_out || {}).web_name || row.element_out_id, render: (row) => `${(row.player_out || {}).web_name || row.element_out_id} (£${utils.fmt(row.element_out_cost, 1)})` },
+            { key: "in", label: "In", value: (row) => (row.player_in || {}).web_name || row.element_in_id, render: (row) => `${(row.player_in || {}).web_name || row.element_in_id} (£${utils.fmt(row.element_in_cost, 1)})` },
+            { key: "time", label: "When", render: (row) => utils.dateTime(row.time) },
+        ], { sortKey: "event", pageSize: 15, empty: "No transfers made yet." }));
+        target.append(h("p", { class: "small muted" }, `${response.total ?? 0} transfers this season.`));
+    },
+
+    async leagues(target, session) {
+        const entryId = session.entryId;
+        const manager = await session.managerPromise;
+        const record = manager.data || {};
+        const classic = ((record.leagues || {}).classic || []).map((league) => ({ ...league, kind: "classic" }));
+        const h2h = ((record.leagues || {}).h2h || []).map((league) => ({ ...league, kind: "h2h" }));
+        const all = [...classic, ...h2h];
+        clear(target);
+        if (!all.length) {
+            target.append(h("p", { class: "empty" }, "No leagues found."));
+            return;
+        }
+        const output = h("div", { class: "stack", style: { marginTop: "10px" } });
+        const select = h("select", { "aria-label": "League" }, all.map((league, index) => h("option", { value: index }, `${league.kind === "h2h" ? "H2H · " : ""}${league.name}${league.entry_rank ? ` (#${utils.fmtInt(league.entry_rank)})` : ""}`)));
+        const show = async () => {
+            const league = all[Number(select.value)];
+            clear(output).append(h("span", { class: "muted" }, "Loading…"));
+            try {
+                const blocks = [];
+                if (league.kind === "classic") {
+                    const standings = await api.get(`/api/fpl/leagues/classic/${league.id}/standings`, { page_standings: 1 });
+                    const results = ((standings.data || {}).standings || {}).results || [];
+                    blocks.push(ui.table(results, [
+                        { key: "rank", label: "#", num: true },
+                        { key: "entry_name", label: "Team", render: (row) => h("span", null, row.entry_name, h("span", { class: "sub" }, row.player_name)) },
+                        { key: "event_total", label: "GW", num: true },
+                        { key: "total", label: "Total", num: true },
+                    ], { sortKey: "rank", sortDir: "asc", pageSize: 25, rowClass: (row) => (Number(row.entry) === entryId ? "in-squad" : "") }));
+                } else {
+                    const [standings, matches] = await Promise.all([
+                        api.get(`/api/fpl/leagues/h2h/${league.id}/standings`),
+                        api.get(`/api/fpl/leagues/h2h/${league.id}/matches`, { entry_id: entryId }),
+                    ]);
+                    blocks.push(ui.autoTable((((standings.data || {}).standings || {}).results) || [], { keys: ["rank", "entry_name", "player_name", "matches_won", "matches_drawn", "matches_lost", "points_for", "total"] }));
+                    blocks.push(h("h3", { class: "small muted" }, "Your head-to-head matches"));
+                    blocks.push(ui.autoTable(((matches.data || {}).results) || [], { keys: ["event", "entry_1_name", "entry_1_points", "entry_2_points", "entry_2_name", "winner"] }));
+                }
+                const cupButton = h("button", { class: "btn small", type: "button" }, "Cup status");
+                const cupOutput = h("div");
+                cupButton.addEventListener("click", async () => {
+                    try {
+                        const cup = await api.get(`/api/fpl/leagues/${league.id}/cup-status`);
+                        clear(cupOutput).append(ui.json(cup.data));
+                    } catch (error) {
+                        clear(cupOutput).append(ui.errorBox(error));
+                    }
+                });
+                clear(output).append(...blocks, h("div", { class: "row" }, cupButton), cupOutput);
+            } catch (error) {
+                clear(output).append(ui.errorBox(error, show));
+            }
+        };
+        select.addEventListener("change", show);
+        target.append(select, output);
+        show();
     },
 
     moves(target, result) {
@@ -2343,26 +3448,17 @@ views.myteam = {
         }
     },
 
-    pitch(target, result) {
-        const players = (result.squad || []).slice().sort((a, b) => a.pick_position - b.pick_position);
-        const starting = players.filter((player) => player.pick_position <= 11).map((player) => player.id);
-        const projected = utils.sum(players.map((player) => (player.expected_points || 0) * (player.multiplier || 0)));
-        clear(target).append(
-            h("p", { class: "small secondary", style: { marginTop: 0 } },
-                `Picks from GW${result.picks_gameweek} · projected ${utils.fmt(projected, 2)} with your captain and bench as picked`),
-            ui.pitch(players, { startingIds: starting }));
-    },
-
     squad(target, result) {
         clear(target).append(ui.table(result.squad || [], [
+            { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, row.role ? " " : null, row.role ? chip(row.role === "captain" ? "C" : "V", "lime") : null, row.new ? " " : null, row.new ? chip("IN", "aqua") : null, row.projection_missing ? chip("no projection") : null, row.overridden ? chip("your view") : null, h("span", { class: "sub" }, `${row.team_name || ""} · ${utils.positionName(row.element_type || row.position)}`)) },
             { key: "pick_position", label: "Slot", num: true },
-            { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, row.role ? " " : null, row.role ? chip(row.role === "captain" ? "C" : "V", "lime") : null, row.projection_missing ? chip("no projection") : null, h("span", { class: "sub" }, `${row.team_name || ""} · ${utils.positionName(row.element_type || row.position)}`)) },
             { key: "expected_points", label: "xP", num: true, digits: 2 },
             { key: "availability_factor", label: "Avail.", render: ui.availability },
             { key: "multiplier", label: "×", num: true },
             { key: "price", label: "£", num: true, digits: 1 },
+            { key: "selling_price", label: "Sells", num: true, digits: 1, title: "Estimated selling price" },
             { key: "selected_by_percent", label: "Own %", num: true, digits: 1 },
-        ], { sortKey: "pick_position", sortDir: "asc", footer: false, onRowClick: (row) => drawer.open(row.id, row.web_name) }));
+        ], { sortKey: "pick_position", sortDir: "asc", footer: false, empty: "No players.", onRowClick: (row) => !row.unknown && drawer.open(row.id, row.web_name) }));
     },
 
     async picks(target, entryId, gameweek) {
@@ -2396,18 +3492,25 @@ const optimizerView = {
     },
     mode: "transfers",
 
-    async controls(target, entryId, planCard) {
-        const context = await api.get(`/api/admin/managers/${entryId}/plan-context`, data.gameweekQuery(), { timeoutMs: CONFIG.slowTimeoutMs });
+    /* Inputs come from the working squad (POST .../team), so plans start from it. */
+    controls(target, session) {
+        const team = session.team;
         clear(target);
-        const estimate = context.free_transfers || {};
-        const estimated = estimate.unlimited ? 15 : estimate.free_transfers ?? 1;
+        if (!team.transfers_open) {
+            target.append(h("p", null, statusBadge("neutral", `GW${team.gameweek} is closed, so it can't be planned.`)),
+                h("button", { class: "btn small", type: "button", onClick: () => app.setGameweek(team.next_open_gameweek) }, `Plan from GW${team.next_open_gameweek}`));
+            return;
+        }
+        const planCard = session.cards.plan;
+        const estimate = team.free_transfers || {};
+        const remaining = estimate.unlimited ? 15 : (team.free_transfers_remaining ?? estimate.free_transfers ?? 1);
         const inputs = {
-            free: h("input", { type: "number", min: 0, max: 5, step: 1, value: Math.min(5, estimated), style: { width: "72px" }, "aria-label": "Free transfers", id: "opt-free" }),
-            bank: h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.fmt(context.bank, 1).replace(/,/g, ""), style: { width: "88px" }, "aria-label": "Bank in £m", id: "opt-bank" }),
+            free: h("input", { type: "number", min: 0, max: 5, step: 1, value: Math.min(5, remaining), style: { width: "72px" }, "aria-label": "Free transfers", id: "opt-free" }),
+            bank: h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.fmt(Math.max(0, team.bank || 0), 1).replace(/,/g, ""), style: { width: "88px" }, "aria-label": "Bank in £m", id: "opt-bank" }),
             horizon: h("select", { "aria-label": "Gameweeks to plan for", id: "opt-horizon" }, [1, 2, 3, 4, 5].map((value) => h("option", { value, selected: value === 3 ? true : null }, `${value} GW${value > 1 ? "s" : ""}`))),
-            max: h("select", { "aria-label": "Most transfers to consider", id: "opt-max" }, [0, 1, 2, 3, 4, 5, 6, 7, 8].map((value) => h("option", { value, selected: value === Math.min(8, Math.min(5, estimated) + 2) ? true : null }, `${value}`))),
+            max: h("select", { "aria-label": "Most transfers to consider", id: "opt-max" }, [0, 1, 2, 3, 4, 5, 6, 7, 8].map((value) => h("option", { value, selected: value === Math.min(8, Math.min(5, remaining) + 2) ? true : null }, `${value}`))),
         };
-        const chips = (context.chips && context.chips.chips) || {};
+        const chips = (team.chips && team.chips.chips) || {};
         const chipNote = h("p", { class: "small muted", style: { margin: 0 } });
         const transferOnly = h("div", { class: "row" },
             h("label", { class: "small row", style: { gap: "6px" } }, "Plan over", inputs.horizon),
@@ -2417,7 +3520,7 @@ const optimizerView = {
         const renderMode = () => {
             clear(switcher);
             Object.entries(optimizerView.MODES).forEach(([key, mode]) => {
-                const label = key === "wildcard" ? `${mode.label} · 5 GWs` : key === "freehit" ? `${mode.label} · GW${context.gameweek}` : mode.label;
+                const label = key === "wildcard" ? `${mode.label} · 5 GWs` : key === "freehit" ? `${mode.label} · GW${team.gameweek}` : mode.label;
                 switcher.append(h("button", {
                     type: "button", role: "tab", "aria-selected": optimizerView.mode === key ? "true" : "false",
                     onClick: () => { optimizerView.mode = key; renderMode(); },
@@ -2425,47 +3528,53 @@ const optimizerView = {
             });
             description.textContent = optimizerView.MODES[optimizerView.mode].detail;
             transferOnly.hidden = optimizerView.mode !== "transfers";
-            const chip = chips[optimizerView.mode];
-            chipNote.textContent = chip && !chip.available_this_half
-                ? `${optimizerView.MODES[optimizerView.mode].label} already played this half (GW${chip.played.join(", GW")}), so this is a what-if.`
-                : chip ? `${optimizerView.MODES[optimizerView.mode].label} looks available this half (${context.chips.half}, estimate).` : "";
+            const status = chips[optimizerView.mode];
+            chipNote.textContent = status && !status.available_this_half
+                ? `${optimizerView.MODES[optimizerView.mode].label} already played this half (GW${status.played.join(", GW")}), so this is a what-if.`
+                : status ? `${optimizerView.MODES[optimizerView.mode].label} looks available this half (${team.chips.half}, estimate).` : "";
         };
         renderMode();
 
         const trail = (estimate.trail || []).map((row) => h("li", null,
             `GW${row.gameweek}: ${row.note}${row.available !== undefined ? ` (had ${row.available})` : ""} → ${row.available_next} for the next gameweek`));
-        target.append(
+        const locks = Object.entries(session.overrides).filter(([, item]) => item.lock || item.ban);
+        add(target,
+            team.edited ? h("p", { class: "small", style: { marginTop: 0 } }, chip("Working squad", "lime"), ` Plans start from your edited squad${(team.changes || {}).count ? ` after its ${team.changes.count} transfer${team.changes.count > 1 ? "s" : ""}` : ""}.`) : null,
             switcher, description,
             h("div", { class: "row", style: { marginTop: "10px" } },
                 h("label", { class: "small row", style: { gap: "6px" } }, "Free transfers", inputs.free),
-                chip(estimate.unlimited ? "unlimited before the first deadline" : `estimated ${estimated}`, "aqua"),
+                chip(estimate.unlimited ? "unlimited before the first deadline" : `estimated ${estimate.free_transfers}${team.edited && team.free_transfers_remaining !== estimate.free_transfers ? `, ${team.free_transfers_remaining} left` : ""}`, "aqua"),
                 h("label", { class: "small row", style: { gap: "6px" } }, "Bank £m", inputs.bank)),
             transferOnly,
             chipNote,
+            locks.length ? h("p", { class: "small secondary", style: { margin: "6px 0 0" } }, `Respecting ${locks.map(([id, item]) => `${item.lock ? "lock" : "ban"} ${item.web_name || `#${id}`}`).join(", ")}.`) : null,
             h("div", { class: "btn-row", style: { marginTop: "12px" } },
-                h("button", { class: "btn primary", type: "button", id: "opt-run", onClick: () => optimizerView.run(entryId, inputs, planCard) }, "Optimize")),
-            h("p", { class: "small secondary" }, `Budget £${utils.fmt(context.budget, 1)}m = bank £${utils.fmt(context.bank, 1)}m + squad selling value £${utils.fmt(context.squad_value, 1)}m. Squad from GW${context.picks_gameweek}; planning GW${context.gameweek}.`),
+                h("button", { class: "btn primary", type: "button", id: "opt-run", onClick: () => optimizerView.run(session, inputs, planCard) }, "Optimize")),
+            h("p", { class: "small secondary" }, `Budget £${utils.fmt(team.budget, 1)}m = bank £${utils.fmt(team.bank, 1)}m + squad selling value £${utils.fmt(team.squad_value, 1)}m. Squad from GW${team.picks_gameweek}${team.edited ? " plus your edits" : ""}; planning GW${team.gameweek}.`),
             h("details", null, h("summary", { class: "small" }, "How free transfers were estimated"),
                 h("p", { class: "small muted" }, estimate.note || ""), h("ul", { class: "small secondary" }, trail)),
             h("details", null, h("summary", { class: "small" }, "Estimated selling prices"),
-                ui.table(context.squad || [], [
-                    { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, h("span", { class: "sub" }, `${row.team_name || ""} · ${row.position}`)) },
-                    { key: "purchase_price", label: "Bought", num: true, digits: 1, title: "Estimated purchase price" },
+                ui.table((team.squad || []).filter((row) => !row.unknown), [
+                    { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, h("span", { class: "sub" }, `${row.team_name || ""} · ${utils.positionName(row.element_type)}`)) },
+                    { key: "purchase_price", label: "Bought", num: true, digits: 1, title: "Estimated purchase price (fix it on the pitch in Edit)" },
                     { key: "price", label: "Now", num: true, digits: 1 },
                     { key: "selling_price", label: "Sells for", num: true, digits: 1 },
-                    { key: "purchase_source", label: "From", render: (row) => h("span", { class: "small muted" }, row.purchase_source) },
+                    { key: "purchase_source", label: "From", render: (row) => h("span", { class: "small muted" }, row.purchase_source || "") },
                 ], { footer: false, sortKey: "selling_price" })),
-            h("ul", { class: "small muted", style: { paddingLeft: "18px", marginBottom: 0 } }, (context.caveats || []).map((line) => h("li", null, line))));
+            h("ul", { class: "small muted", style: { paddingLeft: "18px", marginBottom: 0 } }, (team.caveats || []).map((line) => h("li", null, line))));
     },
 
-    async run(entryId, inputs, planCard) {
+    async run(session, inputs, planCard) {
+        const request = views.myteam.requestBody(session);
         const body = {
-            entry_id: entryId,
+            entry_id: session.entryId,
             gameweek: state.gameweek,
             mode: optimizerView.mode,
             free_transfers: Math.max(0, Math.min(5, Number(inputs.free.value) || 0)),
             bank: Math.max(0, Number(inputs.bank.value) || 0),
+            overrides: request.overrides,
         };
+        if (request.draft) body.draft = request.draft;
         if (optimizerView.mode === "transfers") {
             body.horizon = Number(inputs.horizon.value) || 3;
             body.max_transfers = Number(inputs.max.value);
@@ -3441,7 +4550,10 @@ const ADMIN_ENDPOINTS = [
     { method: "POST", path: "/api/admin/enrichment", summary: "Live: FPL Data enrichment on/off", body: { enabled: true } },
     { method: "POST", path: "/api/admin/simulate", summary: "Sandbox simulation", body: { gameweek: null, weights: {}, exclude_ids: [], lock_ids: [], max_per_club: 3, availability_overrides: {} } },
     { method: "GET", path: "/api/admin/managers/{entry_id}/plan-context", summary: "Free transfers, selling prices and budget (estimates)", query: ["gameweek"] },
-    { method: "POST", path: "/api/admin/optimize", summary: "Plan transfers, a Wildcard or a Free Hit", body: { entry_id: 1, gameweek: null, mode: "transfers", horizon: 3, free_transfers: null, bank: null, max_transfers: null } },
+    { method: "POST", path: "/api/admin/optimize", summary: "Plan transfers, a Wildcard or a Free Hit", body: { entry_id: 1, gameweek: null, mode: "transfers", horizon: 3, free_transfers: null, bank: null, max_transfers: null, draft: null, overrides: {} } },
+    { method: "POST", path: "/api/admin/managers/{entry_id}/team", summary: "Working squad: rating, checks, lineup and captaincy advice", body: { gameweek: null, draft: null, overrides: {} } },
+    { method: "POST", path: "/api/admin/managers/{entry_id}/outlook", summary: "Fixture ticker, projections and chip values", body: { gameweek: null, horizon: 5, draft: null, overrides: {} } },
+    { method: "GET", path: "/api/admin/managers/{entry_id}/review", summary: "A gameweek's captain, bench and transfers against hindsight", query: ["gameweek"] },
 ];
 
 views.explorer = {
@@ -3575,7 +4687,7 @@ views.explorer = {
 /* Bootstrap                                                           */
 /* ------------------------------------------------------------------ */
 
-const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, optimizerView, drawer, h, s, clear };
+const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, optimizerView, drawer, draft, overrides, alerts, h, s, clear };
 if (typeof window !== "undefined") window.OpenFPLAdmin = OpenFPLAdmin;
 if (typeof document !== "undefined" && typeof document.addEventListener === "function" && document.getElementById && document.getElementById("app")) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => app.start());
