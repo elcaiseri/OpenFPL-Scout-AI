@@ -217,8 +217,11 @@ def horizon_points(
     chance of playing describes the next round only), while players ruled
     out (factor 0) stay at zero. Returns the points, the identity of every
     projected player, and notes for gameweeks that could not be projected.
+    The points' ``attrs["factors"]`` hold the availability factor each
+    value includes.
     """
     columns: Dict[int, pd.Series] = {}
+    factor_columns: Dict[int, pd.Series] = {}
     identities: List[pd.DataFrame] = []
     notes: List[str] = []
     for index, gameweek in enumerate(gameweeks):
@@ -230,11 +233,16 @@ def horizon_points(
         frame = frame.drop_duplicates("id")
         ids = pd.to_numeric(frame["id"], errors="coerce").astype(int)
         points = pd.to_numeric(frame["expected_points"], errors="coerce").fillna(0.0)
-        if index > 0 and "availability_factor" in frame:
+        if "availability_factor" in frame:
             factor = pd.to_numeric(frame["availability_factor"], errors="coerce").fillna(1.0)
+        else:
+            factor = pd.Series(1.0, index=frame.index)
+        if index > 0:
             doubtful = (factor > 0) & (factor < 1)
             points = points.where(~doubtful, points / factor.where(doubtful, 1.0))
+            factor = factor.where(~doubtful, 1.0)
         columns[int(gameweek)] = pd.Series(points.to_numpy(), index=ids.to_numpy())
+        factor_columns[int(gameweek)] = pd.Series(factor.to_numpy(dtype=float), index=ids.to_numpy())
         identities.append(
             pd.DataFrame(
                 {
@@ -248,6 +256,11 @@ def horizon_points(
     if not columns:
         raise ValueError("No gameweek in the horizon could be projected")
     points = pd.DataFrame(columns).reindex(columns=list(gameweeks)).fillna(0.0)
+    # The availability factor each gameweek's points already include, so a
+    # manager's own availability can replace it (see src/my_team.py).
+    points.attrs["factors"] = (
+        pd.DataFrame(factor_columns).reindex(index=points.index, columns=list(gameweeks)).fillna(1.0)
+    )
     identity = pd.concat(identities).drop_duplicates("id").set_index("id")
     if len(gameweeks) > 1:
         notes.append(
@@ -267,16 +280,17 @@ def candidate_pool(
     current_ids: Iterable[int],
     per_position: int = 25,
     cheapest: int = 5,
+    locked_ids: Iterable[int] = (),
 ) -> pd.DataFrame:
     """Keep the current squad and the realistic alternatives per position.
 
     ``players`` needs ``id``, ``element_type``, ``cost``, ``buyable`` and
     ``total``. Restricting the pool keeps every solve well under a second
     without changing the optimum in practice: the best projections and the
-    cheapest enablers are all kept.
+    cheapest enablers are all kept, and so is every locked player.
     """
     current = set(int(value) for value in current_ids)
-    keep = players["id"].isin(current)
+    keep = players["id"].isin(current) | players["id"].isin([int(value) for value in locked_ids])
     buyable = players.loc[players["buyable"] & ~keep]
     for position in SQUAD_QUOTAS:
         group = buyable.loc[buyable["element_type"] == position]
@@ -298,6 +312,8 @@ def solve_squad(
     hit_cost: float = HIT_COST,
     max_per_club: int = 3,
     time_limit: float = 20.0,
+    locked_ids: Iterable[int] = (),
+    banned_ids: Iterable[int] = (),
 ) -> Optional[Dict[str, Any]]:
     """Find the squad with the highest projected points over ``gameweeks``.
 
@@ -306,7 +322,9 @@ def solve_squad(
     ``buyable`` and one points column per gameweek. With
     ``transfers_exact`` the squad must differ from ``current_ids`` by
     exactly that many players, and transfers beyond ``free_transfers`` cost
-    ``hit_cost`` each. Returns None when no legal squad exists.
+    ``hit_cost`` each. Locked players must be in the squad (bought if
+    need be) and banned ones must not (sold if owned). Returns None when no
+    legal squad exists.
     """
     gameweeks = [int(gameweek) for gameweek in gameweeks]
     n = len(players)
@@ -391,9 +409,19 @@ def solve_squad(
     lower_bounds = np.zeros(size)
     upper_bounds = np.ones(size)
     buyable = players["buyable"].astype(bool).to_numpy()
+    locked = set(int(value) for value in locked_ids)
+    banned = set(int(value) for value in banned_ids)
     for i in range(n):
         if not in_current[i] and not buyable[i]:
             upper_bounds[x(i)] = 0
+        if int(ids[i]) in banned:
+            upper_bounds[x(i)] = 0
+        if int(ids[i]) in locked:
+            if upper_bounds[x(i)] == 0:
+                return None
+            lower_bounds[x(i)] = 1
+    if not locked <= set(int(value) for value in ids):
+        return None
     if transfers_mode:
         upper_bounds[hits_var] = SQUAD_SIZE
     result = milp(
@@ -520,16 +548,24 @@ def plan(
     free_transfers: Optional[int] = None,
     max_transfers: Optional[int] = None,
     bench_weight: float = 0.1,
+    locked_ids: Iterable[int] = (),
+    banned_ids: Iterable[int] = (),
 ) -> Dict[str, Any]:
     """Plans for a mode, each compared with keeping the current squad.
 
     ``players`` carries ``cost`` (selling price for current players), and
     ``budget`` is the bank plus the current squad's selling value.
     Transfers mode returns one plan per number of transfers, from rolling
-    (0) to ``max_transfers``; the best net plan is marked.
+    (0) to ``max_transfers``; the best net plan is marked. Locks and bans
+    bind every plan except the roll, which keeps the squad as it is.
     """
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}")
+    locked = sorted(set(int(value) for value in locked_ids))
+    banned = sorted(set(int(value) for value in banned_ids))
+    both = set(locked) & set(banned)
+    if both:
+        raise ValueError(f"Players cannot be both locked and banned: {sorted(both)}")
     current = [int(value) for value in current_ids]
     in_pool = players["id"].isin(current)
     if int(in_pool.sum()) != SQUAD_SIZE:
@@ -537,7 +573,11 @@ def plan(
     budget = float(bank) + float(players.loc[in_pool, "cost"].sum())
     players = players.copy()
     players["total"] = players[list(gameweeks)].sum(axis=1)
-    pool = candidate_pool(players, current)
+    pool = candidate_pool(players, current, locked_ids=locked)
+    constraints = {"locked_ids": locked, "banned_ids": banned}
+    blocked = "No legal squad within the budget" + (
+        " and your locks and bans" if locked or banned else ""
+    )
 
     baseline = solve_squad(
         pool, gameweeks, budget=budget, current_ids=current, transfers_exact=0,
@@ -565,15 +605,19 @@ def plan(
             solution = baseline if count == 0 else solve_squad(
                 pool, gameweeks, budget=budget, current_ids=current,
                 transfers_exact=count, free_transfers=free, bench_weight=bench_weight,
+                **constraints,
             )
             if solution is None:
-                plans.append({"transfers": count, "feasible": False, "reason": "No legal squad within the budget"})
+                plans.append({"transfers": count, "feasible": False, "reason": blocked})
                 continue
             plans.append({"feasible": True, **finish(solution)})
     else:
-        solution = solve_squad(pool, gameweeks, budget=budget, current_ids=current, bench_weight=bench_weight)
+        solution = solve_squad(
+            pool, gameweeks, budget=budget, current_ids=current, bench_weight=bench_weight,
+            **constraints,
+        )
         if solution is None:
-            raise ValueError("No legal squad fits the budget")
+            raise ValueError(blocked)
         plans.append({"feasible": True, **finish(solution)})
 
     feasible = [index for index, item in enumerate(plans) if item.get("feasible")]
@@ -588,4 +632,6 @@ def plan(
         "plans": plans,
         "best_index": best,
         "pool_size": int(len(pool)),
+        "locked_ids": locked,
+        "banned_ids": banned,
     }

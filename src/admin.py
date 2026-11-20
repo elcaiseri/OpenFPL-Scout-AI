@@ -24,14 +24,15 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src import insights, optimizer
+from src import insights, my_team, optimizer
 from src import auth as auth_module
 from src.auth import verify_api_key
 from src.features import MODEL_FEATURES
 from src.logger import get_logger
 from src.observability import LogBuffer, RequestMetrics, process_snapshot
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
-from src.transfers import currently_available
+from src.team_rating import rate_manager_team
+from src.transfers import clubs_over_limit, currently_available, suggest_transfers
 
 logger = get_logger(__name__)
 
@@ -938,50 +939,215 @@ async def admin_simulate(request: SimulationRequest):
 
 
 
+
 # ----------------------------------------------------------------------
-# My team: transfer, Wildcard and Free Hit planning (never changes a team)
+# My team: a manager's working squad, advice and planning
+# (plans only: nothing here changes a team on FPL)
 # ----------------------------------------------------------------------
 
 PLAN_CAVEATS = [
     "Official FPL publishes a squad only after each deadline, so transfers already "
-    "made for the coming gameweek are not included.",
+    "made for the coming gameweek are not included unless you add them to your "
+    "working squad.",
     "Selling prices and free transfers are estimated from public history; FPL's own "
     "numbers can differ slightly.",
     "Prices are today's; price changes over the horizon are not predicted.",
 ]
+OVERRIDE_LIMIT = 60
+# Players a manager's override re-projects as fit, per gameweek and inputs.
+_raw_cache: "Dict[Any, Dict[int, float]]" = {}
+RAW_CACHE_SIZE = 32
+RAW_FIELDS = (
+    "news_added",
+    "chance_of_playing_this_round",
+    "transfers_in_event",
+    "transfers_out_event",
+    "cost_change_event",
+    "cost_change_start",
+)
 
 
-def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, Any]:
-    """Everything the optimiser needs about a manager, from public data."""
-    scout = _scout()
-    client = scout.official_client
-    resolved = _resolve_gameweek(scout, gameweek)
-    if not scout.data_archive.gameweek_is_open(client, resolved):
+class DraftPick(BaseModel):
+    id: int = Field(..., ge=1)
+    position: int = Field(..., ge=1, le=15)
+    is_captain: bool = False
+    is_vice_captain: bool = False
+
+
+class Draft(BaseModel):
+    """A working squad: published picks plus edits FPL cannot see yet."""
+
+    picks: List[DraftPick] = Field(..., max_length=20)
+    chip: Optional[Literal["bboost", "3xc", "freehit", "wildcard"]] = None
+    free_transfers: Optional[int] = Field(None, ge=0, le=5)
+    bank_override: Optional[float] = Field(None, ge=0, le=100)
+    purchase_prices: Dict[int, float] = Field(default_factory=dict)
+
+
+class PlayerOverride(BaseModel):
+    """A manager's own view of one player."""
+
+    lock: bool = False
+    ban: bool = False
+    availability: Optional[float] = Field(None, ge=0, le=100)
+    xp_pct: Optional[float] = Field(None, ge=0, le=200)
+
+
+def _overrides(raw: Mapping[int, PlayerOverride]) -> Dict[int, Dict[str, Any]]:
+    if len(raw) > OVERRIDE_LIMIT:
+        raise HTTPException(status_code=422, detail=f"At most {OVERRIDE_LIMIT} player overrides")
+    overrides = {int(key): value.model_dump() for key, value in raw.items()}
+    both = sorted(key for key, value in overrides.items() if value["lock"] and value["ban"])
+    if both:
         raise HTTPException(
-            status_code=409,
-            detail=(
-                f"GW{resolved} is past its deadline, so its transfers are closed; "
-                f"plan from GW{client.next_gameweek()}."
-            ),
+            status_code=422, detail=f"Players cannot be both locked and banned: {both}"
         )
+    return overrides
+
+
+def _draft_picks(draft: Draft) -> List[Dict[str, Any]]:
+    for player_id, price in draft.purchase_prices.items():
+        if not 3.0 <= float(price) <= 20.0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Purchase price for #{player_id} must be between £3.0m and £20.0m",
+            )
+    return [pick.model_dump() for pick in draft.picks]
+
+
+def _published_picks(client: Any, entry_id: int, gameweek: int) -> tuple:
+    """The manager, the gameweek of their latest picks and those picks."""
     manager = client.mapped_manager(entry_id)
     current_event = manager.get("current_event")
-    picks_gameweek = min(resolved, int(current_event)) if current_event else 0
+    picks_gameweek = min(gameweek, int(current_event)) if current_event else 0
     if picks_gameweek < 1:
         raise HTTPException(
             status_code=422,
             detail="This manager has no published squad yet (it appears after the first deadline).",
         )
-    picks = client.mapped_manager_picks(entry_id, picks_gameweek)
+    payload = client.mapped_manager_picks(entry_id, picks_gameweek)
+    picks = [
+        {
+            "id": int(pick["element"]),
+            "position": int(pick.get("position") or 0),
+            "is_captain": bool(pick.get("is_captain")),
+            "is_vice_captain": bool(pick.get("is_vice_captain")),
+            "multiplier": int(pick.get("multiplier") or 0),
+        }
+        for pick in payload.get("picks", [])
+    ]
+    return manager, picks_gameweek, sorted(picks, key=lambda pick: pick["position"]), payload
+
+
+def _require_open(scout: Any, gameweek: int) -> None:
+    client = scout.official_client
+    if not scout.data_archive.gameweek_is_open(client, gameweek):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"GW{gameweek} is past its deadline, so its transfers are closed; "
+                f"plan from GW{client.next_gameweek()}."
+            ),
+        )
+
+
+def _raw_projections(scout: Any, gameweek: int, ids: List[int]) -> Dict[int, float]:
+    """Projections as if fit for players ruled out (the sandbox path)."""
+    ids = sorted(set(int(value) for value in ids))
+    if not ids:
+        return {}
+    inputs = scout.model_inputs(gameweek)
+    key = (int(gameweek), inputs.built_at, tuple(ids))
+    if key in _raw_cache:
+        return _raw_cache[key]
+    frame = scout.predict_from_inputs(
+        inputs, availability_overrides={player_id: 1.0 for player_id in ids}
+    )
+    values = frame.drop_duplicates("id").set_index("id")["expected_points"]
+    result = {
+        player_id: float(values.loc[player_id]) for player_id in ids if player_id in values.index
+    }
+    _raw_cache[key] = result
+    while len(_raw_cache) > RAW_CACHE_SIZE:
+        _raw_cache.pop(next(iter(_raw_cache)))
+    return result
+
+
+def _bootstrap_elements(scout: Any) -> tuple:
+    """Raw official fields the mapped players leave out, and the player count."""
+    try:
+        bootstrap = scout.official_client.bootstrap()
+    except Exception as error:
+        logger.info("Raw official players unavailable: %s", error)
+        return {}, None
+    elements = {
+        int(element["id"]): {field: element.get(field) for field in RAW_FIELDS}
+        for element in bootstrap.get("elements", []) or []
+        if element.get("id") is not None
+    }
+    return elements, bootstrap.get("total_players")
+
+
+def _team_fixtures(scout: Any, gameweeks: List[int]) -> Dict[int, Dict[int, List[Dict[str, Any]]]]:
+    """``{team_id: {gameweek: [fixture]}}`` from each team's point of view."""
+    mapped_fixtures = getattr(scout.official_client, "mapped_fixtures", None)
+    result: Dict[int, Dict[int, List[Dict[str, Any]]]] = {}
+    if not callable(mapped_fixtures):
+        return result
+    wanted = set(int(value) for value in gameweeks)
+    try:
+        fixtures = mapped_fixtures()
+    except Exception as error:
+        logger.info("Fixtures unavailable for My team: %s", error)
+        return result
+    for fixture in fixtures:
+        gameweek = fixture.get("gameweek")
+        if gameweek is None or int(gameweek) not in wanted:
+            continue
+        home, away = fixture.get("home_team") or {}, fixture.get("away_team") or {}
+        for side, other, is_home in ((home, away, True), (away, home, False)):
+            if side.get("id") is None:
+                continue
+            result.setdefault(int(side["id"]), {}).setdefault(int(gameweek), []).append(
+                {
+                    "opponent": other.get("name"),
+                    "opponent_short": other.get("short_name"),
+                    "home": is_home,
+                    "difficulty": side.get("difficulty"),
+                    "kickoff_time": fixture.get("kickoff_time"),
+                    "finished": fixture.get("finished"),
+                }
+            )
+    return result
+
+
+def _manager_plan_context(
+    entry_id: int, gameweek: Optional[int], draft: Optional[Draft] = None
+) -> Dict[str, Any]:
+    """Everything the planner needs about a manager's (working) squad.
+
+    From public data, with a draft's transfers, purchase-price fixes, bank
+    override and free-transfer count applied when one is given.
+    """
+    scout = _scout()
+    client = scout.official_client
+    resolved = _resolve_gameweek(scout, gameweek)
+    _require_open(scout, resolved)
+    manager, picks_gameweek, published_picks, _ = _published_picks(client, entry_id, resolved)
     history = client.manager_history(entry_id)
     chips = history.get("chips", []) or []
     transfers = client.mapped_manager_transfers(entry_id)
     official = _official_players(scout)
     started_event = manager.get("started_event")
 
-    squad_ids = [int(pick["element"]) for pick in picks.get("picks", [])]
+    published_ids = [pick["id"] for pick in published_picks]
+    working_picks = _draft_picks(draft) if draft is not None else [
+        {key: pick[key] for key in ("id", "position", "is_captain", "is_vice_captain")}
+        for pick in published_picks
+    ]
+    working_ids = list(dict.fromkeys(int(pick["id"]) for pick in working_picks))
     start_prices: Dict[int, Optional[float]] = {}
-    for player_id in squad_ids:
+    for player_id in published_ids:
         try:
             rows = client.mapped_player_summary(player_id).get("history", [])
         except Exception:  # A departed player has no summary.
@@ -995,18 +1161,32 @@ def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, A
             None,
         )
         start_prices[player_id] = first.get("price") if first else None
-    bought = optimizer.purchase_prices(squad_ids, transfers, chips, started_event, start_prices)
+    bought = optimizer.purchase_prices(published_ids, transfers, chips, started_event, start_prices)
+    fixes = {int(key): float(value) for key, value in (draft.purchase_prices if draft else {}).items()}
 
+    def purchase_of(player_id: int) -> tuple:
+        now = official.get(player_id, {}).get("price")
+        if player_id not in bought:
+            return now, "bought in your working squad"
+        if player_id in fixes:
+            return fixes[player_id], "your price"
+        return bought[player_id]["price"], bought[player_id]["source"]
+
+    selling: Dict[int, Optional[float]] = {}
     squad = []
-    for pick in picks.get("picks", []):
-        player_id = int(pick["element"])
+    picks_by_id = {int(pick["id"]): pick for pick in working_picks}
+    for player_id in dict.fromkeys(published_ids + working_ids):
         details = official.get(player_id, {})
         now = details.get("price")
-        purchase = bought[player_id]["price"]
+        purchase, source = purchase_of(player_id)
+        selling[player_id] = optimizer.selling_price(purchase, now)
+        if player_id not in picks_by_id or not details:
+            continue
+        pick = picks_by_id[player_id]
         squad.append(
             {
                 "id": player_id,
-                "web_name": details.get("web_name") or (pick.get("player") or {}).get("web_name"),
+                "web_name": details.get("web_name"),
                 "team_name": details.get("team_name"),
                 "element_type": details.get("element_type"),
                 "position": insights.POSITION_SHORT.get(int(details.get("element_type") or 0), "?"),
@@ -1015,8 +1195,9 @@ def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, A
                 "is_vice_captain": bool(pick.get("is_vice_captain")),
                 "price": now,
                 "purchase_price": purchase,
-                "purchase_source": bought[player_id]["source"],
-                "selling_price": optimizer.selling_price(purchase, now),
+                "purchase_source": source,
+                "selling_price": selling[player_id],
+                "new": player_id not in bought,
                 "status": details.get("status"),
                 "news": details.get("news") or "",
                 "can_select": details.get("can_select"),
@@ -1024,21 +1205,52 @@ def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, A
         )
     bank = manager.get("last_deadline_bank")
     bank = float(bank) if bank is not None else 0.0
-    squad_value = round(sum(float(row["selling_price"] or 0) for row in squad), 1)
+    estimate = optimizer.estimate_free_transfers(
+        history.get("current", []), chips, started_event, resolved
+    )
+    free = estimate.get("free_transfers")
+    if draft is not None and draft.free_transfers is not None and not estimate.get("unlimited"):
+        free = int(draft.free_transfers)
+    changes = None
+    remaining = free
+    working_bank = bank
+    if draft is not None:
+        changes = my_team.squad_changes(
+            published_picks,
+            working_picks,
+            players=official,
+            selling=selling,
+            bank=bank,
+            free_transfers=free,
+            chip=draft.chip,
+            bank_override=draft.bank_override,
+        )
+        remaining = changes["free_transfers_remaining"]
+        working_bank = changes["bank_after"]
+    squad_value = round(
+        sum(float(row["selling_price"] or 0) for row in squad if row["id"] in picks_by_id), 1
+    )
     return {
         "entry_id": entry_id,
         "team_name": manager.get("name"),
         "gameweek": resolved,
         "picks_gameweek": picks_gameweek,
         "transfers_open": True,
-        "bank": round(bank, 1),
+        "edited": draft is not None,
+        "bank": round(working_bank, 1),
+        "published_bank": round(bank, 1),
         "squad_value": squad_value,
-        "budget": round(bank + squad_value, 1),
+        "budget": round(working_bank + squad_value, 1),
         "squad": sorted(squad, key=lambda row: row["pick_position"]),
-        "free_transfers": optimizer.estimate_free_transfers(
-            history.get("current", []), chips, started_event, resolved
-        ),
+        "published_picks": published_picks,
+        "working_picks": working_picks,
+        "selling": selling,
+        "free_transfers": estimate,
+        "free_transfers_used": free,
+        "free_transfers_remaining": remaining,
+        "changes": changes,
         "chips": optimizer.chip_status(chips, resolved),
+        "chip": draft.chip if draft is not None else None,
         "caveats": PLAN_CAVEATS,
     }
 
@@ -1050,7 +1262,291 @@ def _manager_plan_context(entry_id: int, gameweek: Optional[int]) -> Dict[str, A
 async def admin_plan_context(
     entry_id: int, gameweek: Optional[int] = Query(None, ge=1, le=38)
 ):
-    return await _run(lambda: _json(_manager_plan_context(entry_id, gameweek)))
+    def build() -> Dict[str, Any]:
+        result = _manager_plan_context(entry_id, gameweek)
+        result.pop("selling", None)
+        return _json(result)
+
+    return await _run(build)
+
+
+class TeamRequest(BaseModel):
+    gameweek: Optional[int] = Field(None, ge=1, le=38)
+    draft: Optional[Draft] = None
+    overrides: Dict[int, PlayerOverride] = Field(default_factory=dict)
+
+
+OFFICIAL_RECORD_FIELDS = (
+    "team_id",
+    "position",
+    "price",
+    "selected_by_percent",
+    "status",
+    "can_select",
+    "news",
+    "chance_of_playing_next_round",
+    "total_points",
+)
+
+
+def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
+    """The working squad scored, checked and advised on, beside the published one."""
+    scout = _scout()
+    client = scout.official_client
+    resolved = _resolve_gameweek(scout, request.gameweek)
+    is_open = scout.data_archive.gameweek_is_open(client, resolved)
+    draft = request.draft
+    if draft is not None and not is_open:
+        _require_open(scout, resolved)
+    overrides = _overrides(request.overrides)
+    if is_open:
+        plan_context = _manager_plan_context(entry_id, resolved, draft)
+        manager = client.mapped_manager(entry_id)
+        picks_gameweek = plan_context["picks_gameweek"]
+        published_picks = plan_context["published_picks"]
+        working_picks = plan_context["working_picks"]
+    else:
+        plan_context = None
+        manager, picks_gameweek, published_picks, _ = _published_picks(client, entry_id, resolved)
+        working_picks = [
+            {key: pick[key] for key in ("id", "position", "is_captain", "is_vice_captain")}
+            for pick in published_picks
+        ]
+    chip = draft.chip if draft is not None else None
+
+    predictions = _predictions(scout, resolved)
+    prediction_gameweek = int(predictions.attrs.get("gameweek") or resolved)
+    official = _official_players(scout)
+    elements, total_players = _bootstrap_elements(scout)
+    fixtures = _team_fixtures(scout, [prediction_gameweek])
+    records = json.loads(predictions.drop_duplicates("id").to_json(orient="records"))
+    base_by_id = {int(record["id"]): record for record in records if record.get("id") is not None}
+    model_points = insights.model_points_by_id(predictions.attrs.get("inference", {}) or {})
+    need = [
+        player_id
+        for player_id, override in overrides.items()
+        if player_id in base_by_id
+        and my_team.needs_raw(base_by_id[player_id].get("availability_factor"), override)
+    ]
+    notes: List[str] = []
+    raw: Dict[int, float] = {}
+    if need:
+        try:
+            raw = _raw_projections(scout, prediction_gameweek, need)
+        except Exception as error:
+            notes.append(f"Players ruled out could not be re-projected as fit ({error}).")
+    adjusted, adjusted_models, override_notes = my_team.apply_overrides(
+        records, overrides, raw, model_points
+    )
+    notes.extend(override_notes)
+    by_id = {int(record["id"]): record for record in adjusted if record.get("id") is not None}
+
+    def record_for(pick: Mapping[str, Any], source: Mapping[int, Mapping[str, Any]], multiplier: int) -> Dict[str, Any]:
+        player_id = int(pick["id"])
+        details = official.get(player_id, {})
+        prediction = source.get(player_id)
+        if prediction is None:
+            # As in the public team rating: players without a projection
+            # count, with no points and no availability.
+            prediction = {"expected_points": 0.0, "availability_factor": 0.0, "projection_missing": True}
+        return {
+            **details,
+            **prediction,
+            "id": player_id,
+            "pick_position": int(pick.get("position") or 0),
+            "multiplier": multiplier,
+            "is_captain": bool(pick.get("is_captain")),
+            "is_vice_captain": bool(pick.get("is_vice_captain")),
+            "role": "captain" if pick.get("is_captain") else "vice" if pick.get("is_vice_captain") else "",
+        }
+
+    benchmark = scout.select_optimal_team(predictions)
+    benchmark_records = json.loads(benchmark.to_json(orient="records"))
+    published_records = [
+        record_for(pick, base_by_id, int(pick.get("multiplier") or 0)) for pick in published_picks
+    ]
+    try:
+        published_rating = rate_manager_team(published_records, benchmark_records)
+    except ValueError:
+        published_rating = None
+
+    chip_status = plan_context["chips"]["chips"] if plan_context else None
+    changes = plan_context["changes"] if plan_context else None
+    validation = my_team.validate_squad(
+        working_picks,
+        official,
+        published_ids=[pick["id"] for pick in published_picks],
+        bank_after=changes["bank_after"] if changes else None,
+        chip=chip,
+        chip_status=chip_status,
+    )
+    working_multipliers = my_team.multipliers(working_picks, chip)
+    known = [pick for pick in working_picks if int(pick["id"]) in official]
+    working_records = [
+        record_for(pick, by_id, working_multipliers[int(pick["id"])]) for pick in known
+    ]
+    players_map: Dict[int, Dict[str, Any]] = {}
+    for record in working_records:
+        team_id = record.get("team_id")
+        record["fixtures"] = (fixtures.get(int(team_id), {}) if team_id is not None else {}).get(
+            prediction_gameweek, []
+        )
+        players_map[int(record["id"])] = record
+    structure_ok = (
+        len(known) == 15
+        and len({int(pick["id"]) for pick in known}) == 15
+        and sum(1 for pick in known if int(pick["position"]) <= 11) == 11
+    )
+    rating = expected = advice = None
+    captaincy: List[Dict[str, Any]] = []
+    if structure_ok:
+        try:
+            rating = rate_manager_team(working_records, benchmark_records)
+        except ValueError as error:
+            notes.append(f"The working squad could not be rated: {error}")
+        expected = my_team.expected_with_autosubs(players_map, working_picks, chip)
+        if not validation["errors"] or all("budget" in item for item in validation["errors"]):
+            try:
+                advice = my_team.lineup_advice(players_map, working_picks, chip)
+            except ValueError as error:
+                notes.append(f"No lineup advice: {error}")
+        captaincy = my_team.captaincy_options(players_map, working_picks, adjusted_models, chip=chip)
+
+    locked = sorted(player_id for player_id, value in overrides.items() if value["lock"])
+    banned = sorted(player_id for player_id, value in overrides.items() if value["ban"])
+    suggestions: List[Dict[str, Any]] = []
+    bank = plan_context["bank"] if plan_context else manager.get("last_deadline_bank")
+    if is_open and structure_ok and validation["valid"]:
+        candidates = [
+            {
+                **{
+                    field: official.get(int(record["id"]), {}).get(field)
+                    for field in OFFICIAL_RECORD_FIELDS
+                    if field in official.get(int(record["id"]), {})
+                },
+                **record,
+            }
+            for record in adjusted
+        ]
+        suggestions = suggest_transfers(
+            working_records,
+            candidates,
+            None if bank is None else float(bank),
+            keep_ids=locked,
+            exclude_ids=banned,
+        )
+
+    context_rows = {row["id"]: row for row in (plan_context["squad"] if plan_context else [])}
+    bench_use = (expected or {}).get("bench_use", {})
+    squad = []
+    for pick in sorted(working_picks, key=lambda item: int(item["position"])):
+        player_id = int(pick["id"])
+        record = players_map.get(player_id)
+        if record is None:
+            squad.append({"id": player_id, "pick_position": int(pick["position"]), "unknown": True})
+            continue
+        row = dict(record)
+        row.pop("_fixtures", None)
+        planned = context_rows.get(player_id, {})
+        element = elements.get(player_id, {})
+        row.update(
+            {
+                "purchase_price": planned.get("purchase_price"),
+                "purchase_source": planned.get("purchase_source"),
+                "selling_price": planned.get("selling_price"),
+                "new": bool(planned.get("new")),
+                "locked": player_id in locked,
+                "banned": player_id in banned,
+                "override": overrides.get(player_id),
+                "bench_use": bench_use.get(player_id),
+                **element,
+                "price_pressure": my_team.price_pressure(
+                    {**element, "selected_by_percent": record.get("selected_by_percent")},
+                    total_players,
+                ),
+                "selling_effect": my_team.selling_effect(
+                    planned.get("purchase_price"), record.get("price")
+                )
+                if plan_context
+                else None,
+            }
+        )
+        squad.append(row)
+
+    manager_name = " ".join(
+        str(manager.get(field) or "").strip() for field in ("player_first_name", "player_last_name")
+    ).strip()
+    result = {
+        "entry_id": entry_id,
+        "team_name": manager.get("name"),
+        "manager_name": manager_name or None,
+        "gameweek": prediction_gameweek,
+        "picks_gameweek": picks_gameweek,
+        "transfers_open": bool(is_open),
+        "next_open_gameweek": client.next_gameweek(),
+        "frozen": bool(predictions.attrs.get("frozen", False)),
+        "forecast": _forecast_meta(predictions),
+        "edited": draft is not None,
+        "chip": chip,
+        "squad": squad,
+        "published_picks": published_picks,
+        "working_picks": my_team.normalize_picks(working_picks, official) if structure_ok else working_picks,
+        "validation": validation,
+        "changes": changes,
+        "rating": rating,
+        "published_rating": published_rating,
+        "expected": expected,
+        "advice": advice,
+        "captaincy": captaincy,
+        "transfers": suggestions,
+        "clubs_over_limit": clubs_over_limit(working_records),
+        "locked_ids": locked,
+        "banned_ids": banned,
+        "overrides_applied": sorted(
+            player_id
+            for player_id, value in overrides.items()
+            if value.get("availability") is not None or value.get("xp_pct") is not None
+        ),
+        "notes": notes,
+        "caveats": PLAN_CAVEATS,
+        "benchmark": "The AI benchmark is the AI's own squad from its unadjusted projections.",
+    }
+    if plan_context:
+        result.update(
+            {
+                key: plan_context[key]
+                for key in (
+                    "bank",
+                    "published_bank",
+                    "squad_value",
+                    "budget",
+                    "free_transfers",
+                    "free_transfers_used",
+                    "free_transfers_remaining",
+                    "chips",
+                )
+            }
+        )
+    else:
+        result.update(
+            {
+                "bank": manager.get("last_deadline_bank"),
+                "published_bank": manager.get("last_deadline_bank"),
+                "free_transfers": None,
+                "chips": None,
+            }
+        )
+    return _json(result)
+
+
+@router.post(
+    "/managers/{entry_id}/team",
+    summary="A manager's working squad: rating, checks, lineup and captaincy advice",
+)
+async def admin_working_team(
+    entry_id: int, request: TeamRequest = Body(default_factory=TeamRequest)
+):
+    return await _run(_working_team, entry_id, request)
 
 
 class OptimizeRequest(BaseModel):
@@ -1061,17 +1557,17 @@ class OptimizeRequest(BaseModel):
     free_transfers: Optional[int] = Field(None, ge=0, le=5)
     bank: Optional[float] = Field(None, ge=0, le=100)
     max_transfers: Optional[int] = Field(None, ge=0, le=15)
+    draft: Optional[Draft] = None
+    overrides: Dict[int, PlayerOverride] = Field(default_factory=dict)
 
 
 HORIZONS = {"wildcard": 5, "freehit": 1}
 
 
-def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
-    scout = _scout()
-    context = _manager_plan_context(request.entry_id, request.gameweek)
-    start = context["gameweek"]
-    horizon = HORIZONS.get(request.mode, request.horizon or 3)
-    gameweeks = [gameweek for gameweek in range(start, start + horizon) if gameweek <= 38]
+def _horizon(
+    scout: Any, gameweeks: List[int], overrides: Mapping[int, Mapping[str, Any]]
+) -> tuple:
+    """Projected points per player and gameweek, with the manager's overrides."""
 
     def predict(gameweek: int) -> pd.DataFrame:
         return scout.get_official_predictions(
@@ -1079,8 +1575,32 @@ def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
         )
 
     points, identity, notes = optimizer.horizon_points(predict, gameweeks)
-    official = _official_players(scout)
-    squad_by_id = {row["id"]: row for row in context["squad"]}
+    factors = points.attrs.get("factors")
+    if any(
+        value.get("availability") is not None or value.get("xp_pct") is not None
+        for value in overrides.values()
+    ):
+        points, override_notes = my_team.apply_overrides_frame(
+            points,
+            factors,
+            overrides,
+            raw_lookup=lambda gameweek, ids: _raw_projections(scout, gameweek, list(ids)),
+        )
+        notes = notes + override_notes + [
+            "Your own availability and xP settings apply to every gameweek planned."
+        ]
+    return points, identity, factors, notes
+
+
+def _optimizer_players(
+    plan_context: Mapping[str, Any],
+    points: pd.DataFrame,
+    identity: pd.DataFrame,
+    gameweeks: List[int],
+    official: Mapping[int, Mapping[str, Any]],
+) -> pd.DataFrame:
+    """Candidates for the solver: current squad at selling prices, others at price."""
+    squad_by_id = {row["id"]: row for row in plan_context["squad"]}
     ids = sorted(set(points.index) | set(squad_by_id))
     rows = []
     for player_id in ids:
@@ -1116,18 +1636,33 @@ def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
         )
     players = pd.DataFrame(rows)
     players["cost"] = players["cost"].fillna(players["price"]).fillna(0.0)
+    return players
+
+
+def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
+    scout = _scout()
+    overrides = _overrides(request.overrides)
+    plan_context = _manager_plan_context(request.entry_id, request.gameweek, request.draft)
+    start = plan_context["gameweek"]
+    horizon = HORIZONS.get(request.mode, request.horizon or 3)
+    gameweeks = [gameweek for gameweek in range(start, start + horizon) if gameweek <= 38]
+    points, identity, _, notes = _horizon(scout, gameweeks, overrides)
+    players = _optimizer_players(plan_context, points, identity, gameweeks, _official_players(scout))
+    current_ids = [row["id"] for row in plan_context["squad"]]
     free_transfers = request.free_transfers
     if free_transfers is None:
-        free_transfers = context["free_transfers"].get("free_transfers")
-    bank = context["bank"] if request.bank is None else float(request.bank)
+        free_transfers = plan_context["free_transfers_remaining"]
+    bank = plan_context["bank"] if request.bank is None else float(request.bank)
     result = optimizer.plan(
         players,
         gameweeks,
         mode=request.mode,
-        current_ids=list(squad_by_id),
+        current_ids=current_ids,
         bank=bank,
         free_transfers=free_transfers,
         max_transfers=request.max_transfers,
+        locked_ids=[player_id for player_id, value in overrides.items() if value["lock"]],
+        banned_ids=[player_id for player_id, value in overrides.items() if value["ban"]],
     )
     return _json(
         {
@@ -1135,8 +1670,9 @@ def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
             "entry_id": request.entry_id,
             "start_gameweek": start,
             "horizon": len(gameweeks),
-            "free_transfers_estimate": context["free_transfers"].get("free_transfers"),
-            "notes": notes + context["caveats"],
+            "from_working_squad": request.draft is not None,
+            "free_transfers_estimate": plan_context["free_transfers"].get("free_transfers"),
+            "notes": notes + plan_context["caveats"],
         }
     )
 

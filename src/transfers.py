@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from src.team_rating import (
     _availability,
@@ -92,6 +92,8 @@ def suggest_transfers(
     *,
     limit: int = 3,
     max_per_club: int = 3,
+    keep_ids: Optional[Iterable[int]] = None,
+    exclude_ids: Optional[Iterable[int]] = None,
 ) -> List[Dict[str, Any]]:
     """Return the best single transfers, largest projected gain first.
 
@@ -104,10 +106,13 @@ def suggest_transfers(
     selling prices, which can be lower than current prices, so affordability
     is approximate. Each outgoing and incoming player appears in at most one
     suggestion. Without a bank, or without a price for a player, nothing is
-    suggested for that player.
+    suggested for that player. Players in ``keep_ids`` are never sold and
+    players in ``exclude_ids`` never bought (a manager's locks and bans).
     """
     if bank is None or len(squad) != 15:
         return []
+    keep = {int(value) for value in keep_ids or ()}
+    exclude = {int(value) for value in exclude_ids or ()}
     squad_ids = {int(player["id"]) for player in squad}
     clubs = Counter(player.get("team_name") for player in squad)
     eligible = sorted(
@@ -115,6 +120,7 @@ def suggest_transfers(
             player
             for player in candidates
             if int(player["id"]) not in squad_ids
+            and int(player["id"]) not in exclude
             and currently_available(player)
             and _number(player.get("price"), None) is not None
         ),
@@ -125,6 +131,8 @@ def suggest_transfers(
 
     options = []
     for outgoing in squad:
+        if int(outgoing["id"]) in keep:
+            continue
         budget = _number(outgoing.get("price"), None)
         if budget is None:
             continue

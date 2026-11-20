@@ -297,8 +297,6 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(data["missing"], [1, 2])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ManagerFPL(FakeFPL):
@@ -317,7 +315,16 @@ class ManagerFPL(FakeFPL):
                 self.squad.append(player["id"])
                 quotas[position] -= 1
                 clubs[player["team"]] += 1
-        self.bought = self.squad[3]
+        # A legal lineup: 1-4-4-2 starting, then GK, DEF, MID, FWD on the bench.
+        by_position = {
+            position: [pid for pid in self.squad if self.elements[pid - 1]["element_type"] == position]
+            for position in (1, 2, 3, 4)
+        }
+        self.squad = (
+            by_position[1][:1] + by_position[2][:4] + by_position[3][:4] + by_position[4][:2]
+            + by_position[1][1:] + by_position[2][4:] + by_position[3][4:] + by_position[4][2:]
+        )
+        self.bought = by_position[2][0]
 
     def manager_payloads(self):
         entry = self.ENTRY
@@ -428,3 +435,173 @@ class OptimizerApiTests(unittest.TestCase):
         self.assertEqual(status, 409, data)
         status, _, data = request("POST", "/api/admin/optimize", body={"entry_id": 77, "gameweek": 3})
         self.assertEqual(status, 409, data)
+
+
+class WorkingTeamApiTests(OptimizerApiTests):
+    """The working squad: a manager's edits, overrides and the advice on them."""
+
+    def setUp(self):
+        super().setUp()
+        published = self.fpl.manager_payloads()["entry/77/event/2/picks/"]["picks"]
+        self.published = [
+            {"id": pick["element"], "position": pick["position"], "is_captain": pick["is_captain"],
+             "is_vice_captain": pick["is_vice_captain"]}
+            for pick in published
+        ]
+        self.elements = {player["id"]: player for player in self.fpl.elements}
+
+    # Inherited tests already run in OptimizerApiTests.
+    def test_plan_routes_are_private(self):
+        pass
+
+    def test_plan_context_estimates_transfers_prices_and_budget(self):
+        pass
+
+    def test_every_mode_returns_a_legal_plan(self):
+        pass
+
+    def test_closed_gameweeks_cannot_be_planned(self):
+        pass
+
+    def team(self, **body):
+        body.setdefault("gameweek", 3)
+        return request("POST", "/api/admin/managers/77/team", body=body)
+
+    def swap_options(self, position, skip=()):
+        """A squad player of ``position`` and an outsider who may replace him."""
+        squad = [pick["id"] for pick in self.published]
+        clubs = Counter(self.elements[pid]["team"] for pid in squad)
+        out_id = next(pid for pid in squad if self.elements[pid]["element_type"] == position
+                      and pid != self.fpl.bought and pid not in skip)
+        clubs[self.elements[out_id]["team"]] -= 1
+        in_id = next(player["id"] for player in self.fpl.elements
+                     if player["element_type"] == position and player["id"] not in squad
+                     and player["id"] not in skip and clubs[player["team"]] < 3)
+        return out_id, in_id
+
+    def draft(self, swaps=(), **extra):
+        picks = [dict(pick) for pick in self.published]
+        for out_id, in_id in swaps:
+            for pick in picks:
+                if pick["id"] == out_id:
+                    pick["id"] = in_id
+        return {"picks": picks, **extra}
+
+    def test_working_team_route_is_private(self):
+        route = next(item for item in admin_routes() if item.path == "/api/admin/managers/{entry_id}/team")
+        self.assertTrue(_uses_bearer_auth(route.dependant))
+        self.assertNotIn("/api/admin/managers/{entry_id}/team", app.openapi()["paths"])
+        status, _, _ = request("POST", "/api/admin/managers/77/team", token=None, body={})
+        self.assertIn(status, (401, 403))
+
+    def test_without_edits_the_working_rating_matches_the_public_rating(self):
+        status, _, data = self.team()
+        self.assertEqual(status, 200, data)
+        status, _, public = request("GET", "/api/scout/team-rating?entry_id=77&gameweek=3")
+        self.assertEqual(status, 200, public)
+        for key in ("rating", "grade", "components", "projected_points", "ai_projected_points"):
+            self.assertEqual(data["rating"][key], public[key], key)
+            self.assertEqual(data["published_rating"][key], public[key], key)
+        self.assertFalse(data["edited"])
+        self.assertTrue(data["validation"]["valid"], data["validation"])
+        self.assertEqual(data["free_transfers"]["free_transfers"], 1)
+        self.assertEqual(len(data["squad"]), 15)
+        self.assertIsNotNone(data["expected"])
+        self.assertTrue(data["advice"]["reasons"])
+        self.assertGreaterEqual(data["advice"]["gain"], 0)
+        self.assertTrue(data["captaincy"])
+        row = data["squad"][0]
+        for key in ("price_pressure", "selling_effect", "fixtures", "transfers_in_event"):
+            self.assertIn(key, row)
+
+    def test_a_draft_transfer_spends_the_bank_and_extra_ones_cost_hits(self):
+        first = self.swap_options(4)
+        status, _, data = self.team(draft=self.draft([first]))
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["edited"])
+        self.assertTrue(data["validation"]["valid"], data["validation"])
+        changes = data["changes"]
+        self.assertEqual((changes["count"], changes["hits"], changes["free_transfers_remaining"]), (1, 0, 0))
+        # Sold at 5.0 (bought at 5.0 in GW1), bought at 5.0.
+        self.assertEqual(data["bank"], 1.5)
+        incoming = next(row for row in data["squad"] if row["id"] == first[1])
+        self.assertTrue(incoming["new"])
+        self.assertNotEqual(data["rating"], None)
+
+        second = self.swap_options(3, skip=first)
+        status, _, data = self.team(draft=self.draft([first, second]))
+        self.assertEqual(status, 200, data)
+        self.assertEqual((data["changes"]["count"], data["changes"]["hits"]), (2, 1))
+        status, _, data = self.team(draft=self.draft([first, second], chip="wildcard"))
+        self.assertEqual(data["changes"]["hits"], 0)
+        status, _, data = self.team(draft=self.draft([first], bank_override=0.2, free_transfers=0))
+        self.assertEqual((data["bank"], data["changes"]["hits"]), (0.2, 1))
+
+    def test_an_illegal_draft_is_reported_not_rejected(self):
+        picks = self.draft()
+        for pick in picks["picks"]:
+            pick["is_captain"] = pick["position"] == 13
+        status, _, data = self.team(draft=picks)
+        self.assertEqual(status, 200, data)
+        self.assertFalse(data["validation"]["valid"])
+        self.assertTrue(any("captain" in error for error in data["validation"]["errors"]))
+        self.assertEqual(data["transfers"], [])
+
+    def test_drafts_need_an_open_gameweek(self):
+        self.now[0] = self.now[0].replace(day=30)
+        status, _, data = self.team(draft=self.draft())
+        self.assertEqual(status, 409, data)
+        status, _, data = self.team()
+        self.assertEqual(status, 200, data)
+        self.assertFalse(data["transfers_open"])
+        self.assertEqual(data["transfers"], [])
+        self.assertIsNone(data["free_transfers"])
+
+    def test_overrides_change_the_working_view_only(self):
+        captain = next(pick["id"] for pick in self.published if pick["is_captain"])
+        status, _, plain = self.team()
+        status, _, data = self.team(overrides={str(captain): {"xp_pct": 0}})
+        self.assertEqual(status, 200, data)
+        self.assertLess(data["rating"]["projected_points"], plain["rating"]["projected_points"])
+        self.assertEqual(data["published_rating"], plain["published_rating"])
+        self.assertEqual(data["overrides_applied"], [captain])
+        status, _, data = self.team(overrides={str(captain): {"lock": True, "ban": True}})
+        self.assertEqual(status, 422, data)
+
+    def test_a_player_ruled_out_can_be_re_projected_as_fit(self):
+        injured = next(pick["id"] for pick in self.published if pick["position"] == 5)
+        self.fpl.elements[injured - 1].update(status="i", chance_of_playing_next_round=0)
+        status, _, plain = self.team()
+        self.assertEqual(status, 200, plain)
+        row = next(item for item in plain["squad"] if item["id"] == injured)
+        self.assertEqual(row["expected_points"], 0.0)
+        status, _, data = self.team(overrides={str(injured): {"availability": 100}})
+        self.assertEqual(status, 200, data)
+        row = next(item for item in data["squad"] if item["id"] == injured)
+        self.assertGreater(row["expected_points"], 0.0)
+        self.assertEqual(row["availability_factor"], 1.0)
+        self.assertTrue(row["overridden"])
+
+    def test_optimize_plans_from_the_working_squad_with_locks_and_bans(self):
+        first = self.swap_options(4)
+        draft = self.draft([first])
+        locked_out, locked_in = self.swap_options(3, skip=first)
+        body = {
+            "entry_id": 77, "gameweek": 3, "mode": "transfers", "horizon": 1, "max_transfers": 2,
+            "draft": draft, "free_transfers": 1,
+            "overrides": {str(locked_in): {"lock": True}, str(locked_out): {"ban": True}},
+        }
+        status, _, result = request("POST", "/api/admin/optimize", body=body)
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["from_working_squad"])
+        self.assertEqual(sorted(result["plans"][0]["squad_ids"]), sorted(pick["id"] for pick in draft["picks"]))
+        self.assertEqual(result["locked_ids"], [locked_in])
+        for plan in result["plans"][1:]:
+            if plan["feasible"]:
+                self.assertIn(locked_in, plan["squad_ids"])
+                self.assertNotIn(locked_out, plan["squad_ids"])
+        self.assertTrue(result["plans"][1]["feasible"])
+
+
+if __name__ == "__main__":
+    unittest.main()

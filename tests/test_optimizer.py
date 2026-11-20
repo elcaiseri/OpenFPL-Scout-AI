@@ -130,6 +130,34 @@ class SolverTests(unittest.TestCase):
             )
             self.assertIn(star, kept["squad_ids"])
 
+    def test_locks_and_bans_match_brute_force_under_the_same_rules(self):
+        pool = random_pool(8)
+        gameweeks = (11,)
+        budget = 100.0
+        free_pick = optimizer.solve_squad(pool, gameweeks, budget=budget)
+        banned = sorted(free_pick["squad_ids"], key=lambda pid: -float(pool.loc[pool["id"] == pid, 11].iloc[0]))[:2]
+        outside = [int(pid) for pid in pool["id"] if int(pid) not in free_pick["squad_ids"]]
+        locked = [outside[0]]
+        result = optimizer.solve_squad(
+            pool, gameweeks, budget=budget, locked_ids=locked, banned_ids=banned
+        )
+        candidates = [
+            squad
+            for squad in legal_squads(pool, budget)
+            if set(locked) <= set(squad["id"]) and not set(banned) & set(squad["id"])
+        ]
+        best = max(candidates, key=lambda squad: objective(squad, gameweeks))
+        self.assertEqual(sorted(result["squad_ids"]), sorted(best["id"]))
+        self.assertIn(locked[0], result["squad_ids"])
+        self.assertFalse(set(banned) & set(result["squad_ids"]))
+
+    def test_a_lock_that_cannot_be_bought_is_infeasible(self):
+        pool = random_pool(9)
+        target = int(pool["id"].iloc[0])
+        pool.loc[pool["id"] == target, "buyable"] = False
+        self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=100.0, locked_ids=[target]))
+        self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=100.0, locked_ids=[999]))
+
     def test_no_legal_squad_returns_none(self):
         pool = random_pool(6, clubs=3)  # three clubs cannot hold 15 players at 3 each
         self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=200.0))
@@ -172,6 +200,34 @@ class PlanTests(unittest.TestCase):
         self.assertAlmostEqual(result["budget"], 2.0 + self.pool.loc[self.pool["id"].isin(self.current), "cost"].sum(), places=6)
         self.assertEqual(len(plan["lineups"]), 2)
         self.assertEqual(sum(1 for player in plan["squad"] if player["new"]), plan["transfers"])
+
+    def test_locks_and_bans_bind_every_plan_but_the_roll(self):
+        sold = self.current[5]
+        outsiders = [int(pid) for pid in self.pool["id"] if int(pid) not in self.current]
+        wanted = outsiders[-1]
+        result = optimizer.plan(
+            self.pool, self.gameweeks, mode="transfers", current_ids=self.current,
+            bank=15.0, free_transfers=1, max_transfers=3,
+            locked_ids=[wanted], banned_ids=[sold],
+        )
+        self.assertEqual(result["locked_ids"], [wanted])
+        self.assertEqual(sorted(result["plans"][0]["squad_ids"]), self.current)
+        self.assertFalse(result["plans"][1]["feasible"])  # one transfer cannot both sell and buy
+        self.assertIn("locks and bans", result["plans"][1]["reason"])
+        for plan in result["plans"][2:]:
+            if plan["feasible"]:
+                self.assertIn(wanted, plan["squad_ids"])
+                self.assertNotIn(sold, plan["squad_ids"])
+        wildcard = optimizer.plan(
+            self.pool, self.gameweeks, mode="wildcard", current_ids=self.current,
+            bank=15.0, locked_ids=[wanted], banned_ids=[sold],
+        )
+        self.assertIn(wanted, wildcard["plans"][0]["squad_ids"])
+        with self.assertRaises(ValueError):
+            optimizer.plan(
+                self.pool, self.gameweeks, mode="wildcard", current_ids=self.current,
+                bank=15.0, locked_ids=[wanted], banned_ids=[wanted],
+            )
 
     def test_unknown_mode_and_incomplete_squad_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -263,6 +319,10 @@ class HorizonTests(unittest.TestCase):
         self.assertEqual(points.loc[1, 13], 0.0)
         self.assertTrue(any("GW13" in note for note in notes))
         self.assertEqual(identity.loc[1, "web_name"], "A")
+        factors = points.attrs["factors"]
+        self.assertEqual(factors.loc[2, 11], 0.5)  # the discount the points include
+        self.assertEqual(factors.loc[2, 12], 1.0)
+        self.assertEqual(factors.loc[3, 12], 0.0)
 
 
 if __name__ == "__main__":
