@@ -158,6 +158,29 @@ class SolverTests(unittest.TestCase):
         self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=100.0, locked_ids=[target]))
         self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=100.0, locked_ids=[999]))
 
+    def test_pruning_never_changes_the_optimum(self):
+        # Large pools, so the dominance rule really prunes; the full pool is
+        # solved too and the objective must match.
+        for seed, gameweeks in ((21, (11,)), (22, (11, 12))):
+            pool = random_pool(seed, counts={1: 14, 2: 50, 3: 50, 4: 30}, clubs=15, gameweeks=gameweeks)
+            current = cheap_squad(pool)
+            outsiders = [int(pid) for pid in pool["id"] if int(pid) not in current]
+            locked, banned = [outsiders[3]], [current[6]]
+            pruned = optimizer.candidate_pool(pool, current, gameweeks, locked_ids=locked, banned_ids=banned)
+            self.assertLess(len(pruned), len(pool), seed)
+            self.assertTrue(set(current) <= set(pruned["id"]))
+            self.assertIn(locked[0], set(pruned["id"]))
+            for kwargs in (
+                {},
+                {"current_ids": current, "transfers_exact": 3, "free_transfers": 1},
+                {"current_ids": current, "transfers_exact": 4, "free_transfers": 1,
+                 "locked_ids": locked, "banned_ids": banned},
+            ):
+                full = optimizer.solve_squad(pool, gameweeks, budget=100.0, **kwargs)
+                fast = optimizer.solve_squad(pruned, gameweeks, budget=100.0, **kwargs)
+                self.assertIsNotNone(full)
+                self.assertAlmostEqual(fast["objective"], full["objective"], places=4, msg=(seed, kwargs))
+
     def test_no_legal_squad_returns_none(self):
         pool = random_pool(6, clubs=3)  # three clubs cannot hold 15 players at 3 each
         self.assertIsNone(optimizer.solve_squad(pool, (11,), budget=200.0))
@@ -229,6 +252,23 @@ class PlanTests(unittest.TestCase):
                 bank=15.0, locked_ids=[wanted], banned_ids=[wanted],
             )
 
+    def test_the_best_plan_is_the_solvers_own_choice(self):
+        result = optimizer.plan(
+            self.pool, self.gameweeks, mode="transfers", current_ids=self.current,
+            bank=15.0, free_transfers=1, max_transfers=3,
+        )
+        feasible = [plan for plan in result["plans"] if plan["feasible"]]
+        for plan in feasible:
+            bench = sum(item["bench_points"] for item in plan["lineups"])
+            self.assertAlmostEqual(
+                plan["objective"],
+                plan["projected_total"] + result["bench_weight"] * bench - plan["hit_cost"],
+                places=2,
+            )
+        best = result["plans"][result["best_index"]]
+        self.assertEqual(best["objective"], max(plan["objective"] for plan in feasible))
+        self.assertEqual(result["baseline"]["objective_gain"], 0.0)
+
     def test_unknown_mode_and_incomplete_squad_are_rejected(self):
         with self.assertRaises(ValueError):
             optimizer.plan(self.pool, self.gameweeks, mode="bench", current_ids=self.current, bank=0)
@@ -261,7 +301,10 @@ class EstimateTests(unittest.TestCase):
         rows = self.history((1, 0, 0), (2, 0, 0), (3, 11, 0), (4, 0, 0), (5, 9, 0))
         chips = [{"name": "wildcard", "event": 3}, {"name": "freehit", "event": 5}]
         estimate = optimizer.estimate_free_transfers(rows, chips, 1, 6)
-        self.assertEqual(estimate["free_transfers"], 5)
+        # 2 banked into the GW3 Wildcard, kept but none added; GW4 rolled -> 3;
+        # the GW5 Free Hit keeps 3.
+        self.assertEqual(estimate["free_transfers"], 3)
+        self.assertEqual([step["available_next"] for step in estimate["trail"]], [1, 2, 2, 3, 3])
 
     def test_late_starters_and_the_first_deadline(self):
         self.assertTrue(optimizer.estimate_free_transfers([], [], 4, 4)["unlimited"])

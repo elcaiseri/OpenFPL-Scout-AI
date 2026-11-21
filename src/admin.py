@@ -1454,6 +1454,12 @@ def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
             }
             for record in adjusted
         ]
+        for candidate in candidates:
+            # The manager's own chance of playing stands in for FPL's flag.
+            own = (overrides.get(int(candidate["id"])) or {}).get("availability")
+            if own is not None and candidate.get("can_select") is not False:
+                candidate["status"] = "a" if own > 0 else "i"
+                candidate["chance_of_playing_next_round"] = own
         suggestions = suggest_transfers(
             working_records,
             candidates,
@@ -1605,16 +1611,17 @@ def _outlook(entry_id: int, request: OutlookRequest) -> Dict[str, Any]:
         }
         for player in squad
     }
-    players = _optimizer_players(plan_context, points, identity, gameweeks, official)
+    players = _optimizer_players(plan_context, points, identity, gameweeks, official, overrides)
     locked = [player_id for player_id, value in overrides.items() if value["lock"]]
     banned = [player_id for player_id, value in overrides.items() if value["ban"]]
     totals: Dict[int, Optional[float]] = {}
 
     def free_hit_total(gameweek: int) -> Optional[float]:
         if gameweek not in totals:
-            frame = players.copy()
-            frame["total"] = frame[gameweek]
-            pool = optimizer.candidate_pool(frame, [row["id"] for row in squad], locked_ids=locked)
+            pool = optimizer.candidate_pool(
+                players, [row["id"] for row in squad], [gameweek],
+                locked_ids=locked, banned_ids=banned,
+            )
             solution = optimizer.solve_squad(
                 pool, [gameweek], budget=plan_context["budget"],
                 current_ids=[row["id"] for row in squad], bench_weight=0.0,
@@ -1794,14 +1801,32 @@ def _horizon(
     return points, identity, factors, notes
 
 
+def _buyable(details: Mapping[str, Any], override: Optional[Mapping[str, Any]] = None) -> bool:
+    """Whether the planner may buy a player.
+
+    FPL must allow it (``can_select``). Then he must be available, unless
+    the manager's own chance of playing says he is: FPL sells injured
+    players, and a manager who knows better should be able to plan with
+    (and lock) them.
+    """
+    if not details or details.get("can_select") is False:
+        return False
+    own = (override or {}).get("availability")
+    if own is not None:
+        return float(own) > 0
+    return bool(currently_available(details))
+
+
 def _optimizer_players(
     plan_context: Mapping[str, Any],
     points: pd.DataFrame,
     identity: pd.DataFrame,
     gameweeks: List[int],
     official: Mapping[int, Mapping[str, Any]],
+    overrides: Optional[Mapping[int, Mapping[str, Any]]] = None,
 ) -> pd.DataFrame:
     """Candidates for the solver: current squad at selling prices, others at price."""
+    overrides = overrides or {}
     squad_by_id = {row["id"]: row for row in plan_context["squad"]}
     ids = sorted(set(points.index) | set(squad_by_id))
     rows = []
@@ -1825,7 +1850,7 @@ def _optimizer_players(
                 "element_type": element_type,
                 "price": price,
                 "cost": squad_by_id[player_id]["selling_price"] if in_squad else price,
-                "buyable": bool(currently_available(details)) if details else False,
+                "buyable": _buyable(details, overrides.get(player_id)),
                 "availability_factor": None,
                 "news": details.get("news") or "",
                 **{
@@ -1849,11 +1874,20 @@ def _optimize(request: OptimizeRequest) -> Dict[str, Any]:
     horizon = HORIZONS.get(request.mode, request.horizon or 3)
     gameweeks = [gameweek for gameweek in range(start, start + horizon) if gameweek <= 38]
     points, identity, _, notes = _horizon(scout, gameweeks, overrides)
-    players = _optimizer_players(plan_context, points, identity, gameweeks, _official_players(scout))
+    players = _optimizer_players(
+        plan_context, points, identity, gameweeks, _official_players(scout), overrides
+    )
     current_ids = [row["id"] for row in plan_context["squad"]]
     free_transfers = request.free_transfers
     if free_transfers is None:
         free_transfers = plan_context["free_transfers_remaining"]
+    chip = plan_context.get("chip")
+    if chip in my_team.FREE_TRANSFER_CHIPS:
+        # Every transfer this gameweek is free under the chip.
+        free_transfers = None
+        notes = notes + [
+            f"{my_team.CHIP_NAMES[chip]} is on in your working squad, so transfers are unlimited."
+        ]
     bank = plan_context["bank"] if request.bank is None else float(request.bank)
     result = optimizer.plan(
         players,

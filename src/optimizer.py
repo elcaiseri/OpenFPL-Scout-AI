@@ -53,7 +53,7 @@ def estimate_free_transfers(
     picked freely); one free transfer after it, one more each gameweek, at
     most ``max_banked`` banked; transfers paid for with hits
     (``event_transfers_cost`` / 4) do not use free ones; a Wildcard or Free
-    Hit week keeps the banked transfers. One-off top-ups FPL sometimes
+    Hit week keeps the banked transfers but adds none. One-off top-ups FPL sometimes
     grants are not visible in public data.
     """
     rows = {
@@ -87,7 +87,7 @@ def estimate_free_transfers(
         available = free
         if chip in FREE_TRANSFER_CHIPS:
             used = 0
-            note = f"{chip} played: banked transfers kept"
+            note = f"{chip} played: banked transfers kept, none added"
         else:
             used = min(available, max(0, made - hits))
             note = (
@@ -96,7 +96,9 @@ def estimate_free_transfers(
                 if made
                 else "rolled"
             )
-        free = min(max_banked, available - used + 1)
+        # A Wildcard or Free Hit week keeps the banked transfers but adds no
+        # new one; every other week adds one, up to the bank's limit.
+        free = available if chip in FREE_TRANSFER_CHIPS else min(max_banked, available - used + 1)
         trail.append(
             {
                 "gameweek": gameweek,
@@ -115,8 +117,8 @@ def estimate_free_transfers(
         "max_banked": max_banked,
         "note": (
             "Estimated from public history: 1 free transfer a gameweek, at most "
-            f"{max_banked} banked, Wildcard and Free Hit weeks keep banked "
-            "transfers. Correct it if FPL shows a different number."
+            f"{max_banked} banked; a Wildcard or Free Hit week keeps the banked "
+            "transfers without adding one. Correct it if FPL shows a different number."
         ),
     }
 
@@ -278,25 +280,64 @@ def horizon_points(
 def candidate_pool(
     players: pd.DataFrame,
     current_ids: Iterable[int],
-    per_position: int = 25,
-    cheapest: int = 5,
+    gameweeks: Sequence[int],
+    *,
     locked_ids: Iterable[int] = (),
+    banned_ids: Iterable[int] = (),
+    max_per_club: int = 3,
 ) -> pd.DataFrame:
-    """Keep the current squad and the realistic alternatives per position.
+    """Drop only candidates that provably cannot change the optimum.
 
-    ``players`` needs ``id``, ``element_type``, ``cost``, ``buyable`` and
-    ``total``. Restricting the pool keeps every solve well under a second
-    without changing the optimum in practice: the best projections and the
-    cheapest enablers are all kept, and so is every locked player.
+    ``players`` needs ``id``, ``element_type``, ``team_name``, ``cost``,
+    ``buyable`` and one points column per gameweek. The current squad and
+    locked players are always kept; banned players and players who can't
+    be bought (and aren't owned) are dropped, as the solver could never pick
+    them.
+
+    A buyable candidate *p* is also dropped when other buyable candidates
+    of his position *dominate* him (cost no higher, points no lower in every
+    gameweek, ties broken by id so dominance has no cycles) from at least
+    ``quota + full_clubs`` distinct clubs, where ``full_clubs`` is the most
+    clubs a squad can fill (5). Proof that the optimum survives: in an
+    optimal squad holding *p*, at most ``quota - 1`` dominators share his
+    position in the squad and at most ``full_clubs`` clubs are full, so a
+    dominator outside the squad from a club with room remains. Swapping him
+    in keeps every constraint (same position, no higher cost, same transfer
+    count, as neither is owned) and loses no points in any gameweek, so the
+    squad stays optimal. Each swap moves strictly up the dominance order, so
+    repeating it ends in an optimal squad drawn from the kept players.
     """
-    current = set(int(value) for value in current_ids)
-    keep = players["id"].isin(current) | players["id"].isin([int(value) for value in locked_ids])
-    buyable = players.loc[players["buyable"] & ~keep]
-    for position in SQUAD_QUOTAS:
-        group = buyable.loc[buyable["element_type"] == position]
-        best = group.nlargest(per_position, "total")["id"]
-        cheap = group.sort_values(["cost", "total"], ascending=[True, False]).head(cheapest)["id"]
-        keep |= players["id"].isin(best) | players["id"].isin(cheap)
+    current = {int(value) for value in current_ids}
+    locked = {int(value) for value in locked_ids}
+    banned = {int(value) for value in banned_ids}
+    ids = players["id"].astype(int).to_numpy()
+    owned = np.isin(ids, list(current | locked))
+    allowed = players["buyable"].astype(bool).to_numpy() & ~np.isin(ids, list(banned))
+    candidates = allowed & ~owned
+    keep = owned | candidates
+    positions = players["element_type"].astype(int).to_numpy()
+    clubs = players["team_name"].astype(str).to_numpy()
+    costs = players["cost"].astype(float).to_numpy()
+    points = players[list(gameweeks)].astype(float).to_numpy()
+    full_clubs = SQUAD_SIZE // max(1, int(max_per_club))
+    for position, quota in SQUAD_QUOTAS.items():
+        members = np.flatnonzero(candidates & (positions == position))
+        if len(members) <= quota + full_clubs:
+            continue
+        cost = costs[members]
+        pts = points[members]
+        no_dearer = cost[None, :] <= cost[:, None] + 1e-9
+        no_worse = (pts[None, :, :] >= pts[:, None, :] - 1e-9).all(axis=2)
+        same = (np.abs(cost[None, :] - cost[:, None]) <= 1e-9) & (
+            np.abs(pts[None, :, :] - pts[:, None, :]) <= 1e-9
+        ).all(axis=2)
+        earlier = ids[members][None, :] < ids[members][:, None]
+        dominated_by = no_dearer & no_worse & (~same | earlier)
+        np.fill_diagonal(dominated_by, False)
+        member_clubs = clubs[members]
+        for row, index in enumerate(members):
+            if len(set(member_clubs[dominated_by[row]])) >= quota + full_clubs:
+                keep[index] = False
     return players.loc[keep].reset_index(drop=True)
 
 
@@ -456,10 +497,15 @@ def solve_squad(
     transfers_made = int(sum(1 for i in chosen if not in_current[i]))
     hits = int(solution[hits_var]) if transfers_mode else 0
     spent = float(costs[chosen].sum())
+    playing = sum(item["points"] for item in lineups)
+    bench = sum(item["bench_points"] for item in lineups)
     return {
         "squad_ids": [int(ids[i]) for i in chosen],
         "lineups": lineups,
-        "projected_total": round(sum(item["points"] for item in lineups), 2),
+        "projected_total": round(playing, 2),
+        # What the solver maximises: each gameweek's XI and captain, a
+        # fraction of the bench, minus hits. Plans are ranked by it.
+        "objective": round(playing + bench_weight * bench - hits * hit_cost, 3),
         "transfers": transfers_made,
         "hits": hits,
         "hit_cost": round(hits * hit_cost, 1),
@@ -573,7 +619,7 @@ def plan(
     budget = float(bank) + float(players.loc[in_pool, "cost"].sum())
     players = players.copy()
     players["total"] = players[list(gameweeks)].sum(axis=1)
-    pool = candidate_pool(players, current, locked_ids=locked)
+    pool = candidate_pool(players, current, gameweeks, locked_ids=locked, banned_ids=banned)
     constraints = {"locked_ids": locked, "banned_ids": banned}
     blocked = "No legal squad within the budget" + (
         " and your locks and bans" if locked or banned else ""
@@ -586,6 +632,7 @@ def plan(
     if baseline is None:
         raise ValueError("The current squad could not be evaluated")
     baseline_total = baseline["projected_total"]
+    baseline_objective = baseline["objective"]
 
     def finish(solution: Dict[str, Any]) -> Dict[str, Any]:
         described = describe_plan(solution, pool, gameweeks, current)
@@ -594,6 +641,7 @@ def plan(
             net_total=round(net, 2),
             gross_gain=round(solution["projected_total"] - baseline_total, 2),
             net_gain=round(net - baseline_total, 2),
+            objective_gain=round(solution["objective"] - baseline_objective, 3),
         )
         return described
 
@@ -621,7 +669,12 @@ def plan(
         plans.append({"feasible": True, **finish(solution)})
 
     feasible = [index for index, item in enumerate(plans) if item.get("feasible")]
-    best = max(feasible, key=lambda index: (plans[index]["net_total"], -plans[index]["transfers"]))
+    # Ranked by the solver's own objective, so the plan marked best is the
+    # one the optimisation itself prefers (ties keep fewer transfers).
+    best = max(
+        feasible,
+        key=lambda index: (round(plans[index]["objective"], 6), -plans[index]["transfers"]),
+    )
     return {
         "mode": mode,
         "gameweeks": list(gameweeks),
@@ -632,6 +685,8 @@ def plan(
         "plans": plans,
         "best_index": best,
         "pool_size": int(len(pool)),
+        "candidates": int(len(players)),
+        "bench_weight": bench_weight,
         "locked_ids": locked,
         "banned_ids": banned,
     }

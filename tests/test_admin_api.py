@@ -630,6 +630,35 @@ class WorkingTeamApiTests(OptimizerApiTests):
                 self.assertNotIn(locked_out, plan["squad_ids"])
         self.assertTrue(result["plans"][1]["feasible"])
 
+    def test_a_wildcard_in_the_working_squad_makes_transfers_free(self):
+        body = {
+            "entry_id": 77, "gameweek": 3, "mode": "transfers", "horizon": 1, "max_transfers": 3,
+            "draft": self.draft(chip="wildcard"),
+        }
+        status, _, result = request("POST", "/api/admin/optimize", body=body)
+        self.assertEqual(status, 200, result)
+        self.assertIsNone(result["free_transfers"])
+        self.assertTrue(all(plan["hits"] == 0 for plan in result["plans"] if plan["feasible"]))
+        self.assertTrue(any("unlimited" in note for note in result["notes"]))
+
+    def test_an_injured_player_you_rate_fit_can_be_bought_and_locked(self):
+        squad = {pick["id"] for pick in self.published}
+        target = next(
+            player for player in self.fpl.elements
+            if player["element_type"] == 4 and player["id"] not in squad
+        )
+        target.update(status="i", chance_of_playing_next_round=0)
+        body = {
+            "entry_id": 77, "gameweek": 3, "mode": "wildcard",
+            "overrides": {str(target["id"]): {"lock": True, "availability": 100}},
+        }
+        status, _, result = request("POST", "/api/admin/optimize", body=body)
+        self.assertEqual(status, 200, result)
+        self.assertIn(target["id"], result["plans"][0]["squad_ids"])
+        body["overrides"] = {str(target["id"]): {"lock": True}}
+        status, _, result = request("POST", "/api/admin/optimize", body=body)
+        self.assertEqual(status, 422, result)  # still ruled out: no legal squad
+
     def test_outlook_lists_fixtures_projections_and_chip_values(self):
         status, _, data = request(
             "POST", "/api/admin/managers/77/outlook", body={"gameweek": 3, "horizon": 2}
