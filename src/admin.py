@@ -32,6 +32,7 @@ from src.logger import get_logger
 from src.observability import LogBuffer, RequestMetrics, process_snapshot
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
 from src.team_rating import rate_manager_team
+from src.scout import MAX_PLANNING_HORIZON
 from src.transfers import clubs_over_limit, currently_available, suggest_transfers
 
 logger = get_logger(__name__)
@@ -599,15 +600,36 @@ async def admin_squad(gameweek: Optional[int] = Query(None, ge=1, le=38)):
     return await _run(_squad, gameweek)
 
 
+def _captured_before_deadline(forecast: pd.DataFrame, deadline: Any) -> bool:
+    """Whether an archived forecast was made before the gameweek's deadline.
+
+    A closed gameweek that was never archived in time is frozen on its first
+    recall with a forecast made afterwards; judging that one would flatter
+    (or misjudge) the models, so it is left out of accuracy.
+    """
+    from src.data_archive import _parse_deadline
+
+    captured = _parse_deadline(forecast.attrs.get("forecast_captured_at"))
+    closes = _parse_deadline(deadline)
+    return captured is not None and closes is not None and captured < closes
+
+
 def _accuracy(played_only: bool) -> Dict[str, Any]:
     scout = _scout()
     client = scout.official_client
     archive = scout.data_archive
     if not archive.enabled:
-        return {"archive_enabled": False, "gameweeks": [], "summary": {}, "missing": []}
+        return {
+            "archive_enabled": False,
+            "gameweeks": [],
+            "summary": {},
+            "missing": [],
+            "retrospective": [],
+        }
     events = client.mapped_gameweeks()
     results = []
     missing = []
+    retrospective = []
     for event in events:
         if not event.get("finished") and not event.get("is_current"):
             continue
@@ -615,6 +637,9 @@ def _accuracy(played_only: bool) -> Dict[str, Any]:
         forecast = archive.archived_forecast(client, gameweek)
         if forecast is None:
             missing.append(gameweek)
+            continue
+        if not _captured_before_deadline(forecast, event.get("deadline_time")):
+            retrospective.append(gameweek)
             continue
         key = (gameweek, forecast.attrs.get("forecast_captured_at"), played_only)
         cached = _accuracy_cache.get(key)
@@ -643,6 +668,7 @@ def _accuracy(played_only: bool) -> Dict[str, Any]:
             "gameweeks": results,
             "summary": summary,
             "missing": missing,
+            "retrospective": retrospective,
         }
     )
 
@@ -1550,7 +1576,7 @@ async def admin_working_team(
 
 
 class OutlookRequest(TeamRequest):
-    horizon: int = Field(5, ge=1, le=8)
+    horizon: int = Field(5, ge=1, le=MAX_PLANNING_HORIZON)
 
 
 def _outlook(entry_id: int, request: OutlookRequest) -> Dict[str, Any]:
@@ -1653,10 +1679,17 @@ def _review(entry_id: int, gameweek: Optional[int]) -> Dict[str, Any]:
     finished = bool(event.get("finished"))
     actuals = _live_actuals(scout, resolved)
     forecast = None
+    forecast_note = None
     try:
         archived = scout.data_archive.archived_forecast(client, resolved)
     except Exception as error:
         logger.info("No archived GW%d forecast for the review: %s", resolved, error)
+        archived = None
+    if archived is not None and not _captured_before_deadline(archived, event.get("deadline_time")):
+        forecast_note = (
+            f"The archived GW{resolved} forecast was made after its deadline, so it "
+            "isn't compared with the points scored."
+        )
         archived = None
     if archived is not None and not archived.empty:
         frame = archived.drop_duplicates("id")
@@ -1705,6 +1738,8 @@ def _review(entry_id: int, gameweek: Optional[int]) -> Dict[str, Any]:
             "forecast_frozen": bool(archived.attrs.get("frozen")) if archived is not None else None,
         }
     )
+    if forecast_note:
+        review["forecast"]["note"] = forecast_note
     return _json(review)
 
 

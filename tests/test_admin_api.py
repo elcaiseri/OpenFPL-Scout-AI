@@ -304,6 +304,17 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(data["archive_enabled"])
         self.assertEqual(data["gameweeks"], [])
         self.assertEqual(data["missing"], [1, 2])
+        self.assertEqual(data["retrospective"], [])
+
+    def test_accuracy_leaves_out_forecasts_made_after_the_deadline(self):
+        # GW2 closed before anything was archived: recalling it now freezes a
+        # forecast made after its deadline, which must not be scored.
+        frozen = self.scout.get_official_predictions(2, collect_results=False)
+        self.assertTrue(frozen.attrs.get("frozen"))
+        data = self.get("/api/admin/accuracy")
+        self.assertEqual(data["retrospective"], [2])
+        self.assertEqual(data["missing"], [1])
+        self.assertEqual(data["gameweeks"], [])
 
 
 

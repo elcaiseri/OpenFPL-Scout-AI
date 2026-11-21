@@ -147,6 +147,24 @@ class ExplanationTests(unittest.TestCase):
         self.assertEqual(steps[0]["kind"], "start")
         self.assertAlmostEqual(steps[-1]["value"], explanation["expected_points"], places=3)
 
+    def test_each_models_points_are_clipped_like_the_prediction(self):
+        history = league_history()
+        history.loc[history["id"] == 3, "goals"] = 4.0
+        scout = build_scout({"goals": GoalsModel(), "flat": ConstantModel(2.0)})
+        scout.clip_max = 4.0
+        predictions = scout.predict_players(history, gameweek=3)
+        inputs = scout.model_inputs(3)
+        served = insights.model_points_by_id(predictions.attrs["inference"])[3]
+
+        explanation = insights.explain_player(scout, inputs, predictions, 3)
+
+        # The goals model's raw output passes the clip; the explanation, the
+        # prediction table and the archive must all show the clipped figure.
+        self.assertGreater(float(scout._run_models(inputs.model_input).matrix[0].max()), 4.0)
+        for name, values in explanation["models"].items():
+            self.assertAlmostEqual(values["expected_points"], served[name], places=2)
+        self.assertLessEqual(explanation["models"]["goals"]["match_points"], 4.0 * 2)
+
     def test_contribution_reflects_a_strong_input(self):
         history = league_history()
         history.loc[history["id"] == 3, "goals"] = 4.0

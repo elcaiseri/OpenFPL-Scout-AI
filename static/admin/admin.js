@@ -3292,7 +3292,7 @@ views.myteam = {
                 { key: "difference", label: "Δ", num: true, render: (row) => utils.fmtSigned(row.difference, 1) },
             ], { footer: false, sortKey: "difference", pageSize: 11, onRowClick: (row) => drawer.open(row.id, row.web_name) }));
         } else {
-            side.append(h("p", { class: "small muted" }, "No archived forecast for this gameweek, so xP can't be compared."));
+            side.append(h("p", { class: "small muted" }, forecast.note || "No archived forecast for this gameweek, so xP can't be compared."));
         }
         grid.append(side);
         target.append(grid);
@@ -3835,7 +3835,7 @@ views.models = {
             const gameweeks = result.gameweeks || [];
             const summary = result.summary || {};
             if (!gameweeks.length) {
-                target.append(h("p", { class: "empty" }, `No finished gameweek has an archived forecast yet${(result.missing || []).length ? ` (missing: GW${result.missing.join(", GW")})` : ""}.`));
+                target.append(h("p", { class: "empty" }, `No finished gameweek has a forecast archived before its deadline yet${(result.missing || []).length ? ` (missing: GW${result.missing.join(", GW")})` : ""}${(result.retrospective || []).length ? ` (made after the deadline: GW${result.retrospective.join(", GW")})` : ""}.`));
                 return;
             }
             const report = globalThis.REPORT || {};
@@ -3907,6 +3907,7 @@ views.models = {
                 { key: "actual", label: "Mean actual", num: true, digits: 2 },
             ], { footer: false }));
             if ((result.missing || []).length) target.append(h("p", { class: "small muted" }, `No archived forecast or live data for GW${result.missing.join(", GW")}.`));
+            if ((result.retrospective || []).length) target.append(h("p", { class: "small muted" }, `Left out: GW${result.retrospective.join(", GW")}, whose archived forecast was made after the deadline.`));
         });
     },
 

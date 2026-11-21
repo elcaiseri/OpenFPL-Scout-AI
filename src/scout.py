@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set, Tuple
+from typing import Any, Callable, Deque, Dict, FrozenSet, List, Mapping, Optional, Set, Tuple
 
 import joblib
 import numpy as np
@@ -58,6 +58,13 @@ def _mounted_data_path(configured_path: Any) -> Any:
     if parts and parts[0] == "data":
         parts = parts[1:]
     return Path(data_root).joinpath(*parts)
+
+
+# The longest horizon the owner dashboard projects (its outlook), plus the
+# open gameweek and one spare, so planning never evicts the inputs of the
+# gameweek being served (explanations rely on them being exact).
+MAX_PLANNING_HORIZON = 8
+MODEL_INPUTS_CAPACITY = MAX_PLANNING_HORIZON + 2
 
 
 class InferenceError(RuntimeError):
@@ -171,6 +178,20 @@ class ModelInputs:
     feature_coverage: Dict[str, List[str]] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RunSettings:
+    """The runtime settings one prediction run uses from start to finish.
+
+    Taken when the run starts, so an override or enrichment toggle made
+    meanwhile can neither change how the run predicts nor how its archive
+    records it.
+    """
+
+    weights: Mapping[str, float]
+    disabled: FrozenSet[str]
+    fpl_data_enabled: bool
+
+
 @dataclass
 class ModelRun:
     """Every configured model's raw predictions for some feature rows."""
@@ -280,8 +301,13 @@ class FPLScout:
         # prediction of that gameweek so the decision log can diff them.
         self._previous_forecasts: Dict[int, pd.DataFrame] = {}
         # A prediction under way, which other requests for its gameweek wait
-        # for. It always runs in the thread of the request that started it.
-        self._pending_forecasts: Dict[int, Future] = {}
+        # for, with the invalidation generation it started in. It always runs
+        # in the thread of the request that started it.
+        self._pending_forecasts: Dict[int, Tuple[Future, Tuple[int, int]]] = {}
+        # Bumped by every invalidation (all gameweeks, or one), so a run that
+        # started before it is not cached as fresh and is never joined.
+        self._forecast_generation = 0
+        self._gameweek_generations: Dict[int, int] = {}
         # The official data each cached forecast's availability was last
         # checked against, so the check reruns only when that data changes.
         self._availability_checked: Dict[int, Tuple[_LiveForecast, Any]] = {}
@@ -304,6 +330,9 @@ class FPLScout:
             if environment_override is None
             else environment_override
         )
+        # The deploy's own setting; a runtime toggle that differs from it is
+        # recorded with archived forecasts (see ``_model_versions``).
+        self.startup_fpl_data_enabled = self.fpl_data_enabled
         self.fpl_data_season = str(fpl_data_config.get("season", "")).strip()
         self.fpl_data_permission_status = str(
             fpl_data_config.get("permission_status", "pending")
@@ -337,7 +366,7 @@ class FPLScout:
         self.weight_overrides: Dict[str, float] = {}
         self.disabled_models: Set[str] = set()
         self._model_inputs: "OrderedDict[int, ModelInputs]" = OrderedDict()
-        self.model_inputs_capacity = 4
+        self.model_inputs_capacity = MODEL_INPUTS_CAPACITY
         self.forecast_events: Deque[Dict[str, Any]] = deque(maxlen=200)
         self._repredict_reasons: Dict[int, str] = {}
         self.last_inference: Optional[Dict[str, Any]] = None
@@ -749,6 +778,7 @@ class FPLScout:
         data: pd.DataFrame,
         gameweek: Optional[int] = None,
         availability: Optional[pd.DataFrame] = None,
+        settings: Optional[RunSettings] = None,
     ) -> pd.DataFrame:
         """Generate predictions from an already loaded FPL history frame.
 
@@ -767,7 +797,12 @@ class FPLScout:
         # Before ``expected_points`` (also an input: FPL's own xP average) is
         # replaced by the projection below.
         input_players = players.copy()
-        run = self._run_models(model_input)
+        settings = settings or self.run_settings()
+        run = self._run_models(
+            model_input,
+            weights=self._run_weights(settings),
+            disabled=set(settings.disabled),
+        )
         ensemble, diagnostics = self._ensemble_from_run(run)
         diagnostics["strategy"] = "model-ensemble"
         availability_values = players["availability_factor"].to_numpy()
@@ -1166,11 +1201,17 @@ class FPLScout:
             cached = self._live_forecasts.get(gameweek)
             if cached is not None and self.clock() < cached.fresh_until:
                 return cached.predictions
-            pending = self._pending_forecasts.get(gameweek)
-            owner = pending is None
-            if owner:
+            generation = self._generation(gameweek)
+            entry = self._pending_forecasts.get(gameweek)
+            # A run started before the last invalidation is never joined: it
+            # may use the settings the invalidation replaced.
+            owner = entry is None or entry[1] != generation
+            if not owner:
+                pending = entry[0]
+            else:
                 pending = Future()
-                self._pending_forecasts[gameweek] = pending
+                self._pending_forecasts[gameweek] = (pending, generation)
+                settings = self.run_settings()
                 previous = (
                     cached.predictions
                     if cached is not None
@@ -1183,10 +1224,10 @@ class FPLScout:
             return pending.result()
         started = time.perf_counter()
         try:
-            predictions = self._predict_live(gameweek)
+            predictions = self._predict_live(gameweek, settings)
         except BaseException as error:
             with self._forecast_lock:
-                self._pending_forecasts.pop(gameweek, None)
+                self._release_pending(gameweek, pending)
             pending.set_exception(error)
             self._record_forecast_event(
                 gameweek, trigger, started, error=error, previous=previous
@@ -1196,13 +1237,19 @@ class FPLScout:
             gameweek, trigger, started, predictions=predictions, previous=previous
         )
         # Stored as it stops being pending, so no request in between starts
-        # the same prediction again.
+        # the same prediction again. A run invalidated meanwhile is returned
+        # to the requests that waited for it but never cached as fresh.
         with self._forecast_lock:
-            self._pending_forecasts.pop(gameweek, None)
+            self._release_pending(gameweek, pending)
             if predictions.attrs.get("frozen"):
                 # Frozen on its first recall after the deadline; every later
                 # request reads the frozen forecast instead.
                 self._live_forecasts.pop(gameweek, None)
+            elif generation != self._generation(gameweek):
+                logger.info(
+                    "Not caching the GW%d forecast: settings changed while it ran",
+                    gameweek,
+                )
             else:
                 now = self.clock()
                 self._live_forecasts[gameweek] = _LiveForecast(
@@ -1213,13 +1260,17 @@ class FPLScout:
         pending.set_result(predictions)
         return predictions
 
-    def _model_versions(self) -> Dict[str, Dict[str, Any]]:
+    def _model_versions(
+        self, settings: Optional[RunSettings] = None
+    ) -> Dict[str, Dict[str, Any]]:
         """The configured models, as each archived forecast records them.
 
-        Runtime overrides from the owner dashboard are recorded too, so a
-        forecast made with them is never restored after a restart (when the
-        overrides are gone).
+        Runtime overrides from the owner dashboard are recorded too, and so
+        is an enrichment setting that differs from the deploy's, so a
+        forecast made with them is never restored after a restart (when they
+        are gone) or after they change.
         """
+        settings = settings or self.run_settings()
         versions = {
             name: {
                 key: value
@@ -1230,11 +1281,32 @@ class FPLScout:
             if isinstance(metadata, Mapping)
         }
         for name, entry in versions.items():
-            if name in self.weight_overrides:
-                entry["weight_override"] = float(self.weight_overrides[name])
-            if name in self.disabled_models:
+            if name in settings.weights:
+                entry["weight_override"] = float(settings.weights[name])
+            if name in settings.disabled:
                 entry["disabled"] = True
+            if settings.fpl_data_enabled != self.startup_fpl_data_enabled:
+                entry["fpl_data_enabled"] = bool(settings.fpl_data_enabled)
         return versions
+
+    def run_settings(self) -> RunSettings:
+        """A snapshot of the runtime overrides and enrichment setting."""
+        with self._forecast_lock:
+            return RunSettings(
+                weights=dict(self.weight_overrides),
+                disabled=frozenset(self.disabled_models),
+                fpl_data_enabled=bool(self.fpl_data_enabled),
+            )
+
+    def _run_weights(self, settings: RunSettings) -> Dict[str, float]:
+        """Every model's weight under a settings snapshot."""
+        return {
+            artifact.name: float(settings.weights.get(artifact.name, artifact.weight))
+            for artifact in self.model_artifacts
+        }
+
+    def _generation(self, gameweek: int) -> Tuple[int, int]:
+        return (self._forecast_generation, self._gameweek_generations.get(gameweek, 0))
 
     # ------------------------------------------------------------------
     # Owner dashboard: decision log, runtime control and sandbox.
@@ -1354,9 +1426,25 @@ class FPLScout:
             state.append(entry)
         return state
 
+    def _release_pending(self, gameweek: int, pending: Future) -> None:
+        """Stop marking a run pending, unless a newer run already replaced it."""
+        entry = self._pending_forecasts.get(gameweek)
+        if entry is not None and entry[0] is pending:
+            self._pending_forecasts.pop(gameweek, None)
+
     def invalidate_live_forecasts(self, gameweek: Optional[int] = None) -> int:
-        """Drop cached live forecasts so the next request predicts again."""
+        """Drop cached live forecasts so the next request predicts again.
+
+        Runs already under way are superseded too: their results are not
+        cached, and the next request starts a new run instead of joining one.
+        """
         with self._forecast_lock:
+            if gameweek is None:
+                self._forecast_generation += 1
+            else:
+                self._gameweek_generations[gameweek] = (
+                    self._gameweek_generations.get(gameweek, 0) + 1
+                )
             targets = (
                 list(self._live_forecasts)
                 if gameweek is None
@@ -1565,8 +1653,11 @@ class FPLScout:
         result.attrs["sandbox"] = True
         return result
 
-    def _predict_live(self, gameweek: int) -> pd.DataFrame:
+    def _predict_live(
+        self, gameweek: int, settings: Optional[RunSettings] = None
+    ) -> pd.DataFrame:
         """Predict a gameweek from current official history, then archive it."""
+        settings = settings or self.run_settings()
         resolved_gameweek = gameweek
         logger.info("Loading official FPL history for gameweek %d", resolved_gameweek)
         official_history = self.official_client.player_history(resolved_gameweek)
@@ -1577,16 +1668,15 @@ class FPLScout:
             "provider": "fpl-data",
             "status": "disabled",
         }
-        season_problem = (
-            self._fpl_data_season_problem() if self.fpl_data_enabled else None
-        )
-        if self.fpl_data_enabled and resolved_gameweek < self.fpl_data_start_gameweek:
+        enrichment_on = settings.fpl_data_enabled
+        season_problem = self._fpl_data_season_problem() if enrichment_on else None
+        if enrichment_on and resolved_gameweek < self.fpl_data_start_gameweek:
             enrichment["status"] = "before-start-gameweek"
         elif season_problem:
             # Player IDs are reassigned every season, so another season's
             # dataset must never be merged (or even downloaded).
             enrichment = {"provider": "fpl-data", **season_problem}
-        elif self.fpl_data_enabled and self.fpl_data_provider is not None:
+        elif enrichment_on and self.fpl_data_provider is not None:
             try:
                 history, enrichment = self.fpl_data_provider.enrich(
                     history, resolved_gameweek
@@ -1606,6 +1696,7 @@ class FPLScout:
             history,
             gameweek=resolved_gameweek,
             availability=self._official_availability(),
+            settings=settings,
         )
         self.last_data_enrichment = dict(enrichment)
         result.attrs["frozen"] = False
@@ -1623,7 +1714,7 @@ class FPLScout:
             predictions=result,
             source=str(result.attrs["source"]),
             enrichment=enrichment,
-            model_versions=self._model_versions(),
+            model_versions=self._model_versions(settings),
         )
         result.attrs["archive"] = archive_result
         # A closed gameweek that was never frozen is frozen now, so every

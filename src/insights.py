@@ -893,7 +893,8 @@ def explain_player(
 
     models = {}
     for index, name in enumerate(run.names):
-        raw = float(run.matrix[index][:rows_per_block].sum())
+        # Clipped per fixture before summing, as the served prediction is.
+        raw = float(scout._clip(run.matrix[index][:rows_per_block]).sum())
         models[name] = {
             "match_points": round(raw, 3),
             "expected_points": round(raw * availability, 3),
