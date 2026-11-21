@@ -29,6 +29,7 @@ from src.data_archive import DataArchive
 from src.fpl_data_inference import FPLDataHistoryProvider
 from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
+from src.team_rating import _best_benchmark_lineup
 
 logger = get_logger(__name__)
 
@@ -67,6 +68,7 @@ class InferenceError(RuntimeError):
 # unavailable (left the league), and not in the squad.
 STATUS_AVAILABILITY = {"a": 1.0, "d": 0.5, "i": 0.0, "s": 0.0, "u": 0.0, "n": 0.0}
 AVAILABILITY_COLUMNS = ("status", "chance_of_playing_next_round", "can_select")
+DIFFERENTIAL_MAX_XP_GAP = 0.25
 
 
 def availability_factor(players: pd.DataFrame) -> pd.Series:
@@ -1084,6 +1086,11 @@ class FPLScout:
         self.last_data_enrichment = dict(enrichment)
         result.attrs["frozen"] = False
         result.attrs["inference"]["data_enrichment"] = enrichment
+        # Store the input next to the forecast so a frozen read can reproduce
+        # the armbands without consulting today's official FPL data.
+        result.attrs["inference"]["captaincy"] = {
+            "previous_most_captained_id": self._previous_most_captained(gameweek)
+        }
         result.attrs["source"] = (
             "official-fpl+fpl-data"
             if enrichment.get("status") == "applied"
@@ -1167,6 +1174,52 @@ class FPLScout:
         ]
         return players[columns]
 
+    def _previous_most_captained(self, gameweek: int) -> Optional[int]:
+        if gameweek <= 1:
+            return None
+        bootstrap = self._current_bootstrap() or {}
+        previous = next(
+            (
+                event
+                for event in bootstrap.get("events", [])
+                if event.get("id") == gameweek - 1
+            ),
+            {},
+        )
+        player_id = previous.get("most_captained")
+        return player_id if type(player_id) is int and player_id > 0 else None
+
+    @staticmethod
+    def _captaincy_indices(
+        team: pd.DataFrame, context: Optional[Mapping[str, Any]]
+    ) -> Tuple[int, int]:
+        # Forecasts captured before this rule preserve their original armbands.
+        if context is None:
+            return 0, 1
+
+        lineup, _ = _best_benchmark_lineup(
+            team.assign(_index=team.index).to_dict(orient="records")
+        )
+        starters = team.loc[sorted(player["_index"] for player in lineup)]
+        captain, vice = starters.index[:2]
+        previous = context.get("previous_most_captained_id")
+        if (
+            previous is None
+            or not {"id", "availability_factor"} <= set(starters.columns)
+            or starters.at[captain, "id"] != previous
+        ):
+            return captain, vice
+
+        alternatives = starters.drop(index=captain)
+        eligible = alternatives["availability_factor"].eq(1.0) & alternatives[
+            "expected_points"
+        ].ge(starters.at[captain, "expected_points"] - DIFFERENTIAL_MAX_XP_GAP)
+        if "fixture_count" in alternatives:
+            eligible &= alternatives["fixture_count"].gt(0)
+        if eligible.any():
+            return alternatives.index[eligible][0], captain
+        return captain, vice
+
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
         """Select the highest-ranked 15-player positional squad."""
         required_columns = {"element_type", "web_name", "expected_points"}
@@ -1178,7 +1231,8 @@ class FPLScout:
 
         player_key = "id" if "id" in predictions.columns else "web_name"
         unique_predictions = predictions.drop_duplicates(player_key, keep="first")
-        strategy = predictions.attrs.get("inference", {}).get("strategy")
+        inference = predictions.attrs.get("inference", {})
+        strategy = inference.get("strategy")
         # Players with zero availability (injured, suspended, left the league)
         # are never selected; the cold start also requires availability data.
         team = self._select_budget_free_squad(
@@ -1186,17 +1240,18 @@ class FPLScout:
             strategy=strategy or "model-ensemble",
             require_available=strategy == "ownership-cold-start",
         )
-        team["role"] = ""
-        team.loc[0, "role"] = "captain"
-        team.loc[1, "role"] = "vice"
         team["element_type"] = team["element_type"].map(self.POSITION_MAPPING)
+        captain, vice = self._captaincy_indices(team, inference.get("captaincy"))
+        team["role"] = ""
+        team.loc[captain, "role"] = "captain"
+        team.loc[vice, "role"] = "vice"
 
         logger.info(
             "Selected captain %s (%.2f) and vice-captain %s (%.2f); total %.2f",
-            team.loc[0, "web_name"],
-            team.loc[0, "expected_points"],
-            team.loc[1, "web_name"],
-            team.loc[1, "expected_points"],
+            team.at[captain, "web_name"],
+            team.at[captain, "expected_points"],
+            team.at[vice, "web_name"],
+            team.at[vice, "expected_points"],
             team["expected_points"].sum(),
         )
         return team

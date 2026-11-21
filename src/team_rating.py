@@ -139,7 +139,10 @@ def rate_manager_team(
     manager_captain = next(
         (player for player in manager_players if player.get("is_captain")), None
     )
-    benchmark_captain = max(benchmark_lineup, key=_expected_points)
+    benchmark_captain = next(
+        (player for player in benchmark_lineup if player.get("role") == "captain"),
+        max(benchmark_lineup, key=_expected_points),
+    )
     manager_captain_points = _expected_points(manager_captain or {})
     benchmark_captain_points = _expected_points(benchmark_captain)
 

@@ -125,15 +125,17 @@ const utils = {
     },
 
     // The points a squad can actually score, as the team rating's AI benchmark
-    // counts them (src/team_rating.py): the highest-projected legal XI — one
-    // goalkeeper, 3–5 defenders, 2–5 midfielders, 1–3 forwards — plus the
-    // armband, which doubles its top projection. Null without a legal XI.
+    // counts them (src/team_rating.py): the highest-projected legal XI plus
+    // the recommended captain's projection. Null without a legal XI.
     bestLineupPoints(players) {
         const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
         players.forEach(player => {
-            byPosition[this.positionCode(player)]?.push(Math.max(0, this.number(player.expected_points, 0)));
+            byPosition[this.positionCode(player)]?.push({
+                points: Math.max(0, this.number(player.expected_points, 0)),
+                role: player.role
+            });
         });
-        Object.values(byPosition).forEach(points => points.sort((a, b) => b - a));
+        Object.values(byPosition).forEach(group => group.sort((a, b) => b.points - a.points));
         let best = null;
         for (let defenders = 3; defenders <= 5; defenders += 1) {
             for (let midfielders = 2; midfielders <= 5; midfielders += 1) {
@@ -142,8 +144,11 @@ const utils = {
                 const counts = { GK: 1, DEF: defenders, MID: midfielders, FWD: forwards };
                 if (Object.entries(counts).some(([code, count]) => byPosition[code].length < count)) continue;
                 const lineup = Object.entries(counts).flatMap(([code, count]) => byPosition[code].slice(0, count));
-                const base = lineup.reduce((sum, points) => sum + points, 0);
-                if (best === null || base > best.base) best = { base, captain: Math.max(...lineup) };
+                const base = lineup.reduce((sum, player) => sum + player.points, 0);
+                if (best === null || base > best.base) {
+                    const captain = lineup.find(player => player.role === 'captain');
+                    best = { base, captain: captain?.points ?? Math.max(...lineup.map(player => player.points)) };
+                }
             }
         }
         return best && best.base + best.captain;

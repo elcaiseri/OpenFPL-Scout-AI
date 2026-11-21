@@ -329,6 +329,54 @@ class ScoutInferenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Need 2 position-1 players"):
             scout.select_optimal_team(insufficient)
 
+    def test_differential_captain_uses_only_fully_available_starters_within_gap(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+        positions = [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]
+        predictions = pd.DataFrame(
+            [
+                {
+                    "id": player_id,
+                    "element_type": position,
+                    "web_name": f"Player {player_id}",
+                    "team_name": f"Club {player_id % 5}",
+                    "expected_points": {1: 6.72, 2: 6.70, 8: 6.75, 9: 6.50}.get(
+                        player_id, 3.0
+                    ),
+                    "availability_factor": 0.75 if player_id == 1 else 1.0,
+                }
+                for player_id, position in enumerate(positions, 1)
+            ]
+        )
+
+        def armbands(frame):
+            return (
+                scout.select_optimal_team(frame)
+                .query("role != ''")
+                .set_index("role")["id"]
+                .to_dict()
+            )
+
+        predictions.attrs["inference"] = {
+            "captaincy": {"previous_most_captained_id": 8}
+        }
+        # The doubtful starting keeper and the bench keeper are both closer in xP.
+        self.assertEqual(armbands(predictions), {"captain": 9, "vice": 8})
+
+        outside = predictions.copy()
+        outside.loc[outside["id"] == 9, "expected_points"] = 6.499
+        self.assertEqual(armbands(outside), {"captain": 8, "vice": 1})
+
+        for previous in (None, 9):
+            with self.subTest(previous=previous):
+                predictions.attrs["inference"]["captaincy"] = {
+                    "previous_most_captained_id": previous
+                }
+                self.assertEqual(armbands(predictions), {"captain": 8, "vice": 1})
+
     def test_rejects_model_with_stale_feature_contract(self):
         with self.assertRaisesRegex(InferenceError, "different feature contract"):
             FPLScout(

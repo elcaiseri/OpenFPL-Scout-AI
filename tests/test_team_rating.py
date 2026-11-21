@@ -38,6 +38,15 @@ class TeamRatingTests(unittest.TestCase):
             {"starting_xi": 80.0, "captaincy": 10.0, "availability": 10.0},
         )
 
+    def test_ai_projection_adds_the_recommended_captain(self):
+        benchmark = squad()
+        benchmark[0].update(expected_points=6.75, role="vice")
+        benchmark[1].update(expected_points=6.50, role="captain")
+
+        result = rate_manager_team(squad(), benchmark)
+
+        self.assertEqual(result["ai_projected_points"], 64.75)
+
     def test_captain_and_availability_risks_reduce_score(self):
         manager = squad()
         manager[0]["expected_points"] = 1.0

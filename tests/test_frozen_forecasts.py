@@ -40,6 +40,7 @@ class FakeFPL:
         self.current = 2
         self.finished_through = 2
         self.stats_revision = 0
+        self.most_captained = {}
         self.elements = []
         for team in range(1, 7):
             for position in [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]:
@@ -80,6 +81,7 @@ class FakeFPL:
                 "data_checked": gameweek <= self.finished_through,
                 "is_current": gameweek == self.current,
                 "is_next": gameweek == self.current + 1,
+                "most_captained": self.most_captained.get(gameweek),
             }
             for gameweek, deadline in DEADLINES.items()
         ]
@@ -250,6 +252,31 @@ class FrozenForecastTests(unittest.TestCase):
         self.assertEqual(records(squad_after), records(squad_before))
         self.assertEqual(list(squad_after.columns), list(squad_before.columns))
         self.assertEqual(after.attrs["inference"]["strategy"], "model-ensemble")
+
+    def test_differential_armbands_survive_a_frozen_read(self):
+        _, initial_squad = self.request()
+        popular_pick = self.captain_id(initial_squad)
+        self.fpl.most_captained[2] = popular_pick
+        self.client.clear_cache()
+        self.monotonic[0] += 360
+
+        before, differential = self.request()
+        self.assertEqual(
+            before.attrs["inference"]["captaincy"]["previous_most_captained_id"],
+            popular_pick,
+        )
+        self.assertNotEqual(self.captain_id(differential), popular_pick)
+        self.assertEqual(
+            differential.loc[differential["role"] == "vice", "id"].item(),
+            popular_pick,
+        )
+
+        self.fpl.most_captained[2] = 9999
+        self.pass_the_deadline(injured_player=self.captain_id(differential))
+        after, frozen_squad = self.request()
+
+        self.assertTrue(after.attrs["frozen"])
+        self.assertEqual(records(frozen_squad), records(differential))
 
     def test_the_same_changes_do_alter_a_gameweek_that_is_still_open(self):
         before, squad_before = self.request(gameweek=4)

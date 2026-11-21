@@ -27,7 +27,10 @@ responsive web dashboard and FastAPI service.
 - Inference validates each model's feature contract, caches upstream data, and
   can continue when one model fails.
 - The squad selector enforces the official positional quotas and a maximum of
-  three players per club, then assigns captain and vice-captain.
+  three players per club. If the highest projected starter was FPL's most
+  captained player last Gameweek, Scout captains the best fully available
+  alternative within 0.25 expected points and gives the top pick vice.
+  Otherwise, the two highest projected starters get captain and vice.
 - GW1 uses an explicit ownership and availability cold start when no genuine
   current-season match history exists.
 - The dashboard includes Gameweek planning, deadline status, fixture context,

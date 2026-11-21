@@ -105,6 +105,16 @@ test('a gateway error and a network failure recover without refreshing', async (
     assert.equal(result.scout_team[0].expected_points, 6);
 });
 
+test('Scout projection doubles the recommended captain rather than the top xP', () => {
+    const app = loadApp(async () => response(squad));
+    const positions = [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4];
+    const players = positions.map(element_type => ({ element_type, expected_points: 5 }));
+    Object.assign(players[0], { expected_points: 6.75, role: 'vice' });
+    Object.assign(players[1], { expected_points: 6.50, role: 'captain' });
+
+    assert.equal(app.utils.bestLineupPoints(players), 64.75);
+});
+
 test('validation errors are shown without retrying', async () => {
     let requests = 0;
     const app = loadApp(async () => {
