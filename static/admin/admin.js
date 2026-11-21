@@ -933,6 +933,7 @@ const ui = {
         let sortKey = options.sortKey || null;
         let sortDir = options.sortDir || "desc";
         let limit = options.pageSize || rows.length;
+        let focusKey = null;
         const container = h("div", null, wrap, options.footer === false ? null : foot);
 
         const valueOf = (column, row) => (column.value ? column.value(row) : row[column.key]);
@@ -953,23 +954,23 @@ const ui = {
             const visible = ordered.slice(0, limit);
             const thead = h("thead", null, h("tr", null, columns.map((item) => {
                 const sortable = item.sort !== false;
-                const th = h("th", {
+                // A native button makes each sortable header reachable and
+                // usable from the keyboard; aria-sort stays on the header.
+                return h("th", {
                     class: `${sortable ? "sortable" : ""}${item.num ? " num" : ""}`,
                     scope: "col",
                     title: item.title || null,
                     "aria-sort": item.key === sortKey ? (sortDir === "asc" ? "ascending" : "descending") : null,
-                }, item.label);
-                if (sortable) {
-                    th.addEventListener("click", () => {
-                        if (sortKey === item.key) sortDir = sortDir === "asc" ? "desc" : "asc";
-                        else {
-                            sortKey = item.key;
-                            sortDir = item.num ? "desc" : "asc";
-                        }
-                        render();
-                    });
-                }
-                return th;
+                }, sortable
+                    ? h("button", {
+                        class: "th-sort", type: "button", dataset: { key: item.key },
+                        onClick: () => {
+                            ({ sortKey, sortDir } = ui.nextSort(sortKey, sortDir, item));
+                            focusKey = item.key;
+                            render();
+                        },
+                    }, item.label)
+                    : item.label);
             })));
             const tbody = h("tbody", null, visible.map((row) => {
                 const tr = h("tr", { class: [options.onRowClick ? "clickable" : "", options.rowClass ? options.rowClass(row) : ""].join(" ").trim() || null },
@@ -984,6 +985,11 @@ const ui = {
                 return tr;
             }));
             clear(wrap).append(h("table", null, thead, tbody));
+            if (focusKey !== null) {
+                const button = [...wrap.querySelectorAll("button.th-sort")].find((node) => node.dataset.key === focusKey);
+                if (button) button.focus();
+                focusKey = null;
+            }
             clear(foot);
             foot.append(h("span", null, `${Math.min(limit, ordered.length)} of ${ordered.length} rows`));
             if (ordered.length > limit) {
@@ -998,6 +1004,13 @@ const ui = {
             render();
         };
         return container;
+    },
+
+    /* The sort after a header is chosen: the same column flips direction;
+     * a new one starts descending for numbers, ascending for text. */
+    nextSort(sortKey, sortDir, column) {
+        if (sortKey === column.key) return { sortKey, sortDir: sortDir === "asc" ? "desc" : "asc" };
+        return { sortKey: column.key, sortDir: column.num ? "desc" : "asc" };
     },
 
     json(value) {
@@ -1441,28 +1454,75 @@ function forecastChips(meta) {
 
 const drawer = {
     current: null,
+    returnFocus: null,
+    FOCUSABLE: "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])",
+
+    /* Where Tab should go next inside the drawer: null to let the browser move on. */
+    nextFocus(items, active, backwards) {
+        if (!items.length) return null;
+        const index = items.indexOf(active);
+        if (index === -1) return backwards ? items[items.length - 1] : items[0];
+        if (backwards && index === 0) return items[items.length - 1];
+        if (!backwards && index === items.length - 1) return items[0];
+        return null;
+    },
+
     bind() {
         document.getElementById("drawer-close").addEventListener("click", drawer.close);
         document.getElementById("drawer-backdrop").addEventListener("click", drawer.close);
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape" && !document.getElementById("drawer").hidden) drawer.close();
+            const node = document.getElementById("drawer");
+            if (node.hidden) return;
+            if (event.key === "Escape") {
+                drawer.close();
+                return;
+            }
+            if (event.key !== "Tab") return;
+            // A modal dialog keeps focus inside it.
+            const items = [...node.querySelectorAll(drawer.FOCUSABLE)].filter((item) => item.getClientRects().length);
+            const next = drawer.nextFocus(items, document.activeElement, event.shiftKey);
+            if (next) {
+                event.preventDefault();
+                next.focus();
+            }
         });
     },
+
+    /* While the drawer is open, the page behind it can't be focused or read out. */
+    setBackgroundInert(inert) {
+        ["app", "login"].forEach((id) => {
+            const node = document.getElementById(id);
+            if (!node) return;
+            node.inert = inert;
+            if (inert) node.setAttribute("inert", "");
+            else node.removeAttribute("inert");
+        });
+    },
+
     close() {
         const node = document.getElementById("drawer");
-        if (!node) return;
+        if (!node || node.hidden) return;
         node.hidden = true;
         document.getElementById("drawer-backdrop").hidden = true;
+        drawer.setBackgroundInert(false);
         tooltip.hide();
         drawer.current = null;
+        const target = drawer.returnFocus;
+        drawer.returnFocus = null;
+        if (target && document.contains(target) && typeof target.focus === "function") target.focus();
     },
 
     async open(playerId, label) {
         const node = document.getElementById("drawer");
         const body = clear(document.getElementById("drawer-body"));
         document.getElementById("drawer-title").textContent = label || `Player ${playerId}`;
-        node.hidden = false;
-        document.getElementById("drawer-backdrop").hidden = false;
+        if (node.hidden) {
+            drawer.returnFocus = document.activeElement;
+            node.hidden = false;
+            document.getElementById("drawer-backdrop").hidden = false;
+            drawer.setBackgroundInert(true);
+            document.getElementById("drawer-close").focus();
+        }
         drawer.current = playerId;
         const alive = () => drawer.current === playerId;
 
@@ -2122,6 +2182,22 @@ const draft = {
     clear(entryId) {
         storage.remove("localStorage", draft.PREFIX + entryId);
     },
+    /* A working squad whose deadline passed is kept apart, read-only, until
+     * FPL publishes that gameweek's team, so new edits can't overwrite it. */
+    loadClosed(entryId) {
+        try {
+            const value = JSON.parse(storage.get("localStorage", `${draft.PREFIX}${entryId}.closed`) || "null");
+            return draft.valid(value) ? value : null;
+        } catch (error) {
+            return null;
+        }
+    },
+    saveClosed(entryId, value) {
+        return storage.set("localStorage", `${draft.PREFIX}${entryId}.closed`, JSON.stringify(value));
+    },
+    clearClosed(entryId) {
+        storage.remove("localStorage", `${draft.PREFIX}${entryId}.closed`);
+    },
     valid(value) {
         return Boolean(value && value.version === draft.VERSION && Number.isInteger(value.gameweek)
             && Array.isArray(value.picks) && value.picks.length <= 20
@@ -2290,12 +2366,14 @@ const draft = {
         else delete next.purchase_prices[id];
         return { draft: next };
     },
-    /* Why a stored draft no longer applies, or null while it does. */
-    expire(value, { nextOpen, picksGameweek } = {}) {
+    /* Where a stored working squad stands: "active" while its gameweek is
+     * open, "closed" once the deadline has passed (kept until FPL shows the
+     * team), "published" once FPL has published picks for its gameweek. */
+    status(value, { nextOpen, latestPicks } = {}) {
         if (!value) return null;
-        if (utils.isNumber(nextOpen) && value.gameweek < nextOpen) return `the GW${value.gameweek} deadline has passed`;
-        if (utils.isNumber(picksGameweek) && picksGameweek >= value.gameweek) return `FPL now shows your GW${value.gameweek} team`;
-        return null;
+        if (utils.isNumber(latestPicks) && latestPicks >= value.gameweek) return "published";
+        if (utils.isNumber(nextOpen) && value.gameweek < nextOpen) return "closed";
+        return "active";
     },
     toRequest(value) {
         return {
@@ -2303,6 +2381,7 @@ const draft = {
             chip: value.chip || null,
             free_transfers: utils.isNumber(value.free_transfers) ? value.free_transfers : null,
             bank_override: utils.isNumber(value.bank_override) ? value.bank_override : null,
+            transfers_made: utils.isNumber(value.transfers_made) ? value.transfers_made : null,
             purchase_prices: value.purchase_prices || {},
         };
     },
@@ -2482,6 +2561,7 @@ views.myteam = {
             context,
             team: null,
             draft: draft.load(entryId),
+            closedDraft: draft.loadClosed(entryId),
             overrides: loaded,
             expired: [],
             editing: false,
@@ -2594,17 +2674,23 @@ views.myteam = {
         try {
             const team = await api.post(`/api/admin/managers/${session.entryId}/team`, body, undefined, { timeoutMs: CONFIG.slowTimeoutMs });
             if (id !== session.requestId || !session.context.alive()) return;
-            const reason = draft.expire(session.draft, {
-                nextOpen: team.next_open_gameweek,
-                picksGameweek: session.draft && session.draft.gameweek === team.gameweek ? team.picks_gameweek : null,
-            });
-            if (reason) {
+            const when = { nextOpen: team.next_open_gameweek, latestPicks: team.latest_picks_gameweek };
+            const status = draft.status(session.draft, when);
+            if (status === "closed") {
+                views.myteam.keepClosed(session);
+                views.myteam.refresh(session);
+                return;
+            }
+            if (status === "published") {
                 draft.clear(session.entryId);
                 session.draft = null;
                 session.editing = false;
-                toast.show(`Your working squad was cleared: ${reason}.`, "info", 9000);
-                views.myteam.refresh(session);
-                return;
+            }
+            if (draft.status(session.closedDraft, when) === "published") {
+                const gameweek = session.closedDraft.gameweek;
+                draft.clearClosed(session.entryId);
+                session.closedDraft = null;
+                toast.show(`FPL now shows your GW${gameweek} team, so the working squad kept for it was removed.`, "info", 9000);
             }
             const aged = overrides.expire(session.overrides, team.next_open_gameweek || team.gameweek);
             if (aged.expired.length) {
@@ -2621,9 +2707,8 @@ views.myteam = {
         } catch (error) {
             if (id !== session.requestId || !session.context.alive()) return;
             if (error.status === 409 && body.draft) {
-                draft.clear(session.entryId);
-                session.draft = null;
-                toast.show(`Your working squad was cleared: ${error.message}`, "info", 9000);
+                // Its deadline passed: keep it, read-only, rather than lose it.
+                views.myteam.keepClosed(session);
                 views.myteam.refresh(session);
                 return;
             }
@@ -2632,6 +2717,17 @@ views.myteam = {
         } finally {
             if (id === session.requestId) dependent.forEach((key) => session.cards[key].root.classList.remove("loading"));
         }
+    },
+
+    keepClosed(session) {
+        const value = session.draft;
+        if (!value) return;
+        draft.saveClosed(session.entryId, value);
+        draft.clear(session.entryId);
+        session.closedDraft = value;
+        session.draft = null;
+        session.editing = false;
+        toast.show(`The GW${value.gameweek} deadline has passed. Your working squad for it is kept, read-only, until FPL publishes that team.`, "info", 9000);
     },
 
     renderSquad(session) {
@@ -2721,6 +2817,14 @@ views.myteam = {
         if (active || hasOverrides) card.actions.append(h("button", { class: "btn small ghost", type: "button", onClick: () => views.myteam.exportFile(session) }, "Export"));
         card.actions.append(h("button", { class: "btn small ghost", type: "button", onClick: () => views.myteam.importFile(session) }, "Import"));
         if (active) card.actions.append(h("button", { class: "btn small danger", type: "button", onClick: () => views.myteam.reset(session) }, "Reset to published"));
+        if (session.closedDraft) {
+            const kept = session.closedDraft;
+            target.append(h("p", { class: "notes" },
+                `Your GW${kept.gameweek} working squad (deadline passed) is kept, read-only, until FPL publishes your GW${kept.gameweek} team. `,
+                h("button", { class: "btn small ghost", type: "button", onClick: () => utils.download(`openfpl-working-squad-${session.entryId}-gw${kept.gameweek}.json`, draft.exportJson(kept, session.overrides), "application/json") }, "Export it"),
+                " ",
+                h("button", { class: "btn small ghost", type: "button", onClick: () => { draft.clearClosed(session.entryId); session.closedDraft = null; views.myteam.renderStatus(session); } }, "Discard it")));
+        }
 
         if (!team.transfers_open) {
             target.append(h("p", { style: { margin: 0 } }, statusBadge("neutral", `GW${team.gameweek} is closed: this is your published GW${team.picks_gameweek} team.`)));
@@ -2849,10 +2953,13 @@ views.myteam = {
             free.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setField(value, "free_transfers", free.value === "" ? null : Math.max(0, Math.min(5, Math.round(Number(free.value)))))));
             const bank = h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.isNumber(current.bank_override) ? current.bank_override : "", placeholder: utils.fmt(team.changes ? team.changes.bank_computed : team.bank, 1), style: { width: "80px" }, "aria-label": "Bank override in £m" });
             bank.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setField(value, "bank_override", bank.value === "" ? null : Math.max(0, Number(bank.value)))));
+            const made = h("input", { type: "number", min: 0, max: 15, step: 1, value: utils.isNumber(current.transfers_made) ? current.transfers_made : "", placeholder: String(team.changes ? team.changes.net_count ?? team.changes.count : 0), style: { width: "64px" }, "aria-label": "Transfers made on FPL" });
+            made.addEventListener("change", () => views.myteam.edit(session, (value) => draft.setField(value, "transfers_made", made.value === "" ? null : Math.max(0, Math.min(15, Math.round(Number(made.value)))))));
             target.append(h("div", { class: "row", style: { marginBottom: "8px" } },
                 h("label", { class: "small row", style: { gap: "6px" } }, "Chip", chipSelect),
                 h("label", { class: "small row", style: { gap: "6px" }, title: "Free transfers you had before the changes below (blank: our estimate)" }, "Free transfers", free),
                 h("label", { class: "small row", style: { gap: "6px" }, title: "Leave blank to use the bank worked out from your transfers" }, "Bank £m", bank),
+                h("label", { class: "small row", style: { gap: "6px" }, title: "Transfers confirmed on FPL, if more than your changes show (A→B then B→C is two)" }, "Transfers made", made),
                 team.changes && team.changes.hits ? chip(`−${team.changes.hit_cost} hit`, "") : null));
             target.append(h("p", { class: "small secondary", style: { marginTop: 0 } },
                 session.swapping ? `Now click the player to swap with ${(players.find((player) => player.id === session.swapping) || {}).web_name || ""} (or click him again to cancel).`
@@ -2930,11 +3037,11 @@ views.myteam = {
             h("label", { class: "small row", style: { gap: "6px" } }, "My chance %", availability),
             h("label", { class: "small row", style: { gap: "6px" } }, "My xP %", xp));
         panel.append(personalRow);
-        if (!player.new && !incoming) {
-            const bought = h("input", { type: "number", min: 3, max: 20, step: 0.1, value: utils.isNumber((active.purchase_prices || {})[player.id]) ? active.purchase_prices[player.id] : "", placeholder: utils.fmt(row.purchase_price, 1), style: { width: "72px" }, "aria-label": `Price you paid for ${player.web_name}` });
+        {
+            const bought = h("input", { type: "number", min: 3, max: 20, step: 0.1, value: utils.isNumber((active.purchase_prices || {})[player.id]) ? active.purchase_prices[player.id] : "", placeholder: utils.fmt(row.purchase_price ?? player.price, 1), style: { width: "72px" }, "aria-label": `Price you paid for ${player.web_name}` });
             bought.addEventListener("change", () => run((value) => draft.setPurchasePrice(value, player.id, bought.value === "" ? null : Number(bought.value))));
             panel.append(h("div", { class: "row small", style: { marginTop: "8px" } },
-                h("label", { class: "row", style: { gap: "6px" }, title: "FPL doesn't publish what you paid; fix our estimate if it's wrong" }, "Bought for £", bought),
+                h("label", { class: "row", style: { gap: "6px" }, title: incoming ? "What you paid when you bought him (if his price has moved since)" : "FPL doesn't publish what you paid; fix our estimate if it's wrong" }, "Bought for £", bought),
                 h("span", { class: "muted" }, row.purchase_source ? `estimate: ${row.purchase_source}` : "")));
         }
         if (session.picking === player.id) {
@@ -3503,9 +3610,10 @@ const optimizerView = {
         }
         const planCard = session.cards.plan;
         const estimate = team.free_transfers || {};
-        const remaining = estimate.unlimited ? 15 : (team.free_transfers_remaining ?? estimate.free_transfers ?? 1);
+        const chipFree = ["wildcard", "freehit"].includes(team.chip);
+        const remaining = estimate.unlimited || chipFree ? 15 : (team.free_transfers_remaining ?? estimate.free_transfers ?? 1);
         const inputs = {
-            free: h("input", { type: "number", min: 0, max: 5, step: 1, value: Math.min(5, remaining), style: { width: "72px" }, "aria-label": "Free transfers", id: "opt-free" }),
+            free: h("input", { type: "number", min: 0, max: 5, step: 1, value: Math.min(5, remaining), disabled: chipFree ? true : null, style: { width: "72px" }, "aria-label": "Free transfers", id: "opt-free" }),
             bank: h("input", { type: "number", min: 0, max: 100, step: 0.1, value: utils.fmt(Math.max(0, team.bank || 0), 1).replace(/,/g, ""), style: { width: "88px" }, "aria-label": "Bank in £m", id: "opt-bank" }),
             horizon: h("select", { "aria-label": "Gameweeks to plan for", id: "opt-horizon" }, [1, 2, 3, 4, 5].map((value) => h("option", { value, selected: value === 3 ? true : null }, `${value} GW${value > 1 ? "s" : ""}`))),
             max: h("select", { "aria-label": "Most transfers to consider", id: "opt-max" }, [0, 1, 2, 3, 4, 5, 6, 7, 8].map((value) => h("option", { value, selected: value === Math.min(8, Math.min(5, remaining) + 2) ? true : null }, `${value}`))),
@@ -3543,7 +3651,7 @@ const optimizerView = {
             switcher, description,
             h("div", { class: "row", style: { marginTop: "10px" } },
                 h("label", { class: "small row", style: { gap: "6px" } }, "Free transfers", inputs.free),
-                chip(estimate.unlimited ? "unlimited before the first deadline" : `estimated ${estimate.free_transfers}${team.edited && team.free_transfers_remaining !== estimate.free_transfers ? `, ${team.free_transfers_remaining} left` : ""}`, "aqua"),
+                chip(chipFree ? `unlimited (${draft.CHIPS[team.chip]} in your working squad)` : estimate.unlimited ? "unlimited before the first deadline" : `estimated ${estimate.free_transfers}${team.edited && team.free_transfers_remaining !== estimate.free_transfers ? `, ${team.free_transfers_remaining} left` : ""}`, "aqua"),
                 h("label", { class: "small row", style: { gap: "6px" } }, "Bank £m", inputs.bank)),
             transferOnly,
             chipNote,
@@ -3605,6 +3713,7 @@ const optimizerView = {
                 { key: "projected_total", label: "Projected", num: true, digits: 2 },
                 { key: "net_total", label: "After hits", num: true, digits: 2 },
                 { key: "net_gain", label: "Net gain", num: true, render: (row) => (row.feasible ? utils.fmtSigned(row.net_gain, 2) : row.reason) },
+                { key: "objective", label: "Score", num: true, digits: 2, title: `What the optimizer maximises: XI + captain + ${utils.fmtPct(result.bench_weight ?? 0.1)} of the bench, after hits. The best plan is the highest score.` },
                 { key: "bank_after", label: "Bank after", num: true, digits: 1 },
             ], { footer: false, sort: false, onRowClick: (row) => row.feasible && optimizerView.plan(holder, result, result.plans[row.index]) });
             target.append(table);
@@ -3620,12 +3729,12 @@ const optimizerView = {
         const names = Object.fromEntries((plan.squad || []).map((player) => [player.id, player.web_name]));
         const label = optimizerView.gameweekLabel(result);
         const heading = result.mode === "transfers"
-            ? `Showing the ${plan.transfers === 0 ? "roll (no transfer)" : `${plan.transfers}-transfer`} plan${plan.index === result.best_index || result.plans[result.best_index] === plan ? ", the best after hits" : ""}`
+            ? `Showing the ${plan.transfers === 0 ? "roll (no transfer)" : `${plan.transfers}-transfer`} plan${plan.index === result.best_index || result.plans[result.best_index] === plan ? ", the best (highest score)" : ""}`
             : `${optimizerView.MODES[result.mode].label} squad for ${label}`;
         holder.append(h("h3", { style: { margin: "12px 0 0", fontSize: "15px" } }, heading));
         holder.append(ui.tiles([
             { label: `Projected, ${label}`, value: utils.fmt(plan.projected_total, 1), detail: `current squad ${utils.fmt(baseline.projected_total, 1)}` },
-            { label: "Net gain", value: utils.fmtSigned(plan.net_gain, 2), detail: plan.hits ? `after ${plan.hits} hit${plan.hits > 1 ? "s" : ""} (−${utils.fmt(plan.hit_cost, 0)})` : "no hits" },
+            { label: "Net gain", value: utils.fmtSigned(plan.net_gain, 2), detail: `${plan.hits ? `after ${plan.hits} hit${plan.hits > 1 ? "s" : ""} (−${utils.fmt(plan.hit_cost, 0)})` : "no hits"}${utils.isNumber(plan.objective_gain) ? ` · score ${utils.fmtSigned(plan.objective_gain, 2)} with the bench` : ""}` },
             { label: result.mode === "transfers" ? "Transfers" : "Players changed", value: `${plan.transfers}`, detail: result.mode === "transfers" ? `${result.free_transfers ?? "unlimited"} free` : "free with the chip" },
             { label: "Bank after", value: `£${utils.fmt(plan.bank_after, 1)}m`, detail: `budget £${utils.fmt(result.budget, 1)}m` },
         ]));

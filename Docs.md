@@ -203,7 +203,7 @@ page and every route with 404.
 | GET | `/api/admin/predictions` | Every player's projection, each model's projection, the 5-match inputs and the selection decision |
 | GET | `/api/admin/players/{player_id}/explain` | Input effects against a typical player in his position, fixture sensitivity and the selection reasoning |
 | GET | `/api/admin/squad` | The AI squad with the reason for every pick, cut-offs, near misses and the best XI |
-| GET | `/api/admin/accuracy` | Archived forecasts of played gameweeks against official points (`played_only`) |
+| GET | `/api/admin/accuracy` | Archived forecasts of played gameweeks against official points (`played_only`); forecasts captured after the deadline are listed as `retrospective`, not scored |
 | GET | `/api/admin/timeline` | Prediction runs, what changed in the squad and why, and admin actions |
 | GET | `/api/admin/logs` | Recent log records (`level`, `q`, `logger`, `limit`) |
 | GET | `/api/admin/metrics` | Per-route requests and latency, official FPL calls and cache, in-memory state |
@@ -224,22 +224,32 @@ page and every route with 404.
 
 The optimizer maximises each gameweek's best legal XI plus captain (plus a
 tenth of the bench) within the budget, the positional quotas and three per
-club, using scipy's mixed-integer solver. A manager's budget is the bank
-plus the squad's selling value. Free transfers and selling prices are
-estimated from public history: one free transfer a gameweek, at most five
-banked, hits counted from `event_transfers_cost`, Wildcard and Free Hit weeks
-keeping banked transfers; selling prices follow FPL's sell-on rule from the
-latest purchase price outside Free Hit weeks. Both can be overridden. After
-the first planned gameweek doubtful players count as fit, while players
-ruled out stay at zero. Public picks reflect the last deadline, so transfers
-already made for the coming gameweek are not seen unless the manager adds
-them as a working squad.
+club, using scipy's mixed-integer solver; each plan reports that objective
+(`objective`) and the best plan is the one with the highest. Before solving,
+it drops only candidates other candidates dominate (no dearer, no fewer
+points in any gameweek) from at least the position's quota plus five clubs,
+which provably keeps the optimum. A manager's budget is the bank plus the
+squad's selling value. Free transfers and selling prices are estimated from
+public history: one free transfer a gameweek, at most five banked, hits
+counted from `event_transfers_cost`, and a Wildcard or Free Hit week keeping
+the banked transfers without adding one; selling prices follow FPL's sell-on
+rule from the latest purchase price outside Free Hit weeks. Both can be
+overridden. After a Free Hit, planning starts from the squad and bank that
+return. After the first planned gameweek doubtful players count as fit,
+while players ruled out stay at zero, unless the manager says otherwise; a
+player FPL lists as injured can then be bought. Public picks reflect the last
+deadline, so transfers already made for the coming gameweek are not seen
+unless the manager adds them as a working squad.
 
 The working squad and personal overrides are kept in the owner's browser
 (localStorage) and sent with each request; the server stores neither. Incoming
-players are bought at today's price and outgoing ones sold at their estimated
-selling price; hits are counted beyond the free transfers unless a Wildcard
-or Free Hit is set. An own availability replaces FPL's chance of playing (a
+players are bought at today's price (or what the manager says they paid) and
+outgoing ones sold at their estimated selling price; hits are counted beyond
+the free transfers (or `transfers_made`, when more transfers were confirmed
+than the squad difference shows) unless a Wildcard or Free Hit is set, which
+also makes the optimizer's transfers unlimited. A working squad whose
+deadline has passed is kept, read-only, until FPL publishes that gameweek's
+picks. An own availability replaces FPL's chance of playing (a
 player ruled out is re-projected as fit with the sandbox) and applies to every
 planned gameweek; an own xP % scales the projection. Expected points with
 autosubs treat each player's availability as his chance of playing (zero

@@ -1563,6 +1563,9 @@ def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
         "manager_name": manager_name or None,
         "gameweek": prediction_gameweek,
         "picks_gameweek": picks_gameweek,
+        # The latest gameweek FPL has published this manager's picks for,
+        # whatever gameweek is on screen (a kept working squad waits for it).
+        "latest_picks_gameweek": manager.get("current_event"),
         "transfers_open": bool(is_open),
         "next_open_gameweek": client.next_gameweek(),
         "frozen": bool(predictions.attrs.get("frozen", False)),

@@ -211,16 +211,19 @@ each opponent, his season so far, and why the AI picked him or not.
 
 The optimizer finds the provably best squad (scipy's integer-programming
 solver) within the budget, positions and three-per-club rule, maximising each
-gameweek's best XI plus captain. Official FPL does not publish free
-transfers or selling prices, so both are estimated from public history (one
-free transfer a gameweek, at most five banked; FPL's sell-on rule) and can be
-corrected before running. Plans never change the team on FPL.
+gameweek's best XI plus captain and a tenth of the bench. It only leaves out
+players that others provably beat (no dearer, no fewer points in any
+gameweek, from enough clubs), so the result stays exact. Official FPL does
+not publish free transfers or selling prices, so both are estimated from
+public history (one free transfer a gameweek, at most five banked, none added
+in a Wildcard or Free Hit week; FPL's sell-on rule) and can be corrected
+before running. Plans never change the team on FPL.
 
 FPL publishes a manager's picks only after each deadline, so My team's
 working squad lets the manager add what they have already changed. It is
-kept in that browser only (per team ID, with JSON export and import), checked
-against FPL's rules, and cleared automatically once FPL publishes that
-gameweek's team. Expected points with autosubs assume only flagged players
+kept in that browser only (per team ID, with JSON export and import) and
+checked against FPL's rules. When its deadline passes it is kept, read-only,
+until FPL publishes that gameweek's team, and then removed. Expected points with autosubs assume only flagged players
 and blanks miss out; the price outlook is a heuristic from net transfers,
 since FPL's price algorithm is not public.
 

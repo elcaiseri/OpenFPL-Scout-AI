@@ -259,19 +259,30 @@ test('transfers chain, undo and are sent as plain picks', () => {
     assert.deepEqual(order(undone), order(value));
     assert.match(draft.undoTransfer(value, 5).error, /isn't a transfer/);
 
-    const request = draft.toRequest(draft.setField(one, 'free_transfers', 2).draft);
-    assert.deepEqual(Object.keys(request).sort(), ['bank_override', 'chip', 'free_transfers', 'picks', 'purchase_prices']);
+    const request = draft.toRequest(draft.setField(draft.setField(one, 'free_transfers', 2).draft, 'transfers_made', 2).draft);
+    assert.deepEqual(Object.keys(request).sort(), ['bank_override', 'chip', 'free_transfers', 'picks', 'purchase_prices', 'transfers_made']);
+    assert.equal(request.transfers_made, 2);
     assert.equal(request.free_transfers, 2);
     assert.deepEqual(Object.keys(request.picks[0]).sort(), ['id', 'is_captain', 'is_vice_captain', 'position']);
 });
 
-test('a working squad expires with its deadline or once FPL shows the team', () => {
-    const { draft } = loadAdmin(async () => response({}));
+test('a working squad closes with its deadline and goes once FPL shows the team', () => {
+    const admin = loadAdmin(async () => response({}));
+    const { draft } = admin;
     const value = draft.fromPublished(publishedTeam());
-    assert.equal(draft.expire(value, { nextOpen: 12, picksGameweek: 11 }), null);
-    assert.match(draft.expire(value, { nextOpen: 13 }), /GW12 deadline has passed/);
-    assert.match(draft.expire(value, { picksGameweek: 12 }), /FPL now shows your GW12 team/);
-    assert.equal(draft.expire(null, { nextOpen: 40 }), null);
+    assert.equal(draft.status(value, { nextOpen: 12, latestPicks: 11 }), 'active');
+    // Past the deadline, but FPL hasn't published the GW12 picks yet: kept.
+    assert.equal(draft.status(value, { nextOpen: 13, latestPicks: 11 }), 'closed');
+    assert.equal(draft.status(value, { nextOpen: 13, latestPicks: 12 }), 'published');
+    assert.equal(draft.status(null, { nextOpen: 40 }), null);
+    // A closed squad has its own slot, so a new working squad can't overwrite it.
+    draft.saveClosed(77, value);
+    draft.save(77, { ...value, gameweek: 13 });
+    assert.equal(draft.loadClosed(77).gameweek, 12);
+    assert.equal(draft.load(77).gameweek, 13);
+    draft.clearClosed(77);
+    assert.equal(draft.loadClosed(77), null);
+    assert.equal(draft.load(77).gameweek, 13);
 });
 
 test('export and import round trip, and foreign files are refused', () => {
@@ -327,4 +338,24 @@ test('alerts list what changed since the last snapshot', () => {
     assert.equal(changes[2].text, 'A: chance of playing no flag → 75%');
     assert.equal(changes[3].delta, 0.1);
     assert.deepEqual(plain(alerts.diff(null, after)), []);
+});
+
+test('sortable headers flip direction, and new columns start sensibly', () => {
+    const { ui } = loadAdmin(async () => response({}));
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    assert.deepEqual(plain(ui.nextSort('xp', 'desc', { key: 'xp', num: true })), { sortKey: 'xp', sortDir: 'asc' });
+    assert.deepEqual(plain(ui.nextSort('xp', 'asc', { key: 'name' })), { sortKey: 'name', sortDir: 'asc' });
+    assert.deepEqual(plain(ui.nextSort('name', 'asc', { key: 'price', num: true })), { sortKey: 'price', sortDir: 'desc' });
+});
+
+test('Tab wraps around inside the open drawer', () => {
+    const { drawer } = loadAdmin(async () => response({}));
+    const [close, first, last] = ['close', 'first', 'last'];
+    const items = [close, first, last];
+    assert.equal(drawer.nextFocus(items, last, false), close);
+    assert.equal(drawer.nextFocus(items, close, true), last);
+    assert.equal(drawer.nextFocus(items, first, false), null); // the browser moves on
+    assert.equal(drawer.nextFocus(items, 'outside', false), close);
+    assert.equal(drawer.nextFocus(items, 'outside', true), last);
+    assert.equal(drawer.nextFocus([], close, false), null);
 });

@@ -254,8 +254,6 @@ th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: le
 th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); color: var(--text-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
-th[aria-sort=ascending]::after { content: " ▲"; font-size: 9px; }
-th[aria-sort=descending]::after { content: " ▼"; font-size: 9px; }
 tbody tr:hover { background: rgba(255,255,255,.03); }
 tr.clickable { cursor: pointer; }
 tr.in-squad td:first-child { box-shadow: inset 3px 0 0 var(--lime); }
@@ -453,3 +451,8 @@ table.ticker tfoot th { position: static; background: transparent; }
 /* Sentences told with a status icon wrap; short table badges stay on one line. */
 .card-body p > .status, .card-body li > .status { white-space: normal; align-items: flex-start; }
 .card-body p > .status svg, .card-body li > .status svg { margin-top: 1px; }
+/* Sortable headers are buttons, so the keyboard can sort too. */
+th .th-sort { appearance: none; background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-align: inherit; }
+th .th-sort:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; border-radius: 3px; }
+th[aria-sort=ascending] .th-sort::after { content: " ▲"; font-size: 9px; }
+th[aria-sort=descending] .th-sort::after { content: " ▼"; font-size: 9px; }
