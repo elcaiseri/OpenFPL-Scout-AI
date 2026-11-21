@@ -630,6 +630,52 @@ class WorkingTeamApiTests(OptimizerApiTests):
                 self.assertNotIn(locked_out, plan["squad_ids"])
         self.assertTrue(result["plans"][1]["feasible"])
 
+    def test_planning_after_a_free_hit_starts_from_the_squad_before_it(self):
+        payloads = self.fpl.manager_payloads()
+        squad = list(self.fpl.squad)
+        temporary = [pid for pid in range(1, 91) if pid not in squad][:15]
+        free_hit = payloads["entry/77/event/2/picks/"]
+        before = {
+            **free_hit,
+            "active_chip": None,
+            "entry_history": {"event": 1, "bank": 20},
+        }
+        free_hit = {
+            **free_hit,
+            "active_chip": "freehit",
+            "entry_history": {"event": 2, "bank": 3},
+            "picks": [{**pick, "element": temporary[index]} for index, pick in enumerate(free_hit["picks"])],
+        }
+        payloads["entry/77/event/2/picks/"] = free_hit
+        payloads["entry/77/event/1/picks/"] = before
+        with patch.object(self.fpl, "manager_payloads", return_value=payloads):
+            self.client.clear_cache()
+            status, _, context = request("GET", "/api/admin/managers/77/plan-context?gameweek=3")
+        self.assertEqual(status, 200, context)
+        self.assertEqual(context["reverted_from_free_hit"], 2)
+        self.assertEqual(sorted(row["id"] for row in context["squad"]), sorted(squad))
+        self.assertEqual(context["bank"], 2.0)
+        self.assertTrue(any("Free Hit" in line for line in context["caveats"]))
+
+    def test_a_closed_gameweek_keeps_the_chip_it_was_played_with(self):
+        payloads = self.fpl.manager_payloads()
+        payloads["entry/77/event/2/picks/"]["active_chip"] = "3xc"
+        with patch.object(self.fpl, "manager_payloads", return_value=payloads):
+            status, _, data = self.team(gameweek=2)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["chip"], "3xc")
+        captain = next(row for row in data["squad"] if row.get("is_captain"))
+        self.assertEqual(captain["multiplier"], 3)
+
+    def test_what_you_paid_for_a_new_player_sets_the_bank(self):
+        out_id, in_id = self.swap_options(4)
+        status, _, data = self.team(draft=self.draft([(out_id, in_id)], purchase_prices={str(in_id): 4.6}))
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["bank"], round(1.5 + 5.0 - 4.6, 1))
+        incoming = next(row for row in data["squad"] if row["id"] == in_id)
+        # Bought at 4.6, now 5.0: he sells for 4.6 + half the 0.4 rise.
+        self.assertEqual((incoming["purchase_price"], incoming["selling_price"]), (4.6, 4.8))
+
     def test_a_wildcard_in_the_working_squad_makes_transfers_free(self):
         body = {
             "entry_id": 77, "gameweek": 3, "mode": "transfers", "horizon": 1, "max_transfers": 3,

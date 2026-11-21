@@ -100,6 +100,15 @@ class TransferSuggestionTests(unittest.TestCase):
             [(item["out"]["id"], item["in"]["id"]) for item in suggestions], [(4, 101)]
         )
 
+    def test_selling_prices_decide_what_is_affordable(self):
+        players = squad(p3={"expected_points": 1.0, "price": 6.0})
+        pool = [candidate(100, 2, 9.0, 6.0)]
+        # At today's price the swap is affordable; sold at 5.5 it is £0.5m short.
+        self.assertEqual(len(suggest_transfers(players, pool, bank=0.0)), 1)
+        self.assertEqual(suggest_transfers(players, pool, bank=0.0, selling={3: 5.5}), [])
+        [suggestion] = suggest_transfers(players, pool, bank=0.5, selling={3: 5.5})
+        self.assertEqual(suggestion["cost"], 0.5)
+
     def test_nothing_is_suggested_without_a_bank(self):
         players = squad(p13={"expected_points": 1.0})
 

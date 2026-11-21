@@ -109,6 +109,17 @@ class ValidationTests(unittest.TestCase):
         result = self.check(swap(self.picks, 14, 103))
         self.assertTrue(any("limit is 3" in error for error in result["errors"]))
 
+    def test_an_over_limit_club_must_be_fixed_by_the_first_transfer(self):
+        for player_id in (2, 3, 4, 5):
+            self.players[player_id]["team_name"] = "Club X"
+        # A transfer elsewhere keeps all four: FPL would not allow it.
+        result = self.check(swap(self.picks, 14, 103))
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("first transfer sell one" in error for error in result["errors"]))
+        # Selling one of them resolves it.
+        self.players[102]["team_name"] = "Club 102"
+        self.assertTrue(self.check(swap(self.picks, 5, 102))["valid"])
+
     def test_lineup_and_armband_rules(self):
         two_keepers = make_picks(order=[1, 12, 3, 4, 5, 6, 7, 8, 9, 10, 11, 2, 13, 14, 15])
         self.assertTrue(any("one goalkeeper" in error for error in self.check(two_keepers)["errors"]))
@@ -164,6 +175,16 @@ class ChangeTests(unittest.TestCase):
         unlimited = self.changes(two, free_transfers=None)
         self.assertEqual((unlimited["hits"], unlimited["free_transfers_remaining"]), (0, None))
         self.assertEqual(self.changes(two, bank_override=2.5)["bank_after"], 2.5)
+
+    def test_what_was_paid_and_transfers_made_through_others_count(self):
+        one = swap(self.published, 14, 103)
+        result = self.changes(one, paid={103: 5.7})
+        self.assertEqual(result["bank_after"], round(1.0 + 4.8 - 5.7, 1))
+        self.assertEqual(result["transfers"][0]["in"]["buy"], 5.7)
+        # P14 -> someone -> S103 on FPL: two transfers, one squad change.
+        result = self.changes(one, transfers_made=2)
+        self.assertEqual((result["count"], result["net_count"], result["hits"]), (2, 1, 1))
+        self.assertEqual(self.changes(one, transfers_made=0)["count"], 1)
 
     def test_lineup_bench_and_armband_changes_are_reported(self):
         same = self.changes(self.published)
@@ -490,6 +511,14 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review["transfers"]["net"], 3.0)  # 7 gained, 4 for the hit
         self.assertEqual(review["transfers"]["since_net"], -14.0)
         self.assertEqual(review["transfers"]["verdict"], "not yet")
+
+    def test_negative_scores_keep_their_sign_in_hindsight(self):
+        self.actuals[1] = {"points": -2.0, "minutes": 90.0}
+        self.actuals[12] = {"points": -1.0, "minutes": 90.0}
+        review = my_team.gameweek_review(review_payload(), self.players, self.actuals)
+        hindsight = review["hindsight"]
+        self.assertIn(12, hindsight["starting_ids"])
+        self.assertNotIn(1, hindsight["starting_ids"])
 
     def test_forecast_comparison_and_chips(self):
         forecast = {pid: 3.0 for pid in range(1, 16)}

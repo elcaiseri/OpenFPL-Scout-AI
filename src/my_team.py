@@ -174,13 +174,19 @@ def validate_squad(
 
     clubs = Counter(str(player.get("team_name")) for player in known.values())
     before = Counter(str(players[pid].get("team_name")) for pid in published if pid in players)
+    unchanged = not published or set(ids) == set(published)
     for club, count in sorted(clubs.items()):
         if count <= max_per_club or club == "None":
             continue
-        if count <= before.get(club, 0):
+        if count <= before.get(club, 0) and unchanged:
             warnings.append(
                 f"{count} players from {club} (over the limit of {max_per_club} after a real-life "
                 "transfer): FPL lets you keep them, but your next transfer out must include one."
+            )
+        elif count <= before.get(club, 0):
+            errors.append(
+                f"{count} players from {club}: FPL makes your first transfer sell one of them "
+                f"(the limit is {max_per_club} per club)."
             )
         else:
             errors.append(f"{count} players from {club}: the limit is {max_per_club} per club.")
@@ -263,13 +269,18 @@ def squad_changes(
     free_transfers: Optional[int],
     chip: Optional[str] = None,
     bank_override: Optional[float] = None,
+    paid: Optional[Mapping[int, Optional[float]]] = None,
+    transfers_made: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Transfers, money, hits and lineup changes from published to working.
 
     Outgoing players are sold at their (estimated) selling price; incoming
-    ones are bought at today's price. ``free_transfers`` of None means
-    unlimited (no deadline has passed yet).
+    ones are bought at what the manager paid (``paid``, defaulting to
+    today's price). ``free_transfers`` of None means unlimited (no deadline
+    has passed yet). ``transfers_made`` counts transfers confirmed on FPL
+    when there were more than the squad difference shows (A→B→C is two).
     """
+    paid = paid or {}
     published_ids = [int(pick["id"]) for pick in sorted(published_picks, key=_slot)]
     draft_ids = [int(pick["id"]) for pick in sorted(draft_picks, key=_slot)]
     published_set, draft_set = set(published_ids), set(draft_ids)
@@ -279,11 +290,16 @@ def squad_changes(
     def price(player_id: int) -> float:
         return float(_number(players.get(player_id, {}).get("price"), 0.0))
 
+    def cost(player_id: int) -> float:
+        value = paid.get(player_id)
+        return float(value) if value is not None else price(player_id)
+
     sold = sum(float(_number(selling.get(pid), price(pid))) for pid in out_ids)
-    bought = sum(price(pid) for pid in in_ids)
+    bought = sum(cost(pid) for pid in in_ids)
     computed = round(float(bank) + sold - bought, 1)
     bank_after = round(float(bank_override), 1) if bank_override is not None else computed
-    count = len(in_ids)
+    net_count = len(in_ids)
+    count = max(net_count, int(transfers_made or 0))
     chip_free = chip in FREE_TRANSFER_CHIPS
     unlimited = free_transfers is None
     hits = 0 if (chip_free or unlimited) else max(0, count - int(free_transfers))
@@ -310,7 +326,7 @@ def squad_changes(
                         "web_name": _name(players.get(in_id), in_id),
                         "team_name": players.get(in_id, {}).get("team_name"),
                         "position": POSITION_SHORT.get(position),
-                        "buy": round(price(in_id), 1),
+                        "buy": round(cost(in_id), 1),
                     },
                 }
             )
@@ -356,6 +372,7 @@ def squad_changes(
         "out_ids": out_ids,
         "in_ids": in_ids,
         "count": count,
+        "net_count": net_count,
         "free_transfers": free_transfers,
         "free_transfers_remaining": remaining,
         "hits": hits,
@@ -1095,6 +1112,35 @@ def fixture_ticker(
 # ----------------------------------------------------------------------
 
 
+def _best_signed_lineup(
+    records: Sequence[Mapping[str, Any]], key: str = "points"
+) -> Tuple[List[Mapping[str, Any]], float]:
+    """The best legal XI by actual points, which (unlike projections) can be negative."""
+    grouped: Dict[int, List[Mapping[str, Any]]] = {1: [], 2: [], 3: [], 4: []}
+    for record in records:
+        position = _position(record)
+        if position in grouped:
+            grouped[position].append(record)
+    for group in grouped.values():
+        group.sort(key=lambda record: float(_number(record.get(key), 0.0)), reverse=True)
+    best: Optional[Tuple[float, List[Mapping[str, Any]]]] = None
+    for defenders in range(3, 6):
+        for midfielders in range(2, 6):
+            forwards = 10 - defenders - midfielders
+            if not 1 <= forwards <= 3:
+                continue
+            counts = {1: 1, 2: defenders, 3: midfielders, 4: forwards}
+            if any(len(grouped[position]) < count for position, count in counts.items()):
+                continue
+            lineup = [record for position, count in counts.items() for record in grouped[position][:count]]
+            total = sum(float(_number(record.get(key), 0.0)) for record in lineup)
+            if best is None or total > best[0]:
+                best = (total, lineup)
+    if best is None:
+        raise ValueError("No legal XI in this squad")
+    return best[1], best[0]
+
+
 def gameweek_review(
     picks_payload: Mapping[str, Any],
     players: Mapping[int, Mapping[str, Any]],
@@ -1151,14 +1197,14 @@ def gameweek_review(
     )
 
     records = [
-        {"id": pid, "web_name": label(pid), "element_type": _position(players.get(pid, {})), "expected_points": points_of(pid)}
+        {"id": pid, "web_name": label(pid), "element_type": _position(players.get(pid, {})), "points": points_of(pid)}
         for pid in ids
     ]
     hindsight = None
     try:
-        lineup, total = best_lineup(records)
-        top = max(lineup, key=lambda player: player["expected_points"])
-        hindsight_total = total + (multiplier - 1) * top["expected_points"]
+        lineup, total = _best_signed_lineup(records)
+        top = max(lineup, key=lambda player: player["points"])
+        hindsight_total = total + (multiplier - 1) * top["points"]
         if chip == "bboost":
             hindsight_total = sum(points_of(pid) for pid in ids) + (multiplier - 1) * max(points_of(pid) for pid in ids)
         hindsight = {

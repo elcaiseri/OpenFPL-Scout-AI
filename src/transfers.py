@@ -94,6 +94,7 @@ def suggest_transfers(
     max_per_club: int = 3,
     keep_ids: Optional[Iterable[int]] = None,
     exclude_ids: Optional[Iterable[int]] = None,
+    selling: Optional[Mapping[int, Optional[float]]] = None,
 ) -> List[Dict[str, Any]]:
     """Return the best single transfers, largest projected gain first.
 
@@ -108,6 +109,8 @@ def suggest_transfers(
     suggestion. Without a bank, or without a price for a player, nothing is
     suggested for that player. Players in ``keep_ids`` are never sold and
     players in ``exclude_ids`` never bought (a manager's locks and bans).
+    ``selling`` gives each squad player's selling price when it is known;
+    a sale then raises that, not the current price, so affordability is exact.
     """
     if bank is None or len(squad) != 15:
         return []
@@ -130,10 +133,16 @@ def suggest_transfers(
     current = lineup_value(squad)
 
     options = []
+    selling = selling or {}
+
+    def sale(player: Mapping[str, Any]) -> Optional[float]:
+        value = selling.get(int(player["id"]))
+        return _number(value, None) if value is not None else _number(player.get("price"), None)
+
     for outgoing in squad:
         if int(outgoing["id"]) in keep:
             continue
-        budget = _number(outgoing.get("price"), None)
+        budget = sale(outgoing)
         if budget is None:
             continue
         budget += bank
@@ -169,9 +178,7 @@ def suggest_transfers(
                 "out": _summary(outgoing),
                 "in": _summary(incoming),
                 "gain": round(gain, 2),
-                "cost": round(
-                    _number(incoming.get("price")) - _number(outgoing.get("price")), 1
-                ),
+                "cost": round(_number(incoming.get("price")) - (sale(outgoing) or 0.0), 1),
             }
         )
         if len(suggestions) == limit:

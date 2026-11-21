@@ -1008,6 +1008,9 @@ class Draft(BaseModel):
     free_transfers: Optional[int] = Field(None, ge=0, le=5)
     bank_override: Optional[float] = Field(None, ge=0, le=100)
     purchase_prices: Dict[int, float] = Field(default_factory=dict)
+    # Transfers confirmed on FPL, when more than the squad difference shows
+    # (A→B then B→C is two transfers but one change of player).
+    transfers_made: Optional[int] = Field(None, ge=0, le=15)
 
 
 class PlayerOverride(BaseModel):
@@ -1041,8 +1044,16 @@ def _draft_picks(draft: Draft) -> List[Dict[str, Any]]:
     return [pick.model_dump() for pick in draft.picks]
 
 
-def _published_picks(client: Any, entry_id: int, gameweek: int) -> tuple:
-    """The manager, the gameweek of their latest picks and those picks."""
+def _published_picks(
+    client: Any, entry_id: int, gameweek: int, *, for_planning: bool = False
+) -> tuple:
+    """The manager, the gameweek of their latest picks, those picks and the payload.
+
+    ``for_planning`` looks past a Free Hit: when the latest picks are a Free
+    Hit squad and a later gameweek is planned, the squad that returns (the
+    gameweek before's picks, with its bank) is used instead. The payload then
+    records ``reverted_from_free_hit``.
+    """
     manager = client.mapped_manager(entry_id)
     current_event = manager.get("current_event")
     picks_gameweek = min(gameweek, int(current_event)) if current_event else 0
@@ -1052,6 +1063,17 @@ def _published_picks(client: Any, entry_id: int, gameweek: int) -> tuple:
             detail="This manager has no published squad yet (it appears after the first deadline).",
         )
     payload = client.mapped_manager_picks(entry_id, picks_gameweek)
+    if (
+        for_planning
+        and payload.get("active_chip") == "freehit"
+        and 1 < picks_gameweek < gameweek
+    ):
+        try:
+            previous = client.mapped_manager_picks(entry_id, picks_gameweek - 1)
+        except Exception as error:  # Fall back to the Free Hit squad.
+            logger.warning("Could not read the squad before entry %s's Free Hit: %s", entry_id, error)
+        else:
+            payload = {**previous, "reverted_from_free_hit": picks_gameweek}
     picks = [
         {
             "id": int(pick["element"]),
@@ -1159,7 +1181,10 @@ def _manager_plan_context(
     client = scout.official_client
     resolved = _resolve_gameweek(scout, gameweek)
     _require_open(scout, resolved)
-    manager, picks_gameweek, published_picks, _ = _published_picks(client, entry_id, resolved)
+    manager, picks_gameweek, published_picks, payload = _published_picks(
+        client, entry_id, resolved, for_planning=True
+    )
+    reverted = payload.get("reverted_from_free_hit")
     history = client.manager_history(entry_id)
     chips = history.get("chips", []) or []
     transfers = client.mapped_manager_transfers(entry_id)
@@ -1192,19 +1217,21 @@ def _manager_plan_context(
 
     def purchase_of(player_id: int) -> tuple:
         now = official.get(player_id, {}).get("price")
-        if player_id not in bought:
-            return now, "bought in your working squad"
         if player_id in fixes:
             return fixes[player_id], "your price"
+        if player_id not in bought:
+            return now, "bought in your working squad at today's price"
         return bought[player_id]["price"], bought[player_id]["source"]
 
     selling: Dict[int, Optional[float]] = {}
+    paid: Dict[int, Optional[float]] = {}
     squad = []
     picks_by_id = {int(pick["id"]): pick for pick in working_picks}
     for player_id in dict.fromkeys(published_ids + working_ids):
         details = official.get(player_id, {})
         now = details.get("price")
         purchase, source = purchase_of(player_id)
+        paid[player_id] = purchase
         selling[player_id] = optimizer.selling_price(purchase, now)
         if player_id not in picks_by_id or not details:
             continue
@@ -1230,6 +1257,9 @@ def _manager_plan_context(
             }
         )
     bank = manager.get("last_deadline_bank")
+    if reverted:
+        # The squad before the Free Hit returns with the bank it had then.
+        bank = ((payload.get("entry_history") or {}).get("bank") or 0) / 10
     bank = float(bank) if bank is not None else 0.0
     estimate = optimizer.estimate_free_transfers(
         history.get("current", []), chips, started_event, resolved
@@ -1246,10 +1276,12 @@ def _manager_plan_context(
             working_picks,
             players=official,
             selling=selling,
+            paid={pid: paid[pid] for pid in working_ids if pid not in bought},
             bank=bank,
             free_transfers=free,
             chip=draft.chip,
             bank_override=draft.bank_override,
+            transfers_made=draft.transfers_made,
         )
         remaining = changes["free_transfers_remaining"]
         working_bank = changes["bank_after"]
@@ -1277,7 +1309,16 @@ def _manager_plan_context(
         "changes": changes,
         "chips": optimizer.chip_status(chips, resolved),
         "chip": draft.chip if draft is not None else None,
-        "caveats": PLAN_CAVEATS,
+        "reverted_from_free_hit": reverted,
+        "caveats": PLAN_CAVEATS
+        + (
+            [
+                f"You played your Free Hit in GW{reverted}, so planning starts from the "
+                f"squad and bank you had before it (GW{reverted - 1})."
+            ]
+            if reverted
+            else []
+        ),
     }
 
 
@@ -1333,12 +1374,19 @@ def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
         working_picks = plan_context["working_picks"]
     else:
         plan_context = None
-        manager, picks_gameweek, published_picks, _ = _published_picks(client, entry_id, resolved)
+        manager, picks_gameweek, published_picks, payload = _published_picks(client, entry_id, resolved)
         working_picks = [
             {key: pick[key] for key in ("id", "position", "is_captain", "is_vice_captain")}
             for pick in published_picks
         ]
-    chip = draft.chip if draft is not None else None
+    if draft is not None:
+        chip = draft.chip
+    elif plan_context is None and picks_gameweek == resolved:
+        # The chip actually played in the gameweek on screen.
+        played = payload.get("active_chip")
+        chip = played if played in my_team.CHIP_NAMES else None
+    else:
+        chip = None
 
     predictions = _predictions(scout, resolved)
     prediction_gameweek = int(predictions.attrs.get("gameweek") or resolved)
@@ -1466,6 +1514,7 @@ def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
             None if bank is None else float(bank),
             keep_ids=locked,
             exclude_ids=banned,
+            selling=plan_context["selling"] if plan_context else None,
         )
 
     context_rows = {row["id"]: row for row in (plan_context["squad"] if plan_context else [])}
@@ -1520,6 +1569,7 @@ def _working_team(entry_id: int, request: TeamRequest) -> Dict[str, Any]:
         "forecast": _forecast_meta(predictions),
         "edited": draft is not None,
         "chip": chip,
+        "reverted_from_free_hit": plan_context.get("reverted_from_free_hit") if plan_context else None,
         "squad": squad,
         "published_picks": published_picks,
         "working_picks": my_team.normalize_picks(working_picks, official) if structure_ok else working_picks,
