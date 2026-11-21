@@ -180,6 +180,15 @@ mimetypes.add_type("image/webp", ".webp")
 NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
 
 
+# The owner dashboard must never render inside another site's frame: its
+# live controls could otherwise be clickjacked while a remembered token is
+# signed in.
+NO_FRAMING_HEADERS = {
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+}
+
+
 class RevalidatingStaticFiles(StaticFiles):
     """Static files that browsers check with the server before reusing."""
 
@@ -188,6 +197,12 @@ class RevalidatingStaticFiles(StaticFiles):
     def file_response(self, *args: Any, **kwargs: Any) -> Response:
         response = super().file_response(*args, **kwargs)
         response.headers.update(self.cache_headers)
+        return response
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        if path.replace("\\", "/").lstrip("/").startswith("admin/"):
+            response.headers.update(NO_FRAMING_HEADERS)
         return response
 
 
@@ -302,7 +317,11 @@ async def serve_index():
 
 # The owner's private dashboard. The page itself holds no data: it asks for a
 # bearer token and reads everything from the protected /api/admin routes.
-ADMIN_PAGE_HEADERS = {**NO_CACHE_HEADERS, "X-Robots-Tag": "noindex, nofollow"}
+ADMIN_PAGE_HEADERS = {
+    **NO_CACHE_HEADERS,
+    **NO_FRAMING_HEADERS,
+    "X-Robots-Tag": "noindex, nofollow",
+}
 
 
 @app.api_route(

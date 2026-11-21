@@ -55,6 +55,17 @@ class RequestMetricsTests(unittest.TestCase):
         self.assertEqual(percentile([1, 2, 3, 4], 0.5), 2)
         self.assertIsNone(percentile([], 0.5))
 
+    def test_unusual_methods_share_one_bucket(self):
+        metrics = RequestMetrics()
+        for method in ("FOO", "BAR", "X" * 40, "get"):
+            metrics.record(method, "unmatched", 405, 1.0)
+        metrics.record("PATCH", "/api/x", 200, 1.0)
+        routes = metrics.snapshot()["routes"]
+        self.assertEqual(routes["OTHER unmatched"]["count"], 3)
+        self.assertEqual(routes["GET unmatched"]["count"], 1)
+        self.assertIn("PATCH /api/x", routes)
+        self.assertEqual(len(routes), 3)
+
     def test_middleware_records_route_templates_through_the_app(self):
         request_metrics.reset()
         get("/robots.txt")

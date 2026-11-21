@@ -162,6 +162,18 @@ def _round(value: Optional[float]) -> Optional[float]:
     return None if value is None else round(value, 1)
 
 
+# Methods tracked by name; any other method token a client sends shares one
+# bucket, so arbitrary tokens cannot grow the metrics without bound (paths
+# are already bounded: they resolve to a route template or "unmatched").
+KNOWN_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+
+
+def metrics_method(method: str) -> str:
+    """The method label requests are counted under."""
+    label = str(method or "").upper()
+    return label if label in KNOWN_METHODS else "OTHER"
+
+
 class RequestMetrics:
     """Per-route request counts, status classes, latencies and recent errors."""
 
@@ -175,6 +187,7 @@ class RequestMetrics:
     def record(
         self, method: str, route: str, status: int, duration_ms: float, path: str = ""
     ) -> None:
+        method = metrics_method(method)
         key = f"{method} {route}"
         status_class = f"{int(status) // 100}xx"
         now = time.time()

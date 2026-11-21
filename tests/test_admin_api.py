@@ -114,6 +114,15 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('/static/admin/admin.css?v=', body)
         self.assertIn('name="robots" content="noindex, nofollow"', body)
 
+    def test_the_dashboard_cannot_be_framed(self):
+        for path in ("/admin", "/static/admin/admin.js", "/static/admin/index.html"):
+            status, headers, _ = request("GET", path, token=None)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(headers["x-frame-options"], "DENY", path)
+            self.assertEqual(headers["content-security-policy"], "frame-ancestors 'none'", path)
+        status, headers, _ = request("GET", "/static/style.css", token=None)
+        self.assertNotIn("x-frame-options", headers)
+
     def test_head_is_answered(self):
         self.assertEqual(request("HEAD", "/admin", token=None)[0], 200)
 
