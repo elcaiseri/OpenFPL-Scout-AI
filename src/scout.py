@@ -68,7 +68,7 @@ class InferenceError(RuntimeError):
 # unavailable (left the league), and not in the squad.
 STATUS_AVAILABILITY = {"a": 1.0, "d": 0.5, "i": 0.0, "s": 0.0, "u": 0.0, "n": 0.0}
 AVAILABILITY_COLUMNS = ("status", "chance_of_playing_next_round", "can_select")
-DIFFERENTIAL_MAX_XP_GAP = 0.25
+DIFFERENTIAL_XP_PENALTY = 0.25
 
 
 def availability_factor(players: pd.DataFrame) -> pd.Series:
@@ -1190,34 +1190,40 @@ class FPLScout:
         return player_id if type(player_id) is int and player_id > 0 else None
 
     @staticmethod
-    def _captaincy_indices(
-        team: pd.DataFrame, context: Optional[Mapping[str, Any]]
-    ) -> Tuple[int, int]:
+    def _captain_scores(predictions: pd.DataFrame, previous: Optional[int]) -> pd.Series:
+        """Score the full forecast separately from squad selection."""
+        points = pd.to_numeric(predictions["expected_points"], errors="coerce")
+        if previous is None or "id" not in predictions:
+            return points
+        penalized = predictions["id"].eq(previous).fillna(False)
+        return points - DIFFERENTIAL_XP_PENALTY * penalized
+
+    @staticmethod
+    def _captaincy_indices(team: pd.DataFrame) -> Tuple[int, int]:
         # Forecasts captured before this rule preserve their original armbands.
-        if context is None:
+        if "_captain_score" not in team:
             return 0, 1
 
         lineup, _ = _best_benchmark_lineup(
             team.assign(_index=team.index).to_dict(orient="records")
         )
         starters = team.loc[sorted(player["_index"] for player in lineup)]
-        captain, vice = starters.index[:2]
-        previous = context.get("previous_most_captained_id")
-        if (
-            previous is None
-            or not {"id", "availability_factor"} <= set(starters.columns)
-            or starters.at[captain, "id"] != previous
-        ):
-            return captain, vice
+        if "availability_factor" not in starters:
+            return starters.index[0], starters.index[1]
 
-        alternatives = starters.drop(index=captain)
-        eligible = alternatives["availability_factor"].eq(1.0) & alternatives[
-            "expected_points"
-        ].ge(starters.at[captain, "expected_points"] - DIFFERENTIAL_MAX_XP_GAP)
-        if "fixture_count" in alternatives:
-            eligible &= alternatives["fixture_count"].gt(0)
-        if eligible.any():
-            return alternatives.index[eligible][0], captain
+        eligible = starters["availability_factor"].eq(1.0)
+        if "fixture_count" in starters:
+            eligible &= starters["fixture_count"].gt(0)
+        # Only a fully available challenger can take the armband.
+        eligible.iloc[0] = True
+
+        def rank(index: int) -> Tuple[float, bool]:
+            score = starters.at[index, "_captain_score"]
+            # Give the challenger the armband at exactly the 0.25 xP boundary.
+            return score, score == float(starters.at[index, "expected_points"])
+
+        captain = max(starters.index[eligible], key=rank)
+        vice = starters.index.drop(captain)[0]
         return captain, vice
 
     def select_optimal_team(self, predictions: pd.DataFrame) -> pd.DataFrame:
@@ -1233,6 +1239,13 @@ class FPLScout:
         unique_predictions = predictions.drop_duplicates(player_key, keep="first")
         inference = predictions.attrs.get("inference", {})
         strategy = inference.get("strategy")
+        captaincy = inference.get("captaincy")
+        if captaincy is not None:
+            unique_predictions = unique_predictions.assign(
+                _captain_score=self._captain_scores(
+                    unique_predictions, captaincy.get("previous_most_captained_id")
+                )
+            )
         # Players with zero availability (injured, suspended, left the league)
         # are never selected; the cold start also requires availability data.
         team = self._select_budget_free_squad(
@@ -1241,7 +1254,8 @@ class FPLScout:
             require_available=strategy == "ownership-cold-start",
         )
         team["element_type"] = team["element_type"].map(self.POSITION_MAPPING)
-        captain, vice = self._captaincy_indices(team, inference.get("captaincy"))
+        captain, vice = self._captaincy_indices(team)
+        team = team.drop(columns="_captain_score", errors="ignore")
         team["role"] = ""
         team.loc[captain, "role"] = "captain"
         team.loc[vice, "role"] = "vice"

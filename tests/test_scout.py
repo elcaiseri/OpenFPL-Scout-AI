@@ -365,6 +365,10 @@ class ScoutInferenceTests(unittest.TestCase):
         }
         # The doubtful starting keeper and the bench keeper are both closer in xP.
         self.assertEqual(armbands(predictions), {"captain": 9, "vice": 8})
+        team = scout.select_optimal_team(predictions)
+        self.assertEqual(team.iloc[0]["id"], 8)
+        self.assertEqual(team.iloc[0]["expected_points"], 6.75)
+        self.assertNotIn("_captain_score", team)
 
         outside = predictions.copy()
         outside.loc[outside["id"] == 9, "expected_points"] = 6.499

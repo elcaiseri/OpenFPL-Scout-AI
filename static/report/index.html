@@ -771,10 +771,10 @@
                 <li>Sort every remaining player by forecast, highest first.</li>
                 <li>Walk the list, taking each player unless their position quota (2 / 5 / 5 / 3) is full or
                     their club already has three selected.</li>
-                <li>Stop at 15 and find the best legal starting XI by projection. Usually the top two starters get
-                    captain and vice. When the top pick was FPL's most captained player last Gameweek, make them
-                    vice if a fully available starter is within 0.25 expected points and captain the best such
-                    alternative.</li>
+                <li>Stop at 15 and find the best legal starting XI by projection. For captaincy, deduct
+                    0.25 expected points from last Gameweek's most captained player and rank the starters
+                    by that score. A switch requires a fully available starter with a fixture. The highest
+                    projected remaining starter gets vice.</li>
             </ol>
 
             <div class="note caveat">
