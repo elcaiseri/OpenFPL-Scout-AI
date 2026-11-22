@@ -60,6 +60,10 @@ inference:
   cache_fixtures: true
   fixture_cache_ttl_seconds: 300
   clip_min: 0.0
+  # How model predictions are combined: "mean" (weighted average) or "median"
+  # (weighted median). OPENFPL_ENSEMBLE_METHOD overrides this at runtime.
+  # Compare the two offline with scripts/compare_ensemble_methods.py.
+  ensemble_method: mean
   max_players_per_team: 3
   # An open gameweek's live prediction is reused for this long (0 disables),
   # unless official availability (injuries, suspensions) changes sooner.

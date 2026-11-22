@@ -383,6 +383,19 @@ class ColdStartTests(CacheTestCase):
 
         self.assertNotEqual(records(predictions), records(archived))
 
+    def test_a_forecast_combined_another_way_is_not_restored(self):
+        self.web()
+        self.restart()
+        # The new instance combines its models by median, the archive by mean.
+        self.scout.ensemble_method = "median"
+
+        with self.predictions_made() as predicted:
+            predictions = self.web()
+
+        self.assertEqual(predicted.call_count, 1)
+        self.assertFalse(predictions.attrs["refresh_due"])
+        self.assertEqual(predictions.attrs["inference"]["ensemble_method"], "median")
+
     def test_an_old_archived_forecast_is_not_restored(self):
         archived = self.web()
         self.restart(after=timedelta(hours=2))

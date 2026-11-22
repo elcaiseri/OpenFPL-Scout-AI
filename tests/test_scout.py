@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 
 from src.features import MODEL_FEATURES
-from src.scout import FPLScout, InferenceError, _mounted_data_path
+from src.scout import (
+    FPLScout,
+    InferenceError,
+    _mounted_data_path,
+    combine_predictions,
+)
 
 
 class ConstantModel:
@@ -164,7 +169,7 @@ def league_history():
     return pd.DataFrame(rows)
 
 
-def scout_config(minimum=3):
+def scout_config(minimum=3, **inference):
     return {
         "categorical_columns": [
             "id",
@@ -182,6 +187,7 @@ def scout_config(minimum=3):
             "minimum_successful_models": minimum,
             "clip_min": 0.0,
             "cache_fixtures": True,
+            **inference,
         },
         "models": {
             "one": {"path": "one.pkl", "weight": 1},
@@ -200,6 +206,39 @@ def enable_fpl_data(config):
         "permission_status": "pending",
     }
     return config
+
+
+class CombinePredictionsTests(unittest.TestCase):
+    def test_equal_weight_median_matches_numpy(self):
+        rng = np.random.default_rng(7)
+        for models in (1, 2, 3, 4, 5):
+            matrix = rng.normal(size=(models, 50))
+            combined = combine_predictions(matrix, np.ones(models), "median")
+            self.assertTrue(np.allclose(combined, np.median(matrix, axis=0)))
+
+    def test_mean_matches_weighted_average(self):
+        matrix = np.array([[1.0, 4.0], [3.0, 0.0]])
+
+        combined = combine_predictions(matrix, np.array([1.0, 3.0]), "mean")
+
+        self.assertTrue(np.allclose(combined, [2.5, 1.0]))
+
+    def test_weighted_median_follows_the_weight(self):
+        matrix = np.array([[1.0, 9.0], [2.0, 8.0], [10.0, 0.0]])
+
+        heavy_last = combine_predictions(matrix, np.array([1.0, 1.0, 3.0]), "median")
+        tie_at_half = combine_predictions(matrix, np.array([1.0, 1.0, 2.0]), "median")
+
+        self.assertTrue(np.allclose(heavy_last, [10.0, 0.0]))
+        # Weight 2 of 4 below the last model: average its neighbours.
+        self.assertTrue(np.allclose(tie_at_half, [6.0, 4.0]))
+
+    def test_rejects_unknown_method_and_mismatched_weights(self):
+        matrix = np.ones((2, 3))
+        with self.assertRaisesRegex(ValueError, "Unknown ensemble method"):
+            combine_predictions(matrix, np.ones(2), "mode")
+        with self.assertRaisesRegex(ValueError, "one weight per model"):
+            combine_predictions(matrix, np.ones(3), "mean")
 
 
 class ScoutInferenceTests(unittest.TestCase):
@@ -251,6 +290,73 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(list(first.columns), expected_columns)
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))
+
+    def test_mean_is_the_default_ensemble_method(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: ConstantModel(),
+        )
+
+        result = scout.predict_players(player_history(), gameweek=3)
+
+        self.assertEqual(scout.ensemble_method, "mean")
+        self.assertEqual(result.attrs["inference"]["ensemble_method"], "mean")
+
+    def test_median_ensemble_uses_the_weighted_median(self):
+        models = {
+            "one.pkl": ConstantModel(1),
+            "two.pkl": ConstantModel(2),
+            "three.pkl": ConstantModel(3),
+            "four.pkl": ConstantModel(40),
+        }
+        scout = FPLScout(
+            scout_config(ensemble_method="median"),
+            fixture_provider=self.fixtures,
+            model_loader=models.__getitem__,
+        )
+
+        result = scout.predict_players(player_history(), gameweek=3)
+
+        # Weights 1, 1, 2, 1: "three" holds the middle of the total weight,
+        # and the outlying 40 does not move the result.
+        self.assertTrue(np.allclose(result.expected_points, 3.0))
+        self.assertEqual(result.attrs["inference"]["ensemble_method"], "median")
+
+    def test_median_ensemble_degrades_to_the_surviving_models(self):
+        models = {
+            "one.pkl": ConstantModel(1),
+            "two.pkl": ConstantModel(2),
+            "three.pkl": ConstantModel(error="broken"),
+            "four.pkl": ConstantModel(40),
+        }
+        scout = FPLScout(
+            scout_config(minimum=3, ensemble_method="median"),
+            fixture_provider=self.fixtures,
+            model_loader=models.__getitem__,
+        )
+
+        result = scout.predict_players(player_history(), gameweek=3)
+
+        self.assertTrue(np.allclose(result.expected_points, 2.0))
+
+    def test_environment_overrides_the_configured_ensemble_method(self):
+        with patch.dict("os.environ", {"OPENFPL_ENSEMBLE_METHOD": " Median "}):
+            scout = FPLScout(
+                scout_config(ensemble_method="mean"),
+                fixture_provider=self.fixtures,
+                model_loader=lambda path: ConstantModel(),
+            )
+
+        self.assertEqual(scout.ensemble_method, "median")
+
+    def test_rejects_an_unknown_ensemble_method(self):
+        with self.assertRaisesRegex(ValueError, "ensemble_method must be one of"):
+            FPLScout(
+                scout_config(ensemble_method="mode"),
+                fixture_provider=self.fixtures,
+                model_loader=lambda path: ConstantModel(),
+            )
 
     def test_logs_model_feature_names_and_live_coverage(self):
         scout = FPLScout(

@@ -234,6 +234,32 @@ squad may be answered the same way from the open Gameweek's archived
 forecast, if it is under an hour old (`prediction_restore_max_age_seconds`),
 was made by the running models, and availability has not changed since.
 
+## Ensemble method
+
+The models' predictions are combined by weighted mean by default.
+`inference.ensemble_method: median` uses the weighted median instead, so one
+model's outlying forecast cannot move a player's projection; with four equally
+weighted models that is the average of the middle two. Set
+`OPENFPL_ENSEMBLE_METHOD=mean` or `median` to switch a deployed service without
+a new image. Each forecast records its method in its inference diagnostics, and
+an archived forecast is restored after a cold start only by an instance using
+the same method.
+
+Compare the two offline on out-of-fold predictions, one column per model:
+
+```bash
+uv run python -m scripts.compare_ensemble_methods oof.csv \
+  --models linear_regression,xgboost,catboost,mlp
+```
+
+It reports RMSE, MAE, per-gameweek Spearman, top-20 hit rate and the
+technical report's 15-player squad backtest (captain counted twice; the
+three-per-club limit when `team_name` is present) for each method, the median
+minus mean differences with paired gameweek-bootstrap 95% intervals, the same
+errors on the rows where the models disagree most, and top-decile calibration.
+Add `id` to sum double gameweeks per player, `season` to keep seasons apart and
+`--json results.json` to keep the numbers.
+
 ## Historical model training
 
 The official FPL API is an active-season service and does not expose a stable,

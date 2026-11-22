@@ -45,6 +45,45 @@ def _environment_bool(name: str) -> Optional[bool]:
     raise ValueError(f"{name} must be true or false")
 
 
+ENSEMBLE_METHODS = ("mean", "median")
+
+
+def combine_predictions(
+    prediction_matrix: np.ndarray, weights: np.ndarray, method: str = "mean"
+) -> np.ndarray:
+    """Combine one row of predictions per model into one value per column.
+
+    ``mean`` is the weighted average. ``median`` is the weighted median: each
+    column's value where the models' cumulative weight, sorted by prediction,
+    reaches half the total; on an exact tie at half it averages the two
+    neighbouring predictions, so equal weights give ``np.median``.
+    """
+    matrix = np.asarray(prediction_matrix, dtype=float)
+    if matrix.ndim == 1:
+        matrix = matrix.reshape(1, -1)
+    weights = np.asarray(weights, dtype=float).reshape(-1)
+    if len(weights) != matrix.shape[0]:
+        raise ValueError("Need one weight per model")
+    if method == "mean":
+        return np.average(matrix, axis=0, weights=weights)
+    if method != "median":
+        raise ValueError(
+            f"Unknown ensemble method {method!r}; expected one of {ENSEMBLE_METHODS}"
+        )
+    order = np.argsort(matrix, axis=0, kind="stable")
+    ordered = np.take_along_axis(matrix, order, axis=0)
+    cumulative = np.cumsum(weights[order], axis=0)
+    half = weights.sum() / 2.0
+    tolerance = 1e-9 * max(half, 1.0)
+    columns = np.arange(matrix.shape[1])
+    first = np.argmax(cumulative >= half - tolerance, axis=0)
+    upper = np.minimum(first + 1, matrix.shape[0] - 1)
+    tied = np.abs(cumulative[first, columns] - half) <= tolerance
+    lower_value = ordered[first, columns]
+    upper_value = ordered[upper, columns]
+    return np.where(tied, (lower_value + upper_value) / 2.0, lower_value)
+
+
 def _mounted_data_path(configured_path: Any) -> Any:
     """Relocate configured data/* paths when the runtime mount differs."""
     data_root = os.environ.get("OPENFPL_DATA_ROOT")
@@ -247,6 +286,21 @@ class FPLScout:
         self._forecast_lock = RLock()
         self.clip_min = inference_config.get("clip_min", 0.0)
         self.clip_max = inference_config.get("clip_max")
+        # OPENFPL_ENSEMBLE_METHOD overrides the config, to switch a deployed
+        # service between mean and median without a new image.
+        self.ensemble_method = (
+            str(
+                os.environ.get("OPENFPL_ENSEMBLE_METHOD")
+                or inference_config.get("ensemble_method", "mean")
+            )
+            .strip()
+            .casefold()
+        )
+        if self.ensemble_method not in ENSEMBLE_METHODS:
+            raise ValueError(
+                "inference.ensemble_method must be one of "
+                f"{', '.join(ENSEMBLE_METHODS)}"
+            )
         cold_start_config = inference_config.get("cold_start", {})
         self.cold_start_enabled = bool(cold_start_config.get("enabled", True))
         self.max_players_per_team = int(
@@ -328,9 +382,11 @@ class FPLScout:
         # returned DataFrame attrs to avoid cross-request state races.
         self.gameweek: Optional[int] = None
         logger.info(
-            "Loaded %d models; at least %d must succeed per inference",
+            "Loaded %d models; at least %d must succeed per inference; "
+            "combining them by weighted %s",
             len(self.model_artifacts),
             self.minimum_successful_models,
+            self.ensemble_method,
         )
         if self.fpl_data_enabled:
             logger.warning(
@@ -552,7 +608,9 @@ class FPLScout:
             )
 
         prediction_matrix = np.vstack(predictions)
-        ensemble = np.average(prediction_matrix, axis=0, weights=np.asarray(weights))
+        ensemble = combine_predictions(
+            prediction_matrix, np.asarray(weights), self.ensemble_method
+        )
         if self.clip_min is not None or self.clip_max is not None:
             lower = -np.inf if self.clip_min is None else float(self.clip_min)
             upper = np.inf if self.clip_max is None else float(self.clip_max)
@@ -562,6 +620,7 @@ class FPLScout:
             "successful_models": successful_models,
             "failed_models": failures,
             "weights": dict(zip(successful_models, weights)),
+            "ensemble_method": self.ensemble_method,
             "mean_model_spread": float(prediction_matrix.std(axis=0).mean()),
         }
         return ensemble, diagnostics
@@ -971,6 +1030,12 @@ class FPLScout:
             model_versions=self._model_versions(),
         )
         if restored is None or self._availability_changed(restored):
+            return None
+        # Forecasts archived before the switch existed were combined by mean.
+        restored_method = restored.attrs.get("inference", {}).get(
+            "ensemble_method", "mean"
+        )
+        if restored_method != self.ensemble_method:
             return None
         with self._forecast_lock:
             # The archive read ran unlocked: another request may have predicted
