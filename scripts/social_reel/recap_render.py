@@ -131,29 +131,33 @@ class RecapReel(Reel):
         vc.alpha_composite(pill, (860 - pill.width - 36, 85 - pill.height // 2))
         return shadowed(vc, 18, 10, 110)
 
-    # ---- scenes ----
-    def s_hook(self, base: Image.Image, t: float) -> None:
-        d = ImageDraw.Draw(base)
-        pl = eback(prog(t, 0.0, 0.7))
-        glow = Image.new("RGBA", (700, 700), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse([150, 150, 550, 550], fill=(200, 255, 50, 70))
-        paste(base, glow.filter(ImageFilter.GaussianBlur(80)), W / 2, 560, cl(pl))
-        paste(base, self.lion(440), W / 2, 560, cl(pl * 1.4), scale=0.6 + 0.4 * pl)
-        p1, p2, p3 = eo(prog(t, 0.45, 0.5)), eo(prog(t, 0.65, 0.5)), eo(prog(t, 1.0, 0.5))
-        disp(d, (W / 2, 1000 + 50 * (1 - p1)), f"GAMEWEEK {self.gw}", 190, A(PAPER, p1), max_width=980)
-        disp(d, (W / 2, 1180 + 50 * (1 - p2)), f"THE {self.MODE}", 130, A(LIME, p2))
-        lw = 560 * eo(prog(t, 0.9, 0.6))
-        d.rectangle([W / 2 - lw / 2, 1282, W / 2 + lw / 2, 1290], fill=A(PINK, 1))
-        d.text((W / 2, 1360), "AI forecast  vs  what actually happened", font=font("sb", 36), fill=A(PAPER, p3),
-               anchor="mm")
-        pill = ("Forecast locked at the deadline — no hindsight" if self.rc.locked_pre_deadline else
-                "Retro forecast — made after the deadline, not a live pick")
-        pf = fit(pill, "b", 28, 900)
-        pw = pf.getlength(pill) + 64
-        d.rounded_rectangle([W / 2 - pw / 2, 1420, W / 2 + pw / 2, 1482], 31, fill=A(PLUM800, p3),
-                            outline=A(PLUM600, p3), width=2)
-        d.text((W / 2, 1451), pill, font=pf, fill=A(MUTED, p3), anchor="mm")
+    # ---- hook: the score is on screen from the first frame ----
+    HOOK_KICKER = "THE AI SQUAD SCORED"
+    HOOK_FIGURE_Y = 250
 
+    def _make_hook_hero(self) -> Image.Image:
+        rc = self.rc
+        w, h = self.HOOK_W, self.HOOK_H
+        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        self._hook_number(d, w / 2, self.HOOK_FIGURE_Y, str(rc.total), "PTS", 440)
+        if rc.info.average is not None:
+            line = f"{rc.total - rc.info.average:+d} on the GW{self.gw} average"
+            d.text((w / 2, 560), line, font=fit(line, "black", 58, w - 40), fill=A(PAPER, 1), anchor="mm")
+        return im
+
+    def hook_sub(self) -> str:
+        rc = self.rc
+        parts = [f"{rc.forecast_word.capitalize()} {rc.xp_total:.1f} xP"]
+        if rc.info.average is not None:
+            parts.append(f"GW average {rc.info.average}")
+        return "  ·  ".join(parts)
+
+    def hook_pill(self) -> str:
+        return ("Forecast locked at the deadline — no hindsight" if self.rc.locked_pre_deadline else
+                "Retro forecast — made after the deadline, not a live pick")
+
+    # ---- scenes ----
     def s_score(self, base: Image.Image, t: float) -> None:
         rc = self.rc
         d = ImageDraw.Draw(base)
