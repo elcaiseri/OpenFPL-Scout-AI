@@ -1841,6 +1841,7 @@ views.command = {
 /* ---------- Predictions ---------- */
 views.predictions = {
     filters: { search: "", position: "", team: "", availability: "", squadOnly: false, maxPrice: "", groups: { models: true, inputs: true, market: true } },
+    differentialFilters: { maxOwnership: 10, position: "" },
 
     async render(main, context) {
         main.append(sectionTitle("AI predictions", `Every player's GW${state.gameweek} projection, each model's view and the inputs behind it`));
@@ -1849,16 +1850,18 @@ views.predictions = {
         const grid = h("div", { class: "grid" });
         main.append(grid);
         const tableCard = ui.card("All players", "Click a player for the full explanation. Lime bar = in the AI squad.");
+        const differentialCard = ui.card("Top differentials", "Highest projections few managers own. Edge = xP × (1 − own %): what you gain on managers who don't have him");
         const scatterCard = ui.card("Projection against price", "AI squad picks highlighted; click a dot to explain it", { span: 6 });
         const topCard = ui.card("Top 20 projections", "Bar = ensemble · white line = range across the models", { span: 6 });
         const checkCard = ui.card("Cross-checks and export", "Compare with the service's own endpoints", { span: 12 });
-        [tableCard, scatterCard, topCard, checkCard].forEach((card) => grid.append(card.root));
+        [tableCard, differentialCard, scatterCard, topCard, checkCard].forEach((card) => grid.append(card.root));
 
         const payload = await ui.fill(tableCard, async () => data.predictions());
         if (!payload || !context.alive()) return;
         metaHolder.append(forecastChips(payload));
         if (payload.inputs_error) metaHolder.append(h("p", { class: "notes" }, `Model inputs unavailable: ${payload.inputs_error}`));
         views.predictions.table(tableCard.body, payload);
+        views.predictions.differentialTable(differentialCard.body, payload);
         views.predictions.charts(scatterCard.body, topCard.body, payload);
         views.predictions.checks(checkCard.body, payload);
     },
@@ -1958,6 +1961,54 @@ views.predictions = {
             toggle("Market", filters.groups.market, (value) => { filters.groups.market = value; }),
         ), holder);
         rerender();
+    },
+
+    /* Low-owned players with the best projections. Edge is the expected gain
+       on the field: rivals who own a player share his points. */
+    differentials(players, { maxOwnership = 10, position = "", limit = 15 } = {}) {
+        return (players || [])
+            .filter((row) => utils.isNumber(row.selected_by_percent) && row.selected_by_percent < maxOwnership
+                && utils.isNumber(row.expected_points) && row.expected_points > 0
+                && (!position || row.position === position))
+            .map((row) => ({ ...row, edge: row.expected_points * (1 - row.selected_by_percent / 100) }))
+            .sort((a, b) => b.expected_points - a.expected_points || b.edge - a.edge || a.id - b.id)
+            .slice(0, limit);
+    },
+
+    differentialTable(target, payload) {
+        clear(target);
+        const filters = views.predictions.differentialFilters;
+        const controls = h("div", { class: "filters" });
+        const holder = h("div");
+        const draw = () => {
+            clear(controls).append(
+                fixtureStats.segmented("Ownership below", [[5, "< 5%"], [10, "< 10%"], [15, "< 15%"], [20, "< 20%"]], filters.maxOwnership, (value) => { filters.maxOwnership = value; draw(); }),
+                fixtureStats.segmented("Position", [["", "All"], ["GK", "GK"], ["DEF", "DEF"], ["MID", "MID"], ["FWD", "FWD"]], filters.position, (value) => { filters.position = value; draw(); }),
+            );
+            const rows = views.predictions.differentials(payload.players, filters);
+            const columns = [
+                { key: "web_name", label: "Player", render: (row) => h("span", null, row.web_name, row.role ? " " : null, row.role ? chip(row.role === "captain" ? "C" : "V", "lime") : null, h("span", { class: "sub" }, `${row.team_name} · ${row.position}`)) },
+                { key: "opponent", label: "Fixture", render: (row) => ui.fixtures(row.fixtures && row.fixtures.length ? row.fixtures : row.opponent ? [{ opponent: row.opponent, home: row.was_home }] : []) },
+                { key: "expected_points", label: "xP", num: true, digits: 2, title: "Projected points (ensemble × availability)" },
+                { key: "selected_by_percent", label: "Own %", num: true, digits: 1 },
+                { key: "edge", label: "Edge", num: true, digits: 2, title: "xP × (1 − ownership): points gained on managers who don't own him" },
+                { key: "availability_factor", label: "Avail.", render: ui.availability, value: (row) => row.availability_factor },
+                { key: "price", label: "£", num: true, digits: 1 },
+                { key: "value", label: "xP/£", num: true, digits: 2 },
+            ];
+            if ((payload.models || []).length > 1) columns.push({ key: "model_spread", label: "Spread", num: true, digits: 2, title: "Standard deviation across models: higher = less agreement" });
+            clear(holder).append(ui.table(rows, columns, {
+                sortKey: "expected_points",
+                empty: `No players under ${filters.maxOwnership}% ownership have a projection.`,
+                onRowClick: (row) => drawer.open(row.id, row.web_name),
+                rowClass: (row) => (row.in_squad ? "in-squad" : ""),
+            }));
+        };
+        target.append(controls, holder);
+        if (payload.strategy === "ownership-cold-start") {
+            target.append(h("p", { class: "notes" }, "This early-season forecast is built from ownership, so low-owned players rank low by construction."));
+        }
+        draw();
     },
 
     charts(scatterTarget, topTarget, payload) {

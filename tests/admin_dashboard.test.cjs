@@ -417,3 +417,31 @@ test('a fixture\'s stats become a match report', () => {
     assert.equal(fixtureStats.summarise({ goals_scored: [] }, fixture), null);
     assert.equal(fixtureStats.summarise(null, fixture), null);
 });
+
+test('top differentials: projected, under the ownership cutoff, ranked by xP', () => {
+    const { views } = loadAdmin(async () => response({}));
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const player = (id, position, expected, ownership, extra = {}) => ({ id, web_name: `P${id}`, position, expected_points: expected, selected_by_percent: ownership, ...extra });
+    const players = [
+        player(1, 'MID', 7.5, 45.2),                       // template: too popular
+        player(2, 'MID', 6.1, 9.9),
+        player(3, 'FWD', 6.1, 4.0),                        // ties 2 on xP, wins on edge
+        player(4, 'DEF', 5.0, 10),                         // exactly at the cutoff: out
+        player(5, 'DEF', 0, 1.2, { availability_factor: 0 }), // ruled out
+        player(6, 'GK', 4.2, null),                        // no ownership figure
+        player(7, 'DEF', 4.8, 2.5),
+        player(8, 'MID', 3.9, 0.4),
+    ];
+    const before = plain(players);
+    const differentials = views.predictions.differentials;
+
+    const rows = differentials(players);
+    assert.deepEqual(plain(rows.map((row) => row.id)), [3, 2, 7, 8]);
+    assert.ok(Math.abs(rows[0].edge - 6.1 * 0.96) < 1e-9);
+    assert.ok(Math.abs(rows[1].edge - 6.1 * 0.901) < 1e-9);
+    assert.deepEqual(plain(differentials(players, { maxOwnership: 5 }).map((row) => row.id)), [3, 7, 8]);
+    assert.deepEqual(plain(differentials(players, { maxOwnership: 15, position: 'DEF' }).map((row) => row.id)), [4, 7]);
+    assert.deepEqual(plain(differentials(players, { limit: 2 }).map((row) => row.id)), [3, 2]);
+    assert.deepEqual(plain(differentials(null)), []);
+    assert.deepEqual(plain(players), before); // the input rows are untouched
+});
