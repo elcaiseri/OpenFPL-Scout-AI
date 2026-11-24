@@ -359,3 +359,61 @@ test('Tab wraps around inside the open drawer', () => {
     assert.equal(drawer.nextFocus(items, 'outside', true), last);
     assert.equal(drawer.nextFocus([], close, false), null);
 });
+
+/* One official fixture-stats row, in the real shape (xG and friends are strings). */
+function statRow(element, name, values = {}) {
+    return {
+        minutes: 90, starts: 1, total_points: 2, goals_scored: 0, assists: 0, own_goals: 0,
+        penalties_saved: 0, penalties_missed: 0, yellow_cards: 0, red_cards: 0, saves: 0,
+        bonus: 0, bps: 10, clean_sheets: 0, goals_conceded: 1, influence: '0.0', creativity: '0.0',
+        threat: '0.0', ict_index: '0.0', expected_goals: '0.00', expected_assists: '0.00',
+        expected_goal_involvements: '0.00', expected_goals_conceded: '0.80', defensive_contribution: 0,
+        clearances_blocks_interceptions: 0, recoveries: 0, tackles: 0, element, fixture: 108,
+        player: name ? { id: element, web_name: name, element_type: 3, team_name: 'Club' } : null,
+        ...values,
+    };
+}
+
+test('a fixture\'s stats become a match report', () => {
+    const { fixtureStats } = loadAdmin(async () => response({}));
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const payload = {
+        h: [
+            statRow(1, 'Keeper', { saves: 4, element_type: 1, total_points: 3, bps: 20 }),
+            statRow(2, 'Striker', { goals_scored: 2, expected_goals: '1.10', total_points: 13, bps: 54, bonus: 3 }),
+            statRow(3, 'Winger', { assists: 1, expected_assists: '0.40', yellow_cards: 1, total_points: 4, bps: 30, bonus: 1, starts: 0, minutes: 25 }),
+            statRow(4, 'Bench', { minutes: 0, starts: 0, total_points: 0, bps: 0 }),
+        ],
+        a: [
+            statRow(11, 'Defender', { own_goals: 1, red_cards: 1, total_points: -1, bps: 2 }),
+            statRow(12, 'Forward', { goals_scored: 1, expected_goals: '0.75', total_points: 7, bps: 31, bonus: 2 }),
+            statRow(13, null, { total_points: 1, bps: 29 }),
+        ],
+    };
+    const fixture = { home_team: { name: 'Home FC', score: 3 }, away_team: { name: 'Away FC', score: 1 } };
+    const report = fixtureStats.summarise(payload, fixture);
+
+    assert.deepEqual(plain(report.home.players.map((row) => row.name)), ['Striker', 'Winger', 'Keeper']);
+    assert.deepEqual(plain(report.home.unused.map((row) => row.name)), ['Bench']);
+    assert.deepEqual(plain(report.away.players.map((row) => row.name)), ['Forward', '#13', 'Defender']); // no player record: the id
+    assert.equal(report.home.players[1].started, false);
+    // xG strings are numbers; own goals count for the other side, so the score reconciles.
+    assert.equal(report.home.totals.expected_goals, 1.1);
+    assert.equal(report.away.totals.expected_goals, 0.75);
+    assert.equal(report.home.totals.goals, 3);
+    assert.equal(report.away.totals.goals, 1);
+    assert.equal(report.home.totals.saves, 4);
+    assert.equal(fixtureStats.names(report.home.events.goals), 'Striker ×2');
+    assert.deepEqual(plain(report.home.events.yellow_cards.map((item) => item.name)), ['Winger']);
+    assert.deepEqual(plain(report.away.events.red_cards.map((item) => item.name)), ['Defender']);
+    assert.deepEqual(plain(report.away.events.own_goals.map((item) => item.name)), ['Defender']);
+    // Bonus 3/2/1 across both sides, then the best BPS without bonus.
+    assert.deepEqual(plain(report.bonus.map((row) => [row.bonus, row.name, row.side])), [[3, 'Striker', 'home'], [2, 'Forward', 'away'], [1, 'Winger', 'home']]);
+    assert.equal(report.next_best.name, '#13');
+    assert.equal(report.top_id, 2);
+    assert.equal(report.home.players[1].cards, 1);
+    assert.equal(report.away.players.find((row) => row.name === 'Defender').cards, 2);
+
+    assert.equal(fixtureStats.summarise({ goals_scored: [] }, fixture), null);
+    assert.equal(fixtureStats.summarise(null, fixture), null);
+});

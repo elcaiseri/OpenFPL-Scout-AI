@@ -4200,6 +4200,252 @@ views.sandbox = {
     },
 };
 
+/* ---------- FPL data: a fixture's stats as a match report ---------- */
+
+/* The official fixture stats are one row per squad player for each side
+ * (h, a), with every match stat. These turn them into what a reader wants
+ * first: the score and who made it, bonus, how the teams compared, and a
+ * per-player table. Pure, so the node tests can check it. */
+const fixtureStats = {
+    NUMERIC: [
+        "minutes", "starts", "total_points", "goals_scored", "assists", "own_goals",
+        "penalties_saved", "penalties_missed", "yellow_cards", "red_cards", "saves",
+        "bonus", "bps", "clean_sheets", "goals_conceded", "expected_goals",
+        "expected_assists", "expected_goal_involvements", "expected_goals_conceded",
+        "defensive_contribution", "clearances_blocks_interceptions", "recoveries", "tackles",
+    ],
+    TOTALS: [
+        "goals_scored", "own_goals", "expected_goals", "expected_assists", "expected_goals_conceded",
+        "bps", "saves", "defensive_contribution", "clearances_blocks_interceptions",
+        "recoveries", "tackles", "yellow_cards", "red_cards",
+    ],
+    /* label, total key, digits */
+    COMPARE: [
+        ["Goals", "goals", 0],
+        ["Expected goals (xG)", "expected_goals", 2],
+        ["Expected assists (xA)", "expected_assists", 2],
+        ["Bonus points system (BPS)", "bps", 0],
+        ["Saves", "saves", 0],
+        ["Defensive contributions", "defensive_contribution", 0],
+        ["Tackles", "tackles", 0],
+        ["Recoveries", "recoveries", 0],
+        ["Clearances, blocks, interceptions", "clearances_blocks_interceptions", 0],
+        ["Yellow cards", "yellow_cards", 0],
+    ],
+    COLUMNS: {
+        goals_scored: { label: "G", title: "Goals" },
+        assists: { label: "A", title: "Assists" },
+        expected_goals: { label: "xG", digits: 2, title: "Expected goals" },
+        expected_assists: { label: "xA", digits: 2, title: "Expected assists" },
+        expected_goal_involvements: { label: "xGI", digits: 2, title: "Expected goal involvements" },
+        penalties_missed: { label: "Pen. missed", title: "Penalties missed" },
+        bps: { label: "BPS", title: "Bonus points system score" },
+        bonus: { label: "Bonus", title: "Bonus points" },
+        clean_sheets: { label: "CS", title: "Clean sheet" },
+        goals_conceded: { label: "GC", title: "Goals conceded while on the pitch" },
+        expected_goals_conceded: { label: "xGC", digits: 2, title: "Expected goals conceded while on the pitch" },
+        saves: { label: "Saves" },
+        defensive_contribution: { label: "DC", title: "Defensive contributions (FPL's count of defensive actions)" },
+        clearances_blocks_interceptions: { label: "CBI", title: "Clearances, blocks and interceptions" },
+        recoveries: { label: "Rec.", title: "Ball recoveries" },
+        tackles: { label: "Tkl", title: "Tackles" },
+    },
+    VIEWS: {
+        overview: ["goals_scored", "assists", "expected_goals", "expected_assists", "bps", "bonus", "cards"],
+        attack: ["goals_scored", "assists", "expected_goals", "expected_assists", "expected_goal_involvements", "penalties_missed"],
+        defence: ["clean_sheets", "goals_conceded", "expected_goals_conceded", "saves", "defensive_contribution", "clearances_blocks_interceptions", "recoveries", "tackles"],
+    },
+
+    row(item) {
+        const player = item.player && typeof item.player === "object" ? item.player : {};
+        const row = {
+            id: Number(item.element ?? player.id),
+            name: player.web_name || `#${item.element}`,
+            team: player.team_name || null,
+            position: utils.positionName(player.element_type ?? player.position),
+        };
+        fixtureStats.NUMERIC.forEach((key) => {
+            const value = Number(item[key]);
+            row[key] = Number.isFinite(value) ? value : 0;
+        });
+        row.started = row.starts > 0;
+        row.cards = row.yellow_cards + 2 * row.red_cards;
+        return row;
+    },
+
+    side(items, team) {
+        const rows = (items || []).filter((item) => item && typeof item === "object").map(fixtureStats.row);
+        const players = rows.filter((row) => row.minutes > 0)
+            .sort((a, b) => b.total_points - a.total_points || b.bps - a.bps || b.minutes - a.minutes);
+        const unused = rows.filter((row) => row.minutes <= 0).sort((a, b) => a.name.localeCompare(b.name));
+        const totals = {};
+        fixtureStats.TOTALS.forEach((key) => {
+            totals[key] = Math.round(utils.sum(players.map((row) => row[key])) * 100) / 100;
+        });
+        const listed = (key) => players.filter((row) => row[key] > 0)
+            .map((row) => ({ id: row.id, name: row.name, count: row[key] }))
+            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+        return {
+            team: team || {},
+            players,
+            unused,
+            totals,
+            events: {
+                goals: listed("goals_scored"),
+                assists: listed("assists"),
+                own_goals: listed("own_goals"),
+                penalties_saved: listed("penalties_saved"),
+                penalties_missed: listed("penalties_missed"),
+                yellow_cards: listed("yellow_cards"),
+                red_cards: listed("red_cards"),
+                saves: listed("saves"),
+            },
+        };
+    },
+
+    /* null when the payload isn't the expected {h, a} shape. */
+    summarise(payload, fixture = {}) {
+        if (!payload || !Array.isArray(payload.h) || !Array.isArray(payload.a)) return null;
+        const home = fixtureStats.side(payload.h, fixture.home_team);
+        const away = fixtureStats.side(payload.a, fixture.away_team);
+        // An own goal counts for the other side.
+        home.totals.goals = home.totals.goals_scored + away.totals.own_goals;
+        away.totals.goals = away.totals.goals_scored + home.totals.own_goals;
+        const everyone = [
+            ...home.players.map((row) => ({ ...row, side: "home" })),
+            ...away.players.map((row) => ({ ...row, side: "away" })),
+        ];
+        const bonus = everyone.filter((row) => row.bonus > 0).sort((a, b) => b.bonus - a.bonus || b.bps - a.bps);
+        const nextBest = everyone.filter((row) => row.bonus === 0).sort((a, b) => b.bps - a.bps)[0] || null;
+        const top = everyone.slice().sort((a, b) => b.total_points - a.total_points || b.bps - a.bps)[0] || null;
+        return { home, away, bonus, next_best: nextBest, top_id: top ? top.id : null };
+    },
+
+    names(list, withCount = true) {
+        return list.map((item) => `${item.name}${withCount && item.count > 1 ? ` ×${item.count}` : ""}`).join(", ");
+    },
+
+    segmented(label, options, current, onChange) {
+        return h("div", { class: "segmented", role: "tablist", "aria-label": label },
+            options.map(([value, text]) => h("button", {
+                type: "button", role: "tab", "aria-selected": value === current ? "true" : "false",
+                onClick: () => onChange(value),
+            }, text)));
+    },
+
+    render(body, report, fixture) {
+        const homeName = (fixture.home_team || {}).name || "Home";
+        const awayName = (fixture.away_team || {}).name || "Away";
+        const score = (official, computed) => (utils.isNumber(official) ? official : computed);
+        const state = fixture.finished ? chip("Final", "lime")
+            : fixture.finished_provisional ? chip("Provisional", "aqua")
+                : fixture.started ? chip(`Live ${fixture.minutes ?? ""}'`, "aqua") : chip("Not started");
+        const swatch = (color) => h("span", { class: "swatch", style: { background: color }, "aria-hidden": "true" });
+        add(body,
+            h("div", { class: "match-head" },
+                h("div", { class: "team" }, swatch(CONFIG.series[0]), h("strong", null, homeName)),
+                h("div", { class: "score" }, `${score((fixture.home_team || {}).score, report.home.totals.goals)} – ${score((fixture.away_team || {}).score, report.away.totals.goals)}`),
+                h("div", { class: "team away" }, h("strong", null, awayName), swatch(CONFIG.series[1]))),
+            h("p", { class: "small muted match-meta" }, state, ` ${utils.dateTime(fixture.kickoff_time)} · ${report.home.players.length} and ${report.away.players.length} players used`));
+
+        // Key events, side by side.
+        const events = (side) => {
+            const e = side.events;
+            const entries = [];
+            if (e.goals.length) entries.push(["Goals", fixtureStats.names(e.goals)]);
+            if (e.assists.length) entries.push(["Assists", fixtureStats.names(e.assists)]);
+            if (e.own_goals.length) entries.push(["Own goals", fixtureStats.names(e.own_goals)]);
+            if (e.penalties_saved.length) entries.push(["Penalties saved", fixtureStats.names(e.penalties_saved)]);
+            if (e.penalties_missed.length) entries.push(["Penalties missed", fixtureStats.names(e.penalties_missed)]);
+            if (e.yellow_cards.length || e.red_cards.length) {
+                entries.push(["Cards", h("span", { class: "bookings" },
+                    e.yellow_cards.map((item) => h("span", { class: "booking" }, h("span", { class: "card-icon yellow", role: "img", "aria-label": "Yellow card" }), item.name)),
+                    e.red_cards.map((item) => h("span", { class: "booking" }, h("span", { class: "card-icon red", role: "img", "aria-label": "Red card" }), item.name)))]);
+            }
+            if (e.saves.length) entries.push(["Saves", e.saves.map((item) => `${item.name} ${item.count}`).join(", ")]);
+            return h("div", { class: "match-side" },
+                h("h3", null, swatch(side === report.home ? CONFIG.series[0] : CONFIG.series[1]), side.team.name || (side === report.home ? homeName : awayName)),
+                entries.length ? ui.kv(entries) : h("p", { class: "small muted", style: { margin: 0 } }, "No goals, cards or saves."));
+        };
+        add(body, h("h3", { class: "small muted match-heading" }, "Key events"),
+            h("div", { class: "match-events" }, events(report.home), events(report.away)));
+
+        if (report.bonus.length) {
+            const line = report.bonus.map((row) => `${row.bonus} ${row.name} (${row.bps})`).join(" · ");
+            add(body, h("p", { class: "small", style: { margin: "10px 0 0" } },
+                h("strong", null, "Bonus: "), line,
+                report.next_best ? h("span", { class: "muted" }, ` · next ${report.next_best.name} (${report.next_best.bps})`) : null,
+                h("span", { class: "muted" }, " · BPS in brackets")));
+        }
+
+        // How the teams compared.
+        add(body, h("h3", { class: "small muted match-heading" }, "Team comparison"),
+            h("div", { class: "compare" }, fixtureStats.COMPARE.map(([label, key, digits]) => {
+                const left = report.home.totals[key] || 0;
+                const right = report.away.totals[key] || 0;
+                const total = left + right;
+                const share = total > 0 ? left / total : 0.5;
+                return h("div", { class: "compare-row" },
+                    h("span", { class: "value home" }, utils.fmt(left, digits)),
+                    h("div", { class: "compare-mid" },
+                        h("span", { class: "small secondary" }, label),
+                        h("div", { class: `split-bar${total > 0 ? "" : " empty"}`, role: "img", "aria-label": `${label}: ${homeName} ${utils.fmt(left, digits)}, ${awayName} ${utils.fmt(right, digits)}` },
+                            h("span", { style: { width: `${share * 100}%`, background: total > 0 ? CONFIG.series[0] : null } }),
+                            h("span", { style: { width: `${(1 - share) * 100}%`, background: total > 0 ? CONFIG.series[1] : null } }))),
+                    h("span", { class: "value away" }, utils.fmt(right, digits)));
+            })));
+
+        // Players, one side at a time.
+        const view = { side: "home", columns: "overview", unused: false };
+        const controls = h("div", { class: "row match-controls" });
+        const table = h("div");
+        const close = () => {
+            const dialog = document.getElementById("modal");
+            if (dialog && dialog.open && typeof dialog.close === "function") dialog.close();
+        };
+        const draw = () => {
+            const side = report[view.side];
+            const rows = view.unused ? [...side.players, ...side.unused] : side.players;
+            const extra = fixtureStats.VIEWS[view.columns].map((key) => {
+                if (key === "cards") {
+                    return {
+                        key: "cards", label: "Cards", num: true,
+                        render: (row) => (row.cards ? h("span", { class: "bookings" },
+                            Array.from({ length: row.yellow_cards }, () => h("span", { class: "card-icon yellow", role: "img", "aria-label": "Yellow card" })),
+                            Array.from({ length: row.red_cards }, () => h("span", { class: "card-icon red", role: "img", "aria-label": "Red card" }))) : ""),
+                    };
+                }
+                const column = fixtureStats.COLUMNS[key];
+                return { key, label: column.label, title: column.title, num: true, digits: column.digits ?? 0 };
+            });
+            clear(controls).append(
+                fixtureStats.segmented("Team", [["home", homeName], ["away", awayName]], view.side, (value) => { view.side = value; draw(); }),
+                fixtureStats.segmented("Columns", [["overview", "Overview"], ["attack", "Attack"], ["defence", "Defence"]], view.columns, (value) => { view.columns = value; draw(); }),
+                side.unused.length ? h("button", {
+                    class: "btn small ghost", type: "button", "aria-pressed": view.unused ? "true" : "false",
+                    onClick: () => { view.unused = !view.unused; draw(); },
+                }, view.unused ? "Hide unused subs" : `Show unused subs (${side.unused.length})`) : null);
+            clear(table).append(ui.table(rows, [
+                {
+                    key: "name", label: "Player",
+                    render: (row) => h("span", null, row.name,
+                        row.id === report.top_id ? " " : null, row.id === report.top_id ? chip("top scorer", "lime") : null,
+                        h("span", { class: "sub" }, `${row.position}${row.minutes <= 0 ? " · unused" : row.started ? "" : " · sub"}`)),
+                },
+                { key: "minutes", label: "Min", num: true },
+                { key: "total_points", label: "Pts", num: true, title: "FPL points from this match" },
+                ...extra,
+            ], {
+                sortKey: "total_points", footer: false, empty: "No player from this side has played yet.",
+                onRowClick: (row) => { close(); drawer.open(row.id, row.name); },
+            }));
+        };
+        add(body, h("h3", { class: "small muted match-heading" }, "Players"), controls, table,
+            h("p", { class: "small muted" }, "Click a player for his explanation. Influence, creativity and threat aren't published for single fixtures."));
+        draw();
+    },
+};
+
 /* ---------- FPL data ---------- */
 views.data = {
     playerFilters: { search: "", team_id: "", element_type: "", status: "", min_price: "", max_price: "", order_by: "total_points", descending: true, selectable_only: true, offset: 0 },
@@ -4260,7 +4506,7 @@ views.data = {
             { key: "kickoff_time", label: "Kick-off", render: (row) => utils.dateTime(row.kickoff_time) },
             { key: "home", label: "Match", sort: false, render: (row) => h("span", null, `${row.home_team.name} `, h("strong", null, row.started ? `${row.home_team.score ?? 0} – ${row.away_team.score ?? 0}` : "v"), ` ${row.away_team.name}`) },
             { key: "state", label: "State", sort: false, render: (row) => row.finished ? statusBadge("good", "finished") : row.started ? statusBadge("warning", `live ${row.minutes ?? ""}'`) : statusBadge("neutral", "upcoming") },
-            { key: "stats", label: "", sort: false, render: (row) => row.started ? h("button", { class: "btn small", type: "button", onClick: (event) => { event.stopPropagation(); views.data.fixtureStats(row); } }, "Stats") : "" },
+            { key: "stats", label: "", sort: false, render: (row) => row.started ? h("button", { class: "btn small", type: "button", "aria-label": `Stats for ${row.home_team.name} v ${row.away_team.name}`, onClick: (event) => { event.stopPropagation(); views.data.fixtureStats(row); } }, "Stats") : "" },
         ], { sortKey: "kickoff_time", sortDir: "asc", footer: false, empty: "No fixtures in this gameweek." }));
     },
 
@@ -4269,13 +4515,13 @@ views.data = {
         try {
             const response = await api.get(`/api/fpl/fixtures/${fixture.id}/stats`);
             const payload = response.data || {};
-            const stats = Object.entries(payload).filter(([key, value]) => Array.isArray(value) && value.length && typeof value[0] === "object");
+            const report = fixtureStats.summarise(payload, fixture);
             clear(body);
-            if (!stats.length) body.append(ui.json(payload));
-            stats.forEach(([key, items]) => {
-                body.append(h("h3", { class: "small muted" }, key.replace(/_/g, " ")));
-                body.append(ui.autoTable(items.map((item) => ({ player: (item.player || {}).web_name || item.element, value: item.value, ...item })), { keys: ["player", "value"] }));
-            });
+            if (!report) {
+                body.append(h("p", { class: "small muted" }, "These stats came in an unexpected shape, so here they are as sent:"), ui.json(payload));
+                return;
+            }
+            fixtureStats.render(body, report, fixture);
         } catch (error) {
             clear(body).append(ui.errorBox(error));
         }
@@ -4797,7 +5043,7 @@ views.explorer = {
 /* Bootstrap                                                           */
 /* ------------------------------------------------------------------ */
 
-const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, optimizerView, drawer, draft, overrides, alerts, h, s, clear };
+const OpenFPLAdmin = { CONFIG, ApiError, storage, auth, utils, api, charts, ui, state, cache, data, app, views, optimizerView, drawer, draft, overrides, alerts, fixtureStats, h, s, clear };
 if (typeof window !== "undefined") window.OpenFPLAdmin = OpenFPLAdmin;
 if (typeof document !== "undefined" && typeof document.addEventListener === "function" && document.getElementById && document.getElementById("app")) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => app.start());
