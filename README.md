@@ -19,9 +19,11 @@ responsive web dashboard and FastAPI service.
 - Official FPL is the source of truth for players, clubs, availability,
   Gameweeks, fixtures, history, live scores, managers, leagues, and rankings.
 - A four-model ensemble produces player projections from leakage-safe recent
-  form, minutes, ownership, and fixture context. Each fixture is projected
-  separately, so double-gameweek players receive both matches and
-  blank-gameweek players receive zero.
+  form, minutes, ownership, and fixture context. For each fixture, Scout uses
+  `xP = weighted mean − model spread / model count`. Spread is the population
+  standard deviation of the contributing models' raw predictions.
+  It clips the result before summing fixtures, so double-gameweek players
+  receive both matches and blank-gameweek players receive zero.
 - Projections are scaled by each player's current official availability.
   Injured, suspended, and departed players are never selected.
 - Inference validates each model's feature contract, caches upstream data, and

@@ -240,7 +240,9 @@ class ScoutInferenceTests(unittest.TestCase):
         second = scout.predict_players(player_history(), gameweek=3)
 
         self.assertEqual(len(first), 20)
-        self.assertTrue(np.allclose(first.expected_points, 2.6))
+        spread = np.std([1, 2, 3, 4])
+        self.assertTrue(np.allclose(first.expected_points, 2.6 - spread / 4))
+        self.assertAlmostEqual(first.attrs["inference"]["mean_model_spread"], spread)
         self.assertEqual(first.attrs["gameweek"], 3)
         self.assertEqual(first.attrs["inference"]["failed_models"], {})
         expected_columns = scout_config()["categorical_columns"] + [
@@ -251,6 +253,20 @@ class ScoutInferenceTests(unittest.TestCase):
         self.assertEqual(list(first.columns), expected_columns)
         self.assertEqual(self.fixture_calls, 1)
         self.assertTrue(first.equals(second))
+
+    def test_disagreement_only_discounts_the_fixture_where_models_differ(self):
+        scout = FPLScout(
+            scout_config(),
+            fixture_provider=self.fixtures,
+            model_loader=lambda path: (
+                VenueModel() if path in {"one.pkl", "two.pkl"} else ConstantModel(1)
+            ),
+        )
+
+        points, _ = scout._predict_ensemble(pd.DataFrame({"was_home": [True, False]}))
+
+        # Home has a weighted mean of 1.8 and a spread of 1. Away is unanimous.
+        np.testing.assert_allclose(points, [1.55, 1.0])
 
     def test_logs_model_feature_names_and_live_coverage(self):
         scout = FPLScout(
@@ -289,7 +305,8 @@ class ScoutInferenceTests(unittest.TestCase):
 
         result = scout.predict_players(player_history(), gameweek=3)
 
-        self.assertTrue(np.allclose(result.expected_points, 7 / 3))
+        expected = 7 / 3 - np.std([1, 2, 4]) / 3
+        self.assertTrue(np.allclose(result.expected_points, expected))
         self.assertEqual(
             result.attrs["inference"]["failed_models"], {"three": "broken"}
         )
@@ -337,15 +354,16 @@ class ScoutInferenceTests(unittest.TestCase):
                 model_loader=lambda path: WrongContractModel(),
             )
 
-    def test_clips_negative_ensemble_predictions(self):
+    def test_clips_after_the_spread_discount(self):
         scout = FPLScout(
             scout_config(),
             fixture_provider=self.fixtures,
-            model_loader=lambda path: ConstantModel(-2),
+            model_loader=lambda path: ConstantModel(-3.75 if path == "four.pkl" else 1),
         )
 
         result = scout.predict_players(player_history(), gameweek=3)
 
+        # The weighted mean is 0.05 before the discount takes it below zero.
         self.assertTrue((result.expected_points == 0).all())
 
     def test_gameweek_one_uses_ownership_when_no_preseason_history_exists(self):
@@ -495,14 +513,17 @@ class ScoutInferenceTests(unittest.TestCase):
                     ],
                 }
             },
-            model_loader=lambda path: model,
+            model_loader=lambda path: (
+                model if path in {"one.pkl", "two.pkl"} else ConstantModel(2)
+            ),
         )
 
         predictions = scout.predict_players(player_history(), gameweek=3)
 
         self.assertEqual(len(predictions), 20)
         self.assertTrue((predictions["fixture_count"] == 2).all())
-        self.assertTrue((predictions["expected_points"] == 3 + 1).all())
+        # All models total four points, but each fixture has a spread of 0.5.
+        self.assertTrue(np.allclose(predictions["expected_points"], 4 - 2 * 0.5 / 4))
         # One home and one away match: no single venue, so each opponent
         # carries its own.
         self.assertTrue(
