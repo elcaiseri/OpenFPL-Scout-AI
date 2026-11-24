@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from src.team_rating import (
     _availability,
@@ -92,6 +92,9 @@ def suggest_transfers(
     *,
     limit: int = 3,
     max_per_club: int = 3,
+    keep_ids: Optional[Iterable[int]] = None,
+    exclude_ids: Optional[Iterable[int]] = None,
+    selling: Optional[Mapping[int, Optional[float]]] = None,
 ) -> List[Dict[str, Any]]:
     """Return the best single transfers, largest projected gain first.
 
@@ -104,10 +107,15 @@ def suggest_transfers(
     selling prices, which can be lower than current prices, so affordability
     is approximate. Each outgoing and incoming player appears in at most one
     suggestion. Without a bank, or without a price for a player, nothing is
-    suggested for that player.
+    suggested for that player. Players in ``keep_ids`` are never sold and
+    players in ``exclude_ids`` never bought (a manager's locks and bans).
+    ``selling`` gives each squad player's selling price when it is known;
+    a sale then raises that, not the current price, so affordability is exact.
     """
     if bank is None or len(squad) != 15:
         return []
+    keep = {int(value) for value in keep_ids or ()}
+    exclude = {int(value) for value in exclude_ids or ()}
     squad_ids = {int(player["id"]) for player in squad}
     clubs = Counter(player.get("team_name") for player in squad)
     eligible = sorted(
@@ -115,6 +123,7 @@ def suggest_transfers(
             player
             for player in candidates
             if int(player["id"]) not in squad_ids
+            and int(player["id"]) not in exclude
             and currently_available(player)
             and _number(player.get("price"), None) is not None
         ),
@@ -124,8 +133,16 @@ def suggest_transfers(
     current = lineup_value(squad)
 
     options = []
+    selling = selling or {}
+
+    def sale(player: Mapping[str, Any]) -> Optional[float]:
+        value = selling.get(int(player["id"]))
+        return _number(value, None) if value is not None else _number(player.get("price"), None)
+
     for outgoing in squad:
-        budget = _number(outgoing.get("price"), None)
+        if int(outgoing["id"]) in keep:
+            continue
+        budget = sale(outgoing)
         if budget is None:
             continue
         budget += bank
@@ -161,9 +178,7 @@ def suggest_transfers(
                 "out": _summary(outgoing),
                 "in": _summary(incoming),
                 "gain": round(gain, 2),
-                "cost": round(
-                    _number(incoming.get("price")) - _number(outgoing.get("price")), 1
-                ),
+                "cost": round(_number(incoming.get("price")) - (sale(outgoing) or 0.0), 1),
             }
         )
         if len(suggestions) == limit:

@@ -88,6 +88,27 @@ class TransferSuggestionTests(unittest.TestCase):
 
         self.assertEqual(suggest_transfers(players, pool, bank=5.0), [])
 
+    def test_kept_players_are_not_sold_and_excluded_players_not_bought(self):
+        players = squad(p3={"expected_points": 1.0}, p4={"expected_points": 2.0})
+        pool = [candidate(100, 2, 9.0, 5.0), candidate(101, 2, 7.0, 5.0)]
+
+        suggestions = suggest_transfers(
+            players, pool, bank=0.0, keep_ids=[3], exclude_ids=[100]
+        )
+
+        self.assertEqual(
+            [(item["out"]["id"], item["in"]["id"]) for item in suggestions], [(4, 101)]
+        )
+
+    def test_selling_prices_decide_what_is_affordable(self):
+        players = squad(p3={"expected_points": 1.0, "price": 6.0})
+        pool = [candidate(100, 2, 9.0, 6.0)]
+        # At today's price the swap is affordable; sold at 5.5 it is £0.5m short.
+        self.assertEqual(len(suggest_transfers(players, pool, bank=0.0)), 1)
+        self.assertEqual(suggest_transfers(players, pool, bank=0.0, selling={3: 5.5}), [])
+        [suggestion] = suggest_transfers(players, pool, bank=0.5, selling={3: 5.5})
+        self.assertEqual(suggestion["cost"], 0.5)
+
     def test_nothing_is_suggested_without_a_bank(self):
         players = squad(p13={"expected_points": 1.0})
 

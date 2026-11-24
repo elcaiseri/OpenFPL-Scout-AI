@@ -428,3 +428,94 @@ class ColdStartTests(CacheTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettingsChangeTests(CacheTestCase):
+    """A run that started before an override or toggle is never cached as fresh."""
+
+    def blocking_first_run(self):
+        """Patch the live prediction so the first run waits for a signal."""
+        started, release = threading.Event(), threading.Event()
+        original = self.scout._predict_live
+        calls = []
+
+        def predict(gameweek, settings=None):
+            calls.append(settings)
+            if len(calls) == 1:
+                started.set()
+                release.wait(10)
+            return original(gameweek, settings)
+
+        patcher = patch.object(self.scout, "_predict_live", side_effect=predict)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return started, release, calls
+
+    def start(self, target):
+        results = {}
+        thread = threading.Thread(target=lambda: results.setdefault("value", target()))
+        thread.start()
+        return thread, results
+
+    def test_a_run_invalidated_while_pending_is_not_cached_or_joined(self):
+        started, release, calls = self.blocking_first_run()
+        first, first_result = self.start(
+            lambda: self.scout.get_official_predictions(3, collect_results=False)
+        )
+        self.assertTrue(started.wait(10))
+        self.scout.set_model_override("model", weight=2.0)
+        # A recompute after the change starts its own run instead of joining
+        # the one that began with the old weight.
+        recomputed = self.scout.recompute(3)
+        self.assertEqual(recomputed.attrs["inference"]["weights"], {"model": 2.0})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(dict(calls[1].weights), {"model": 2.0})
+        self.assertEqual(dict(calls[0].weights), {})
+        release.set()
+        first.join(10)
+        self.assertIn("value", first_result)
+        # The old run finished last, yet the cache keeps the new forecast.
+        cached = self.scout._live_forecasts[3].predictions
+        self.assertEqual(cached.attrs["inference"]["weights"], {"model": 2.0})
+        self.assertEqual(first_result["value"].attrs["inference"]["weights"], {"model": 1.0})
+
+    def test_the_archive_records_the_settings_the_run_used(self):
+        started, release, _ = self.blocking_first_run()
+        first, _ = self.start(lambda: self.scout.get_official_predictions(3, collect_results=False))
+        self.assertTrue(started.wait(10))
+        self.scout.set_model_override("model", weight=2.0)
+        release.set()
+        first.join(10)
+        metadata_path = (
+            self.scout.data_archive.season_root(self.scout.official_client) / "metadata" / "gw_03.json"
+        )
+        import json
+
+        models = json.loads(metadata_path.read_text())["models"]
+        self.assertNotIn("weight_override", models["model"])
+        self.assertNotIn(3, self.scout._live_forecasts)
+
+    def test_toggling_enrichment_stops_restoring_the_earlier_forecast(self):
+        self.web()
+        client = self.scout.official_client
+        archive = self.scout.data_archive
+        window = timedelta(hours=1)
+        self.assertIsNotNone(
+            archive.recent_open_forecast(client, 3, window, model_versions=self.scout._model_versions())
+        )
+        with patch.object(self.scout, "_build_fpl_data_provider", return_value=None):
+            self.scout.set_enrichment_enabled(True)
+        versions = self.scout._model_versions()
+        self.assertTrue(versions["model"]["fpl_data_enabled"])
+        self.assertIsNone(archive.recent_open_forecast(client, 3, window, model_versions=versions))
+        self.assertIsNone(self.scout._restored_forecast(3))
+
+
+    def test_planning_horizons_fit_in_the_inputs_cache(self):
+        from src.admin import OutlookRequest
+        from src.scout import MAX_PLANNING_HORIZON
+
+        longest = OutlookRequest.model_fields["horizon"].metadata
+        self.assertIn(MAX_PLANNING_HORIZON, [getattr(item, "le", None) for item in longest])
+        # The open gameweek plus the longest horizon never evict each other.
+        self.assertGreaterEqual(self.scout.model_inputs_capacity, MAX_PLANNING_HORIZON + 1)

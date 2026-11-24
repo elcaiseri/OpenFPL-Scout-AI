@@ -58,7 +58,7 @@ Run the test suite with:
 
 ```bash
 uv run python -m unittest discover -s tests
-node --test tests/frontend_loading.test.cjs
+node --test tests/frontend_loading.test.cjs tests/admin_dashboard.test.cjs
 ```
 
 Open [localhost:8000](http://localhost:8000). Local Swagger documentation is
@@ -182,6 +182,57 @@ way, so the new prediction runs inside a request too. The server never
 predicts outside a request. Temporary read failures retry twice, and
 unavailable player metadata or fixtures do not hide an otherwise valid squad.
 
+## Owner dashboard
+
+`/admin` is a private control room for the service owner. The page holds no
+data: it asks for one of the `VALID_API_KEYS` tokens (kept for the browser
+session, or on the device if you tick *Remember*) and reads everything from
+bearer-protected `/api/admin/*` routes. Those routes are left out of the
+public OpenAPI schema and the `/api` catalog, the page is sent with
+`X-Robots-Tag: noindex`, and `OPENFPL_ADMIN_ENABLED=false` answers both
+with 404.
+
+| Tab | What it shows |
+|---|---|
+| Command centre | Health tiles, the public squad, the AI decision log (every prediction run and what changed in the squad, and why), forecast cache, recent problems and live controls |
+| Predictions | Every player's projection with each model's view, the model spread and the 5-match inputs (minutes, xG, xA, xGI, shots, defensive contribution, FPL xP…), filters, charts and CSV export |
+| AI squad | The pitch, the reason behind every pick, captaincy margins, position cut-offs, near misses and players kept out by the club limit, compared with the official dream team |
+| My team | A public FPL team as it really is. **Squad:** edit a working squad on the pitch with the changes FPL can't see yet (transfers already made, substitutions, bench order, captain and vice, chip, free transfers, bank, what you paid), then see its rating beside the published one, expected points with autosubs, lineup and bench advice, captaincy options, news and price alerts since your last visit, and your own locks, bans, availability and xP. **Plan:** an optimizer (the best transfers for your free transfers over 1–5 gameweeks with hits, a Wildcard squad for the next 5 gameweeks, or a Free Hit squad for this one, each move explained), a chip planner and a fixture ticker. **Review:** a played gameweek's captain, bench, lineup and transfers against hindsight, plus season history and picks. **Leagues:** standings and cups |
+| Model health | Per-model status, weights and feature contract, model agreement, feature coverage, FPL Data enrichment, and archived forecasts checked against actual points beside the offline training metrics |
+| What-if | A sandbox: re-select the squad with your own model weights, locked or excluded players, club limit and availability, without touching the public site |
+| FPL data | Fixture difficulty, results and fixture stats, live gameweek, players, club strength, dream teams, set pieces, winners and rankings |
+| App health | Per-route request counts and latencies, the official FPL upstream and its cache, logs, the archive and the effective configuration |
+| API explorer | Call any OpenFPL route with your token and inspect the response |
+
+Clicking any player opens an explanation: each input's effect against a
+typical player in his position, the projection's path from that typical
+player, every model's projection, how the projection would change against
+each opponent, his season so far, and why the AI picked him or not.
+
+The optimizer finds the provably best squad (scipy's integer-programming
+solver) within the budget, positions and three-per-club rule, maximising each
+gameweek's best XI plus captain and a tenth of the bench. It only leaves out
+players that others provably beat (no dearer, no fewer points in any
+gameweek, from enough clubs), so the result stays exact. Official FPL does
+not publish free transfers or selling prices, so both are estimated from
+public history (one free transfer a gameweek, at most five banked, none added
+in a Wildcard or Free Hit week; FPL's sell-on rule) and can be corrected
+before running. Plans never change the team on FPL.
+
+FPL publishes a manager's picks only after each deadline, so My team's
+working squad lets the manager add what they have already changed. It is
+kept in that browser only (per team ID, with JSON export and import) and
+checked against FPL's rules. When its deadline passes it is kept, read-only,
+until FPL publishes that gameweek's team, and then removed. Expected points with autosubs assume only flagged players
+and blanks miss out; the price outlook is a heuristic from net transfers,
+since FPL's price algorithm is not public.
+
+Live controls (re-predict an open gameweek now, force results collection,
+clear caches, set a model's weight or turn it off, turn FPL Data enrichment
+on or off) ask for confirmation, are logged as warnings and in the decision
+log, and last until the service restarts. A closed gameweek's forecast stays
+frozen: it cannot be predicted again.
+
 ## Models and data
 
 Runtime data flows from official FPL through the shared feature pipeline, model
@@ -279,6 +330,8 @@ uv run python -m scripts.download_fpl_data \
 | `src/scout.py` | Inference, cold start, and squad selection |
 | `src/features.py` | Shared model-inference feature contract |
 | `src/fpl_data_inference.py` | Guarded optional stat enrichment |
+| `src/admin.py`, `src/insights.py`, `src/observability.py` | Owner dashboard API, explanations and accuracy, in-process metrics and logs |
+| `static/admin/` | Owner dashboard |
 | `static/` | Responsive dashboard |
 | `scripts/` | Official archive collection and guarded data import |
 | `tests/` | API, data, feature, inference, and selection tests |

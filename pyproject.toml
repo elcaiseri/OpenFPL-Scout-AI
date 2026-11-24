@@ -1,6 +1,6 @@
 [project]
 name = "OpenFPL-Scout-AI"
-version = "6.4.0"
+version = "7.0.0"
 description = "An AI-powered Fantasy Premier League Scout that uses Ridge, XGBoost, CatBoost, and MLP models to predict player points and optimize FPL team selection."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,6 +16,9 @@ dependencies = [
     "pydantic>=2.6.2",
     "python-dotenv>=1.0.0",
     "aiofiles>=23.1.0",
+    # Squad optimisation (scipy.optimize.milp). Already in the image through
+    # scikit-learn, which the trained models need.
+    "scipy>=1.9",
 ]
 
 [dependency-groups]

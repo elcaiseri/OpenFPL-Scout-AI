@@ -21,6 +21,7 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from src import admin as admin_api
 from src.auth import verify_api_key
 from src.logger import get_logger
 from src.models import (
@@ -31,6 +32,12 @@ from src.models import (
     ResponseModel,
     TeamRatingModel,
 )
+from src.observability import (
+    MetricsMiddleware,
+    RequestMetrics,
+    install_log_buffer,
+    route_resolver_for,
+)
 from src.official_fpl import OfficialFPLAPIError, OfficialFPLNotFoundError
 from src.scout import FPLScout, InferenceError
 from src.team_rating import rate_manager_team
@@ -38,6 +45,8 @@ from src.transfers import clubs_over_limit, suggest_transfers
 from src.utils import load_config
 
 logger = get_logger(__name__)
+# Recent log records for the owner dashboard (in memory, this instance only).
+log_buffer = install_log_buffer()
 
 config = load_config("config/config.yaml")
 scout: FPLScout
@@ -149,6 +158,15 @@ app = FastAPI(
 # that download used to hold up the squad prediction.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+# Per-route request counts and latencies for the owner dashboard. A pure ASGI
+# middleware, so responses (including HEAD and gzip) pass through untouched.
+request_metrics = RequestMetrics()
+app.add_middleware(
+    MetricsMiddleware,
+    metrics=request_metrics,
+    route_resolver=route_resolver_for(app),
+)
+
 # Python 3.9's built-in table lacks .woff2 and .webp, and the slim image has
 # no /etc/mime.types to add them, so StaticFiles would mislabel the display
 # font and the logo.
@@ -162,6 +180,15 @@ mimetypes.add_type("image/webp", ".webp")
 NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
 
 
+# The owner dashboard must never render inside another site's frame: its
+# live controls could otherwise be clickjacked while a remembered token is
+# signed in.
+NO_FRAMING_HEADERS = {
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+}
+
+
 class RevalidatingStaticFiles(StaticFiles):
     """Static files that browsers check with the server before reusing."""
 
@@ -170,6 +197,12 @@ class RevalidatingStaticFiles(StaticFiles):
     def file_response(self, *args: Any, **kwargs: Any) -> Response:
         response = super().file_response(*args, **kwargs)
         response.headers.update(self.cache_headers)
+        return response
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        if path.replace("\\", "/").lstrip("/").startswith("admin/"):
+            response.headers.update(NO_FRAMING_HEADERS)
         return response
 
 
@@ -203,6 +236,8 @@ def _api_catalog():
         for route in app.routes:
             if not isinstance(route, APIRoute) or tag not in route.tags:
                 continue
+            if not route.include_in_schema:
+                continue
             methods = sorted(method for method in route.methods if method != "HEAD")
             endpoints.append(
                 {
@@ -234,6 +269,7 @@ def _api_catalog():
 # runs beside an older copy of either that a browser kept from before the
 # no-cache header existed.
 VERSIONED_ASSETS = ("/static/style.css", "/static/script.js")
+ADMIN_VERSIONED_ASSETS = ("/static/admin/admin.css", "/static/admin/admin.js")
 
 
 @lru_cache(maxsize=None)
@@ -242,8 +278,8 @@ def _asset_version(path: str) -> str:
     return hashlib.sha256(content).hexdigest()[:12]
 
 
-def _with_asset_versions(page: str) -> str:
-    for path in VERSIONED_ASSETS:
+def _with_asset_versions(page: str, assets=VERSIONED_ASSETS) -> str:
+    for path in assets:
         try:
             version = _asset_version(path)
         except OSError:
@@ -277,6 +313,30 @@ async def serve_index():
         raise HTTPException(
             status_code=500, detail="Failed to read index.html"
         ) from error
+
+
+# The owner's private dashboard. The page itself holds no data: it asks for a
+# bearer token and reads everything from the protected /api/admin routes.
+ADMIN_PAGE_HEADERS = {
+    **NO_CACHE_HEADERS,
+    **NO_FRAMING_HEADERS,
+    "X-Robots-Tag": "noindex, nofollow",
+}
+
+
+@app.api_route(
+    "/admin", methods=PAGE_METHODS, response_class=HTMLResponse, include_in_schema=False
+)
+async def serve_admin():
+    """Serve the private owner dashboard (token-gated in the browser)."""
+    if not admin_api.admin_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        async with aiofiles.open("static/admin/index.html", "r") as file:
+            page = _with_asset_versions(await file.read(), ADMIN_VERSIONED_ASSETS)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Not Found") from error
+    return HTMLResponse(content=page, headers=ADMIN_PAGE_HEADERS)
 
 
 SITE_URL = os.getenv("OPENFPL_SITE_URL", "https://openfpl.kassem.dev").rstrip("/")
@@ -1331,6 +1391,17 @@ async def get_player_predictions(
         player for player in response.player_points if matches(player)
     ]
     return response
+
+
+# Hidden from the public schema and /api catalog; every route needs a token.
+app.include_router(admin_api.router, include_in_schema=False)
+admin_api.bind(
+    lambda: globals().get("scout"),
+    config=config,
+    metrics=request_metrics,
+    log_buffer=log_buffer,
+    is_production=IS_PRODUCTION,
+)
 
 
 if __name__ == "__main__":
