@@ -1,0 +1,104 @@
+{
+ "gameweek": 11,
+ "source": "preview",
+ "captured_at": "2026-11-19T14:12:53.450671+00:00",
+ "max_owned": 10.0,
+ "picks": [
+  {
+   "id": 226,
+   "element_type": 1,
+   "web_name": "Pickford",
+   "team_name": "Everton",
+   "opponent_team_name": "Brentford",
+   "was_home": false,
+   "gameweek": 11,
+   "expected_points": 3.4202789541,
+   "fixture_count": 1,
+   "owned": 8.4
+  },
+  {
+   "id": 82,
+   "element_type": 1,
+   "web_name": "Kelleher",
+   "team_name": "Brentford",
+   "opponent_team_name": "Everton",
+   "was_home": true,
+   "gameweek": 11,
+   "expected_points": 3.2208519797,
+   "fixture_count": 1,
+   "owned": 5.9
+  },
+  {
+   "id": 504,
+   "element_type": 2,
+   "web_name": "Vuskovic",
+   "team_name": "Brighton",
+   "opponent_team_name": "Hull City",
+   "was_home": false,
+   "gameweek": 11,
+   "expected_points": 4.1808623228,
+   "fixture_count": 1,
+   "owned": 9.9
+  },
+  {
+   "id": 362,
+   "element_type": 2,
+   "web_name": "Jacquet",
+   "team_name": "Liverpool",
+   "opponent_team_name": "Manchester United",
+   "was_home": true,
+   "gameweek": 11,
+   "expected_points": 4.0383984519,
+   "fixture_count": 1,
+   "owned": 4.7
+  },
+  {
+   "id": 67,
+   "element_type": 3,
+   "web_name": "Rayan",
+   "team_name": "Bournemouth",
+   "opponent_team_name": "Nottingham Forest",
+   "was_home": true,
+   "gameweek": 11,
+   "expected_points": 4.0515016233,
+   "fixture_count": 1,
+   "owned": 2.4
+  },
+  {
+   "id": 366,
+   "element_type": 3,
+   "web_name": "Wirtz",
+   "team_name": "Liverpool",
+   "opponent_team_name": "Manchester United",
+   "was_home": true,
+   "gameweek": 11,
+   "expected_points": 3.8865828204,
+   "fixture_count": 1,
+   "owned": 6.0
+  },
+  {
+   "id": 138,
+   "element_type": 4,
+   "web_name": "Kostoulas",
+   "team_name": "Brighton",
+   "opponent_team_name": "Hull City",
+   "was_home": false,
+   "gameweek": 11,
+   "expected_points": 3.4906942617,
+   "fixture_count": 1,
+   "owned": 9.7
+  },
+  {
+   "id": 401,
+   "element_type": 4,
+   "web_name": "Marmoush",
+   "team_name": "Tottenham",
+   "opponent_team_name": "Ipswich Town",
+   "was_home": true,
+   "gameweek": 11,
+   "expected_points": 3.1271678791,
+   "fixture_count": 1,
+   "owned": 2.5
+  }
+ ]
+}

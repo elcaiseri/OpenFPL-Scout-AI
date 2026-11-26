@@ -1,0 +1,104 @@
+{
+ "gameweek": 12,
+ "source": "preview",
+ "captured_at": "2026-11-26T09:42:14.026749+00:00",
+ "max_owned": 10.0,
+ "picks": [
+  {
+   "id": 529,
+   "element_type": 1,
+   "web_name": "Roefs",
+   "team_name": "Sunderland",
+   "opponent_team_name": "Tottenham",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 3.5345113768,
+   "fixture_count": 1,
+   "owned": 2.1
+  },
+  {
+   "id": 384,
+   "element_type": 1,
+   "web_name": "Donnarumma",
+   "team_name": "Manchester City",
+   "opponent_team_name": "Arsenal",
+   "was_home": false,
+   "gameweek": 12,
+   "expected_points": 3.3724539103,
+   "fixture_count": 1,
+   "owned": 6.9
+  },
+  {
+   "id": 334,
+   "element_type": 2,
+   "web_name": "Muharemović",
+   "team_name": "Leeds",
+   "opponent_team_name": "Coventry City",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 4.3946024922,
+   "fixture_count": 1,
+   "owned": 7.7
+  },
+  {
+   "id": 332,
+   "element_type": 2,
+   "web_name": "Justin",
+   "team_name": "Leeds",
+   "opponent_team_name": "Coventry City",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 4.1047127689,
+   "fixture_count": 1,
+   "owned": 2.7
+  },
+  {
+   "id": 67,
+   "element_type": 3,
+   "web_name": "Rayan",
+   "team_name": "Bournemouth",
+   "opponent_team_name": "Fulham",
+   "was_home": false,
+   "gameweek": 12,
+   "expected_points": 3.8828198668,
+   "fixture_count": 1,
+   "owned": 2.4
+  },
+  {
+   "id": 542,
+   "element_type": 3,
+   "web_name": "E.Le Fée",
+   "team_name": "Sunderland",
+   "opponent_team_name": "Tottenham",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 3.6677070723,
+   "fixture_count": 1,
+   "owned": 3.1
+  },
+  {
+   "id": 138,
+   "element_type": 4,
+   "web_name": "Kostoulas",
+   "team_name": "Brighton",
+   "opponent_team_name": "Newcastle United",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 3.552255918,
+   "fixture_count": 1,
+   "owned": 8.6
+  },
+  {
+   "id": 26,
+   "element_type": 4,
+   "web_name": "Havertz",
+   "team_name": "Arsenal",
+   "opponent_team_name": "Manchester City",
+   "was_home": true,
+   "gameweek": 12,
+   "expected_points": 3.1121888863,
+   "fixture_count": 1,
+   "owned": 5.7
+  }
+ ]
+}
