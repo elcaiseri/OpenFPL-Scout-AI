@@ -240,7 +240,7 @@ class ScoutInferenceTests(unittest.TestCase):
         second = scout.predict_players(player_history(), gameweek=3)
 
         self.assertEqual(len(first), 20)
-        spread = np.std([1, 2, 3, 4])
+        spread = np.std([1, 2, 3, 3, 4])
         self.assertTrue(np.allclose(first.expected_points, 2.6 - spread / 4))
         self.assertAlmostEqual(first.attrs["inference"]["mean_model_spread"], spread)
         self.assertEqual(first.attrs["gameweek"], 3)
@@ -265,8 +265,60 @@ class ScoutInferenceTests(unittest.TestCase):
 
         points, _ = scout._predict_ensemble(pd.DataFrame({"was_home": [True, False]}))
 
-        # Home has a weighted mean of 1.8 and a spread of 1. Away is unanimous.
-        np.testing.assert_allclose(points, [1.55, 1.0])
+        spread = np.std([3, 3, 1, 1, 1])
+        np.testing.assert_allclose(points, [1.8 - spread / 4, 1.0])
+
+    def test_all_ensemble_methods_with_model_and_equal_weights(self):
+        models = {
+            "one.pkl": ConstantModel(6),
+            "two.pkl": ConstantModel(0),
+            "three.pkl": VenueModel(),
+            "four.pkl": ConstantModel(2),
+        }
+        fixtures = pd.DataFrame({"was_home": [True, False]})
+        # Model three has twice the weight. Repeating its row gives an
+        # independent reference for the weighted statistics.
+        for weighting, venue_votes in (("model", 2), ("equal", 1)):
+            votes = np.array([[6, 6], [0, 0], [2, 2]] + [[3, 1]] * venue_votes)
+            mean = votes.mean(axis=0)
+            expected = {
+                "mean": mean,
+                "median": np.median(votes, axis=0),
+                "mean_minus_std_over_n": mean - votes.std(axis=0) / len(models),
+            }
+            for method, points in expected.items():
+                with self.subTest(weighting=weighting, method=method):
+                    config = scout_config()
+                    config["inference"].update(
+                        ensemble_method=method, ensemble_weighting=weighting
+                    )
+                    scout = FPLScout(config, model_loader=models.__getitem__)
+                    actual, diagnostics = scout._predict_ensemble(fixtures)
+                    np.testing.assert_allclose(actual, points)
+                    self.assertEqual(diagnostics["ensemble_method"], method)
+                    self.assertEqual(diagnostics["ensemble_weighting"], weighting)
+                    self.assertEqual(diagnostics["weights"]["three"], venue_votes)
+
+    def test_weighted_median_splits_exactly_half_the_surviving_weight(self):
+        config = scout_config()
+        config["inference"]["ensemble_method"] = "median"
+        models = {
+            "one.pkl": ConstantModel(1),
+            "two.pkl": ConstantModel(3),
+            "three.pkl": ConstantModel(9),
+            "four.pkl": ConstantModel(error="broken"),
+        }
+        scout = FPLScout(config, model_loader=models.__getitem__)
+        points, _ = scout._predict_ensemble(pd.DataFrame(index=[0]))
+        np.testing.assert_allclose(points, [6])
+
+    def test_invalid_ensemble_config_is_rejected(self):
+        for key in ("ensemble_method", "ensemble_weighting"):
+            with self.subTest(key=key):
+                config = scout_config()
+                config["inference"][key] = "unknown"
+                with self.assertRaisesRegex(ValueError, key):
+                    FPLScout(config)
 
     def test_logs_model_feature_names_and_live_coverage(self):
         scout = FPLScout(
@@ -522,8 +574,9 @@ class ScoutInferenceTests(unittest.TestCase):
 
         self.assertEqual(len(predictions), 20)
         self.assertTrue((predictions["fixture_count"] == 2).all())
-        # All models total four points, but each fixture has a spread of 0.5.
-        self.assertTrue(np.allclose(predictions["expected_points"], 4 - 2 * 0.5 / 4))
+        # All models total four points. The two fixtures have the same spread.
+        spread = np.std([3, 3, 2, 2, 2])
+        self.assertTrue(np.allclose(predictions["expected_points"], 4 - 2 * spread / 4))
         # One home and one away match: no single venue, so each opponent
         # carries its own.
         self.assertTrue(

@@ -31,7 +31,20 @@ from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
 
 logger = get_logger(__name__)
-ENSEMBLE_METHOD = "weighted_mean_minus_std_over_n"
+
+
+def _weighted_median(predictions: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    """Return each fixture's median, averaging adjacent values at a 50/50 split."""
+    order = np.argsort(predictions, axis=0)
+    values = np.take_along_axis(predictions, order, axis=0)
+    cumulative = np.cumsum(weights[order], axis=0)
+    halfway = cumulative[-1] / 2
+    # Decimal config weights can sum to a few ulps either side of half.
+    at_half = np.isclose(cumulative, halfway, rtol=1e-15, atol=0)
+    middle = np.argmax((cumulative > halfway) | at_half, axis=0)
+    columns = np.arange(values.shape[1])
+    upper = np.minimum(middle + at_half[middle, columns], len(weights) - 1)
+    return 0.5 * values[middle, columns] + 0.5 * values[upper, columns]
 
 
 def _environment_bool(name: str) -> Optional[bool]:
@@ -200,6 +213,16 @@ class FPLScout:
         self._fixture_cache_lock = RLock()
 
         inference_config = self.config.get("inference", {})
+        self.ensemble_method = inference_config.get(
+            "ensemble_method", "mean_minus_std_over_n"
+        )
+        if self.ensemble_method not in ("mean", "median", "mean_minus_std_over_n"):
+            raise ValueError(
+                "inference.ensemble_method must be mean, median, or mean_minus_std_over_n"
+            )
+        self.ensemble_weighting = inference_config.get("ensemble_weighting", "model")
+        if self.ensemble_weighting not in ("model", "equal"):
+            raise ValueError("inference.ensemble_weighting must be model or equal")
         self.history_window = int(inference_config.get("history_window", 5))
         self.cache_fixtures = bool(inference_config.get("cache_fixtures", True))
         # Postponements move fixtures between gameweeks, so cached fixture
@@ -542,7 +565,9 @@ class FPLScout:
                 continue
 
             predictions.append(values)
-            weights.append(artifact.weight)
+            weights.append(
+                artifact.weight if self.ensemble_weighting == "model" else 1.0
+            )
             successful_models.append(artifact.name)
 
         if len(predictions) < self.minimum_successful_models:
@@ -553,16 +578,26 @@ class FPLScout:
             )
 
         prediction_matrix = np.vstack(predictions)
-        weighted_mean = np.average(prediction_matrix, axis=0, weights=weights)
-        spread = prediction_matrix.std(axis=0)
-        ensemble = weighted_mean - spread / len(successful_models)
+        relative_weights = np.asarray(weights) / max(weights)
+        mean = np.average(prediction_matrix, axis=0, weights=relative_weights)
+        variance = np.average(
+            (prediction_matrix - mean) ** 2, axis=0, weights=relative_weights
+        )
+        spread = np.sqrt(variance)
+        if self.ensemble_method == "median":
+            ensemble = _weighted_median(prediction_matrix, relative_weights)
+        elif self.ensemble_method == "mean_minus_std_over_n":
+            ensemble = mean - spread / len(successful_models)
+        else:
+            ensemble = mean
         if self.clip_min is not None or self.clip_max is not None:
             lower = -np.inf if self.clip_min is None else float(self.clip_min)
             upper = np.inf if self.clip_max is None else float(self.clip_max)
             ensemble = np.clip(ensemble, lower, upper)
 
         diagnostics = {
-            "ensemble_method": ENSEMBLE_METHOD,
+            "ensemble_method": self.ensemble_method,
+            "ensemble_weighting": self.ensemble_weighting,
             "successful_models": successful_models,
             "failed_models": failures,
             "weights": dict(zip(successful_models, weights)),
@@ -977,9 +1012,9 @@ class FPLScout:
         if restored is None:
             return None
         inference = restored.attrs["inference"]
-        if (
-            inference.get("strategy") != "ownership-cold-start"
-            and inference.get("ensemble_method") != ENSEMBLE_METHOD
+        if inference.get("strategy") != "ownership-cold-start" and (
+            inference.get("ensemble_method") != self.ensemble_method
+            or inference.get("ensemble_weighting") != self.ensemble_weighting
         ):
             return None
         if self._availability_changed(restored):
