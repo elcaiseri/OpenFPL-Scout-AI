@@ -383,9 +383,17 @@ class ColdStartTests(CacheTestCase):
 
         self.assertNotEqual(records(predictions), records(archived))
 
-    def test_a_forecast_from_before_the_spread_penalty_is_recomputed(self):
-        with patch("src.scout.ENSEMBLE_METHOD", "weighted_mean"):
-            archived = self.web()
+    def test_a_forecast_from_a_different_ensemble_method_is_recomputed(self):
+        archived = self.web(scout=self.new_instance(ensemble_method="median"))
+        self.restart()
+
+        predictions = self.web()
+
+        self.assertFalse(predictions.attrs["refresh_due"])
+        self.assertNotEqual(records(predictions), records(archived))
+
+    def test_a_forecast_from_a_different_weighting_mode_is_recomputed(self):
+        archived = self.web(scout=self.new_instance(ensemble_weighting="equal"))
         self.restart()
 
         predictions = self.web()
