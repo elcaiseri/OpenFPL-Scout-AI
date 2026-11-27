@@ -19,13 +19,13 @@ responsive web dashboard and FastAPI service.
 - Official FPL is the source of truth for players, clubs, availability,
   Gameweeks, fixtures, history, live scores, managers, leagues, and rankings.
 - A four-model ensemble produces player projections from leakage-safe recent
-  form, minutes, ownership, and fixture context. In `config/config.yaml`,
-  set `inference.ensemble_method` to `mean`, `median`, or the default
-  `mean_minus_std_over_n` (mean minus population standard deviation divided by
-  the number of successful models). For all three methods,
-  `inference.ensemble_weighting: model` uses each successful model's configured
-  weight (default 1), including for the spread. Set it to `equal` to give each
-  successful model equal influence. At an exact 50/50 split the median is
+  form, minutes, ownership, and fixture context. Scout defaults to the
+  arithmetic mean of the successful models (`ensemble_method: mean` and
+  `ensemble_weighting: equal` under `inference` in `config/config.yaml`).
+  Other methods are `median` and `mean_minus_std_over_n` (mean minus
+  population standard deviation divided by the number of successful models).
+  Set `ensemble_weighting: model` to use each model's configured weight
+  (default 1) for any method, including the spread. At an exact 50/50 split the median is
   the midpoint of the two adjacent predictions. Scout clips each fixture's
   projection before summing the gameweek total, so double-gameweek players
   receive both matches and blank-gameweek players receive zero.
