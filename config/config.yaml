@@ -58,7 +58,7 @@ inference:
   # mean, median, or mean_minus_std_over_n (population std / successful model count)
   ensemble_method: mean
   # model uses models.<name>.weight (default 1); equal gives every model one vote.
-  ensemble_weighting: equal
+  ensemble_weighting: model
   history_window: 5
   minimum_successful_models: 3
   cache_fixtures: true
