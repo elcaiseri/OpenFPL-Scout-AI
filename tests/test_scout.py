@@ -226,7 +226,7 @@ class ScoutInferenceTests(unittest.TestCase):
 
         self.assertEqual(result, Path("/data/external/source.csv"))
 
-    def test_shipped_and_missing_settings_default_to_model_weighted_mean(self):
+    def test_shipped_and_missing_settings_default_to_equal_mean(self):
         shipped = load_config(Path(__file__).resolve().parents[1] / "config/config.yaml")
         for source, inference in (("shipped", shipped["inference"]), ("omitted", {})):
             with self.subTest(source=source):
@@ -238,9 +238,9 @@ class ScoutInferenceTests(unittest.TestCase):
                 )
                 points, diagnostics = scout._predict_ensemble(pd.DataFrame(index=[0]))
                 # The model predicting 8 has twice the configured weight of each peer.
-                np.testing.assert_allclose(points, [16 / 5])
+                np.testing.assert_allclose(points, [2])
                 self.assertEqual(diagnostics["ensemble_method"], "mean")
-                self.assertEqual(diagnostics["ensemble_weighting"], "model")
+                self.assertEqual(diagnostics["ensemble_weighting"], "equal")
 
     def test_weighted_ensemble_preserves_output_contract_and_caches_fixtures(self):
         models = {

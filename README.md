@@ -20,15 +20,14 @@ responsive web dashboard and FastAPI service.
   Gameweeks, fixtures, history, live scores, managers, leagues, and rankings.
 - A four-model ensemble produces player projections from leakage-safe recent
   form, minutes, ownership, and fixture context. Scout defaults to
-  `ensemble_method: mean` and `ensemble_weighting: model` under `inference`
-  in `config/config.yaml`. The four calibrated weights are commented out,
-  so each successful model contributes equally. Uncomment all four to use
-  the calibrated blend.
+  `ensemble_method: mean` and `ensemble_weighting: equal` under `inference`
+  in `config/config.yaml`, so each successful model contributes equally.
+  Set `ensemble_weighting: model` to use the four calibrated weights already
+  configured under `models`.
   Other methods are `median` and `mean_minus_std_over_n` (mean minus
   population standard deviation divided by the number of successful models).
   Model weighting uses each successful model's configured weight (default 1)
-  for any method, including the spread. Set `ensemble_weighting: equal` to
-  give each model equal influence. At an exact 50/50 split the median is
+  for any method, including the spread. At an exact 50/50 split the median is
   the midpoint of the two adjacent predictions. Scout clips each fixture's
   projection before summing the gameweek total, so double-gameweek players
   receive both matches and blank-gameweek players receive zero.
