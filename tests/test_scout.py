@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.features import MODEL_FEATURES
 from src.scout import FPLScout, InferenceError, _mounted_data_path
+from src.utils import load_config
 
 
 class ConstantModel:
@@ -178,6 +179,8 @@ def scout_config(minimum=3):
         "team_name_mapping": {},
         "gw_team_name_mapping": {},
         "inference": {
+            "ensemble_method": "mean_minus_std_over_n",
+            "ensemble_weighting": "model",
             "history_window": 5,
             "minimum_successful_models": minimum,
             "clip_min": 0.0,
@@ -222,6 +225,22 @@ class ScoutInferenceTests(unittest.TestCase):
             result = _mounted_data_path("data/external/source.csv")
 
         self.assertEqual(result, Path("/data/external/source.csv"))
+
+    def test_shipped_and_missing_settings_default_to_equal_mean(self):
+        shipped = load_config(Path(__file__).resolve().parents[1] / "config/config.yaml")
+        for source, inference in (("shipped", shipped["inference"]), ("omitted", {})):
+            with self.subTest(source=source):
+                config = scout_config()
+                config["inference"] = inference
+                scout = FPLScout(
+                    config,
+                    model_loader=lambda path: ConstantModel(8 if path == "three.pkl" else 0),
+                )
+                points, diagnostics = scout._predict_ensemble(pd.DataFrame(index=[0]))
+                # The model predicting 8 has twice the configured weight of each peer.
+                np.testing.assert_allclose(points, [2])
+                self.assertEqual(diagnostics["ensemble_method"], "mean")
+                self.assertEqual(diagnostics["ensemble_weighting"], "equal")
 
     def test_weighted_ensemble_preserves_output_contract_and_caches_fixtures(self):
         models = {

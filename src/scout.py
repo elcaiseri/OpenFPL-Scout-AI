@@ -213,14 +213,12 @@ class FPLScout:
         self._fixture_cache_lock = RLock()
 
         inference_config = self.config.get("inference", {})
-        self.ensemble_method = inference_config.get(
-            "ensemble_method", "mean_minus_std_over_n"
-        )
+        self.ensemble_method = inference_config.get("ensemble_method", "mean")
         if self.ensemble_method not in ("mean", "median", "mean_minus_std_over_n"):
             raise ValueError(
                 "inference.ensemble_method must be mean, median, or mean_minus_std_over_n"
             )
-        self.ensemble_weighting = inference_config.get("ensemble_weighting", "model")
+        self.ensemble_weighting = inference_config.get("ensemble_weighting", "equal")
         if self.ensemble_weighting not in ("model", "equal"):
             raise ValueError("inference.ensemble_weighting must be model or equal")
         self.history_window = int(inference_config.get("history_window", 5))

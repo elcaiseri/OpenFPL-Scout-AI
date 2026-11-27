@@ -393,7 +393,7 @@ class ColdStartTests(CacheTestCase):
         self.assertNotEqual(records(predictions), records(archived))
 
     def test_a_forecast_from_a_different_weighting_mode_is_recomputed(self):
-        archived = self.web(scout=self.new_instance(ensemble_weighting="equal"))
+        archived = self.web(scout=self.new_instance(ensemble_weighting="model"))
         self.restart()
 
         predictions = self.web()
