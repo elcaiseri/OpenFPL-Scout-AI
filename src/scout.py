@@ -31,6 +31,7 @@ from src.logger import get_logger
 from src.official_fpl import OfficialFPLClient
 
 logger = get_logger(__name__)
+ENSEMBLE_METHOD = "weighted_mean_minus_std_over_n"
 
 
 def _environment_bool(name: str) -> Optional[bool]:
@@ -552,17 +553,20 @@ class FPLScout:
             )
 
         prediction_matrix = np.vstack(predictions)
-        ensemble = np.average(prediction_matrix, axis=0, weights=np.asarray(weights))
+        weighted_mean = np.average(prediction_matrix, axis=0, weights=weights)
+        spread = prediction_matrix.std(axis=0)
+        ensemble = weighted_mean - spread / len(successful_models)
         if self.clip_min is not None or self.clip_max is not None:
             lower = -np.inf if self.clip_min is None else float(self.clip_min)
             upper = np.inf if self.clip_max is None else float(self.clip_max)
             ensemble = np.clip(ensemble, lower, upper)
 
         diagnostics = {
+            "ensemble_method": ENSEMBLE_METHOD,
             "successful_models": successful_models,
             "failed_models": failures,
             "weights": dict(zip(successful_models, weights)),
-            "mean_model_spread": float(prediction_matrix.std(axis=0).mean()),
+            "mean_model_spread": float(spread.mean()) if spread.size else 0.0,
         }
         return ensemble, diagnostics
 
@@ -970,7 +974,15 @@ class FPLScout:
             timedelta(seconds=self.prediction_restore_max_age),
             model_versions=self._model_versions(),
         )
-        if restored is None or self._availability_changed(restored):
+        if restored is None:
+            return None
+        inference = restored.attrs["inference"]
+        if (
+            inference.get("strategy") != "ownership-cold-start"
+            and inference.get("ensemble_method") != ENSEMBLE_METHOD
+        ):
+            return None
+        if self._availability_changed(restored):
             return None
         with self._forecast_lock:
             # The archive read ran unlocked: another request may have predicted
